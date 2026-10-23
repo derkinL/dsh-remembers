@@ -416,7 +416,7 @@ window.__ModuleLoader__.load({
       function PersonaSection() {
         const [loading, setLoading] = React.useState(true);
         const [error, setError] = React.useState("");
-        const [limits, setLimits] = React.useState({ constitution: 10000, self_model: 4000 });
+        const [limits, setLimits] = React.useState({ constitution: 15000, self_model: 4000 });
         const [saving, setSaving] = React.useState(false);
         const [notice, setNotice] = React.useState(null);
         const [saved, setSaved] = React.useState({ constitution: "", self_model: "" });

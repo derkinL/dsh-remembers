@@ -608,7 +608,7 @@ class MemoryStore:
     #   set_self_model() 只能改自我认知，插件侧的工具调的就是它。
     # 宪法区绕不过去，除非有人直接动数据库文件。
 
-    CONSTITUTION_MAX = 10000
+    CONSTITUTION_MAX = 15000
     SELF_MODEL_MAX = 4000
 
     def get_persona(self) -> dict[str, Any]:
