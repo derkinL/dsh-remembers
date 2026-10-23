@@ -19,3 +19,7 @@ service/.env
 # ГЁ╩Г╩÷
 .DS_Store
 Thumbs.db
+
+# ╡Бйтаый╠д©б╪
+service/_*_tmp/
+*_tmp/

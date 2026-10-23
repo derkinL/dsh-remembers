@@ -21,7 +21,7 @@ export class MemoryClient {
     this.logger?.debug?.(`[dsh-remembers] ${stage} ${JSON.stringify(data)}`);
   }
 
-  async #request(method, path, body) {
+  async #request(method, path, body, timeoutMs) {
     if (!this.enabled) return null;
     const headers = { "Content-Type": "application/json; charset=utf-8" };
     if (this.token) headers["X-Auth-Token"] = this.token;
@@ -30,7 +30,7 @@ export class MemoryClient {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(this.timeoutMs),
+        signal: AbortSignal.timeout(timeoutMs || this.timeoutMs),
       });
       if (!res.ok) {
         this.log("http_error", { path, status: res.status });
@@ -44,6 +44,27 @@ export class MemoryClient {
       });
       return null;
     }
+  }
+
+  /**
+   * 惊讶度门控：这一轮值不值得写进 L0。
+   * 返回 {store, score, base, method}；服务不可用返回 null —— 调用方按「宁可存」
+   * 处理，门控挂了不能把话丢掉。
+   */
+  async surprisal(text, context) {
+    return this.#request("POST", "/surprisal", { text, context });
+  }
+
+  /**
+   * LLM 抽取 + 逐条判定（ADD/UPDATE/DELETE/NONE）。
+   * 两次 LLM 调用，可能几十秒 —— 调用方不要 await。
+   */
+  async extract({ userText, assistantText, subject = "self" }) {
+    return this.#request("POST", "/extract", {
+      user_text: userText,
+      assistant_text: assistantText,
+      subject,
+    }, 120000);
   }
 
   /** 健康检查；用于启动时决定是否继续注入。 */

@@ -11,10 +11,13 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import math
 import re
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -159,21 +162,48 @@ class Hit:
 class MemoryStore:
     def __init__(self, db_path: str | Path, schema_path: str | Path | None = None):
         self.path = str(db_path)
-        self.conn = sqlite3.connect(self.path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA foreign_keys = ON")
-        schema = schema_path or (Path(__file__).with_name("schema.sql"))
-        self.conn.executescript(Path(schema).read_text(encoding="utf-8"))
-        self.conn.commit()
-        # 向量矩阵缓存：首次从 SQLite 读出来单位化后常驻内存，写操作时失效。
-        # 实测 1.8 万条每次重读 BLOB 要 210ms，缓存后点积只要 3ms。
+        self._schema_path = Path(schema_path) if schema_path else Path(__file__).with_name("schema.sql")
+        # 每个线程一个连接。sqlite3 的连接对象不是线程安全的：共享一个连接、
+        # 只在写操作加锁，实测读+写并发会炸出 308 次错误（TypeError /
+        # InterfaceError / IntegrityError 各种都有）。WAL 模式本来就支持
+        # 多读 + 单写，前提是每线程用自己的连接。
+        self._local = threading.local()
+        # 缓存跨线程共享，读写都过这把锁
+        self._cache_lock = threading.RLock()
         self._vec_cache: tuple[np.ndarray, np.ndarray] | None = None
-        # 轻量列缓存（id → ts/half_life/tier/subject），写操作时失效
         self._light_cache: dict[int, tuple] | None = None
 
+        conn = self._get_conn()
+        conn.executescript(self._schema_path.read_text(encoding="utf-8"))
+        conn.commit()
+
+    def _get_conn(self) -> sqlite3.Connection:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self.path, check_same_thread=False, timeout=10.0)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            # 写冲突时等待而不是立刻抛 "database is locked"
+            conn.execute("PRAGMA busy_timeout = 10000")
+            conn.execute("PRAGMA journal_mode = WAL")
+            self._local.conn = conn
+        return conn
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        """当前线程的连接。所有 `self.conn.execute(...)` 都自动走到这里。"""
+        return self._get_conn()
+
+    def close(self) -> None:
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.close()
+            self._local.conn = None
+
     def _invalidate_caches(self) -> None:
-        self._vec_cache = None
-        self._light_cache = None
+        with self._cache_lock:
+            self._vec_cache = None
+            self._light_cache = None
 
     # -- 写入 ---------------------------------------------------------------
 
@@ -219,6 +249,35 @@ class MemoryStore:
             (blob, dim, model, time.time(), mem_id),
         )
         self.conn.commit()
+
+    def update_text(self, mem_id: int, text: str, summary: str | None = None) -> bool:
+        """改一条记忆的正文，并重建它的倒排索引。
+
+        UPDATE 操作走这里：保留 id 和 created_at，只换内容和索引。
+        """
+        self._invalidate_caches()
+        row = self.conn.execute(
+            "SELECT text, summary FROM memory WHERE id=?", (mem_id,)
+        ).fetchone()
+        if row is None:
+            return False
+
+        # 撤掉旧词的 df 计数（_index_terms 会加新的）
+        old_terms = [r["term"] for r in self.conn.execute(
+            "SELECT term FROM doc_term WHERE mem_id=?", (mem_id,))]
+        self.conn.execute("DELETE FROM doc_term WHERE mem_id=?", (mem_id,))
+        for t in old_terms:
+            self.conn.execute("UPDATE term_stat SET df = df - 1 WHERE term=?", (t,))
+        self.conn.execute("DELETE FROM term_stat WHERE df <= 0")
+
+        effective_summary = summary if summary is not None else row["summary"]
+        self.conn.execute(
+            "UPDATE memory SET text=?, summary=?, updated_at=? WHERE id=?",
+            (text, effective_summary, time.time(), mem_id),
+        )
+        self._index_terms(mem_id, text, effective_summary)
+        self.conn.commit()
+        return True
 
     def forget(self, mem_id: int) -> bool:
         self._invalidate_caches()
@@ -325,27 +384,30 @@ class MemoryStore:
         """
         if self._vec_cache is not None:
             return self._vec_cache
-        rows = self.conn.execute(
-            "SELECT id, vec, vec_dim FROM memory WHERE vec IS NOT NULL AND vec_dim > 0"
-        ).fetchall()
-        empty = (np.zeros(0, dtype=np.int64), np.zeros((0, 0), dtype=np.float32))
-        if not rows:
-            self._vec_cache = empty
-            return empty
-        dims = np.fromiter((int(r["vec_dim"]) for r in rows), dtype=np.int64, count=len(rows))
-        uniq, counts = np.unique(dims, return_counts=True)
-        main_dim = int(uniq[counts.argmax()])
-        picked = [(int(r["id"]), r["vec"]) for r, d in zip(rows, dims) if int(d) == main_dim]
-        if not picked:
-            self._vec_cache = empty
-            return empty
-        ids = np.fromiter((p[0] for p in picked), dtype=np.int64, count=len(picked))
-        mat = np.frombuffer(b"".join(p[1] for p in picked), dtype="<f4").reshape(len(picked), main_dim)
-        norms = np.linalg.norm(mat, axis=1)
-        norms[norms == 0] = 1.0
-        mat = mat / norms[:, None]
-        self._vec_cache = (ids, mat)
-        return self._vec_cache
+        with self._cache_lock:
+            if self._vec_cache is not None:      # 双检：别的线程可能刚建好
+                return self._vec_cache
+            rows = self.conn.execute(
+                "SELECT id, vec, vec_dim FROM memory WHERE vec IS NOT NULL AND vec_dim > 0"
+            ).fetchall()
+            empty = (np.zeros(0, dtype=np.int64), np.zeros((0, 0), dtype=np.float32))
+            if not rows:
+                self._vec_cache = empty
+                return empty
+            dims = np.fromiter((int(r["vec_dim"]) for r in rows), dtype=np.int64, count=len(rows))
+            uniq, counts = np.unique(dims, return_counts=True)
+            main_dim = int(uniq[counts.argmax()])
+            picked = [(int(r["id"]), r["vec"]) for r, d in zip(rows, dims) if int(d) == main_dim]
+            if not picked:
+                self._vec_cache = empty
+                return empty
+            ids = np.fromiter((p[0] for p in picked), dtype=np.int64, count=len(picked))
+            mat = np.frombuffer(b"".join(p[1] for p in picked), dtype="<f4").reshape(len(picked), main_dim)
+            norms = np.linalg.norm(mat, axis=1)
+            norms[norms == 0] = 1.0
+            mat = mat / norms[:, None]
+            self._vec_cache = (ids, mat)
+            return self._vec_cache
 
     def vec_search(self, query_vec: Sequence[float], candidate_ids: set[int] | None = None) -> dict[int, float]:
         ids, mat = self._vec_matrix()
@@ -510,6 +572,198 @@ class MemoryStore:
                     recency=1.0, tags=json.loads(r["tags"] or "[]"),
                 )
             )
+        return out
+
+    # -- 导出 / 导入：记忆转移 -------------------------------------------------
+    #
+    # 为什么不是「直接拷贝 memories.db」：
+    #   1. WAL 模式下最近的写入还在 -wal 里，单拷主文件会拿到一个几乎空库
+    #      （实测：主文件 4KB，-wal 288KB）。
+    #   2. .db 是 SQLite 的物理格式，schema 一变它就不是「记忆」而是「实现细节」。
+    # 这里导出的是一行一条 JSON 的中立格式：字段由代码定义，向量按原始
+    # float32 字节 base64 编码，跨机器、跨版本无损。
+
+    EXPORT_VERSION = 1
+
+    def export_records(self) -> list[dict]:
+        out: list[dict] = []
+        for r in self.conn.execute("SELECT * FROM memory ORDER BY id"):
+            out.append({
+                "type": "memory",
+                "id": int(r["id"]),
+                "tier": r["tier"],
+                "subject": r["subject"],
+                "text": r["text"],
+                "summary": r["summary"],
+                "source_ids": json.loads(r["source_ids"] or "[]"),
+                "tags": json.loads(r["tags"] or "[]"),
+                "ts": r["ts"],
+                "half_life_days": r["half_life_days"],
+                "vec_b64": base64.b64encode(r["vec"]).decode("ascii") if r["vec"] else None,
+                "vec_dim": r["vec_dim"],
+                "vec_model": r["vec_model"],
+                "created_at": r["created_at"],
+                "updated_at": r["updated_at"],
+            })
+        return out
+
+    def export_manifest(self) -> dict:
+        """导出时附带的清单：条数 + 内容指纹，用来在另一台机器上核对。"""
+        fp = self.fingerprint()
+        return {
+            "type": "manifest",
+            "format": "dsh-remembers-jsonl",
+            "version": self.EXPORT_VERSION,
+            "exported_at": time.time(),
+            "count": fp["count"],
+            "with_vectors": fp["with_vectors"],
+            "content_sha256": fp["sha256"],
+            "schema_version": self.conn.execute(
+                "SELECT v FROM meta WHERE k='schema_version'"
+            ).fetchone()[0],
+        }
+
+    def fingerprint(self) -> dict:
+        """内容指纹：不含 id、不含时间戳的创建时间，只对有意义的字段算。
+
+        转移前后指纹一致 = 记忆内容一字未变（id 在 merge 模式下会重排，
+        所以不能进指纹）。
+        """
+        rows = self.conn.execute(
+            "SELECT tier, subject, text, ts, vec_dim, summary FROM memory "
+            "ORDER BY tier, subject, text, ts"
+        ).fetchall()
+        h = hashlib.sha256()
+        with_vec = 0
+        for r in rows:
+            h.update(
+                f"{r['tier']}|{r['subject']}|{r['text']}|{float(r['ts']):.3f}"
+                f"|{r['vec_dim']}|{r['summary'] or ''}\n".encode("utf-8")
+            )
+            if (r["vec_dim"] or 0) > 0:
+                with_vec += 1
+        return {"count": len(rows), "with_vectors": with_vec, "sha256": h.hexdigest()}
+
+    def import_records(self, records: Iterable[dict], mode: str = "merge") -> dict:
+        """导入导出记录。
+
+        mode="replace"：清空后导入，保留原 id（整库搬家）
+        mode="merge"  ：追加，分配新 id（合并另一台机器的记忆）
+        """
+        if mode not in {"replace", "merge"}:
+            raise ValueError("mode must be 'replace' or 'merge'")
+
+        if mode == "replace":
+            self.conn.execute("DELETE FROM memory")
+            self.conn.execute("DELETE FROM doc_term")
+            self.conn.execute("DELETE FROM term_stat")
+            self.conn.execute("DELETE FROM doc_len")
+            self.conn.commit()
+            self._invalidate_caches()
+
+        imported = skipped = 0
+        now = time.time()
+        for rec in records:
+            if not isinstance(rec, dict):
+                skipped += 1
+                continue
+            if rec.get("type") not in (None, "memory"):
+                continue  # manifest 之类的元信息行，跳过
+            text = str(rec.get("text") or "").strip()
+            if not text:
+                skipped += 1
+                continue
+
+            vec_blob, vec_dim = None, 0
+            b64 = rec.get("vec_b64")
+            if b64:
+                try:
+                    raw = base64.b64decode(b64)
+                    vec_blob, vec_dim = raw, len(raw) // 4
+                except Exception:  # noqa: BLE001 - 坏向量不至于让整条记忆进不来
+                    vec_blob, vec_dim = None, 0
+
+            tags = rec.get("tags") or []
+            source_ids = rec.get("source_ids") or []
+            ts = float(rec.get("ts") or now)
+            half = rec.get("half_life_days")
+            half = float(half) if half is not None else None
+
+            explicit_id = int(rec["id"]) if (mode == "replace" and rec.get("id")) else None
+            cols = ("tier, subject, text, summary, source_ids, tags, ts, half_life_days, "
+                    "vec, vec_dim, vec_model, created_at, updated_at")
+            vals = (
+                str(rec.get("tier") or "L1"),
+                str(rec.get("subject") or "self"),
+                text,
+                rec.get("summary"),
+                json.dumps(list(source_ids), ensure_ascii=False),
+                json.dumps(list(tags), ensure_ascii=False),
+                ts,
+                half,
+                vec_blob,
+                vec_dim,
+                rec.get("vec_model"),
+                float(rec.get("created_at") or now),
+                float(rec.get("updated_at") or now),
+            )
+            if explicit_id is not None:
+                cur = self.conn.execute(
+                    f"INSERT OR REPLACE INTO memory(id, {cols}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (explicit_id, *vals),
+                )
+                mem_id = explicit_id
+            else:
+                cur = self.conn.execute(f"INSERT INTO memory({cols}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", vals)
+                mem_id = int(cur.lastrowid)
+
+            self._index_terms(mem_id, text, rec.get("summary"))
+            imported += 1
+
+        self.conn.commit()
+        self._invalidate_caches()
+        return {"imported": imported, "skipped": skipped, "mode": mode, **self.fingerprint()}
+
+    def candidates(self, query: str, top_k: int = 5, subject: str | None = None) -> list[Hit]:
+        """宽松召回，只给「判定器」用，不用于回答。
+
+        和 search() 的区别：**不过诚实出口、不设准入阈值**。
+        判定「这条新事实该 ADD 还是 UPDATE」时，宁可多看几条不相关的，
+        也不能漏掉相关的——漏掉就会错误地 ADD，把矛盾记忆留在库里。
+        """
+        bm25 = self.bm25_scores(query)
+        if not bm25:
+            return []
+        light = self._light_rows()
+        scored: list[tuple[float, int]] = []
+        for mid, b in bm25.items():
+            meta = light.get(mid)
+            if meta is None:
+                continue
+            ts, half, tier, subj = meta
+            if tier == "L4":
+                continue
+            if subject and subj != subject:
+                continue
+            scored.append((b, mid))
+        if not scored:
+            return []
+        scored.sort(reverse=True)
+        ids = {mid for _, mid in scored[:top_k]}
+        rows = {int(r["id"]): r for r in self.conn.execute(
+            f"SELECT * FROM memory WHERE id IN ({','.join('?' * len(ids))})", tuple(ids)
+        ).fetchall()}
+        out: list[Hit] = []
+        for b, mid in scored[:top_k]:
+            r = rows.get(mid)
+            if r is None:
+                continue
+            out.append(Hit(
+                id=mid, tier=r["tier"], subject=r["subject"], text=r["text"],
+                summary=r["summary"], ts=r["ts"], score=b, bm25=b, vec=0.0,
+                recency=_recency(r["ts"], r["half_life_days"], time.time()),
+                tags=json.loads(r["tags"] or "[]"),
+            ))
         return out
 
     def _load_rows(self, ids: set[int], tiers: Sequence[str] | None, subject: str | None):

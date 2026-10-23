@@ -14,6 +14,7 @@ const ENV = {
   recallMinChars: ["CMEM_RECALL_MIN_CHARS"],
   captureRaw: ["CMEM_CAPTURE_RAW"],
   captureMinChars: ["CMEM_CAPTURE_MIN_CHARS"],
+  extract: ["CMEM_EXTRACT"],
   skipSubagentSessions: ["CMEM_SKIP_SUBAGENT"],
   injectProfile: ["CMEM_INJECT_PROFILE"],
   profileSubject: ["CMEM_PROFILE_SUBJECT"],
@@ -59,6 +60,8 @@ export function resolveConfig(input = {}, env = process.env) {
     // 自动把每轮原话写进 L0：不做 LLM 抽取，只保证「说过的话不丢」
     captureRaw: toBool(value("captureRaw"), true),
     captureMinChars: toInt(value("captureMinChars"), 12, 1, 2000),
+    // 开关 2：LLM 抽取 + 逐条判定（服务端要配 CMEM_LLM_*）。默认关，因为要花钱
+    extract: toBool(value("extract"), false),
     skipSubagentSessions: toBool(value("skipSubagentSessions"), true),
     timeoutMs: toInt(value("timeoutMs"), 2500, 200, 30000),
     logRequests: toBool(value("logRequests"), false),

@@ -49,6 +49,7 @@ export function apply(ctx, input = {}) {
         profileDelivered: false,
         turnUser: "",
         turnAssistant: "",
+        recentUser: [],           // 最近几条用户输入，给惊讶度门控做参照
         writes: Promise.resolve(),
       };
       states.set(id, state);
@@ -158,27 +159,64 @@ export function apply(ctx, input = {}) {
   });
 
   ctx.on("turn/end", (session) => {
-    if (!config.captureRaw || skipped(session)) return;
+    if (skipped(session)) return;
     const state = stateFor(session);
     const user = state.turnUser.trim();
     const assistant = state.turnAssistant.trim();
     state.turnUser = "";
     state.turnAssistant = "";
 
+    // 这一轮之前的几条用户输入，作为惊讶度门控的参照
+    const context = state.recentUser.slice(-6).join("\n");
+    if (user) {
+      state.recentUser.push(user);
+      if (state.recentUser.length > 8) state.recentUser.shift();
+    }
+
     const merged = [user && `用户：${user}`, assistant && `她：${assistant}`]
       .filter(Boolean).join("\n");
-    if (merged.length < config.captureMinChars) return;
 
-    state.writes = state.writes
-      .then(() => client.ingest({
-        text: merged,
-        tier: "L0",
-        subject: "self",
-        tags: ["raw", `session:${state.id}`],
-        embed: true,
-      }))
-      .then((id) => { if (id) log("raw_saved", { session: state.id, id }); })
-      .catch((error) => log("raw_error", { error: String(error?.message ?? error) }));
+    // ---- 门控 1：惊讶度决定这一轮值不值得进 L0 ----
+    // 寒暄（"嗯"、"好的"）在服务端被硬否决，不占记忆。
+    if (config.captureRaw && merged.length >= config.captureMinChars) {
+      state.writes = state.writes
+        .then(async () => {
+          const gate = await client.surprisal(user, context);
+          // 服务不可用（gate 为 null）时按「宁可存」处理，门控挂了不能把话丢掉
+          const shouldStore = gate ? gate.store !== false : true;
+          if (!shouldStore) {
+            log("surprisal_skipped", {
+              session: state.id,
+              score: gate?.score,
+              reason: gate?.reason,
+            });
+            return;
+          }
+          const id = await client.ingest({
+            text: merged,
+            tier: "L0",
+            subject: "self",
+            tags: ["raw", `session:${state.id}`],
+            embed: true,
+          });
+          if (id) log("raw_saved", { session: state.id, id, surprisal: gate?.score, method: gate?.method });
+        })
+        .catch((error) => log("raw_error", { error: String(error?.message ?? error) }));
+    }
+
+    // ---- 门控 2：LLM 抽取 + 逐条判定，写结构记忆 ----
+    // 两次 LLM 调用，几十秒级 —— fire-and-forget，绝不阻塞对话。
+    if (config.extract && user.length >= config.captureMinChars) {
+      client.extract({ userText: user, assistantText: assistant })
+        .then((res) => {
+          if (res?.ok) {
+            log("extracted", { session: state.id, facts: res.facts, applied: res.applied });
+          } else {
+            log("extract_degraded", { session: state.id, reason: res?.degraded, error: res?.error });
+          }
+        })
+        .catch((error) => log("extract_error", { error: String(error?.message ?? error) }));
+    }
   });
 
   ctx.effect(() => () => { states.clear(); }, "companionMemory.clearStates()");

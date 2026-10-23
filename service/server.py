@@ -27,7 +27,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from embedding import Embedder
+from extractor import ExtractConfig, Extractor
+from llm import LLM
 from memory_core import MemoryInput, MemoryStore
+from surprisal import SurprisalGate
 
 DATA_DIR = os.environ.get("CMEM_DATA_DIR", "/data")
 DB_PATH = os.path.join(DATA_DIR, "memories.db")
@@ -37,10 +40,17 @@ MAX_BODY = 1 << 20  # 1 MiB
 _lock = threading.Lock()
 store: MemoryStore
 embedder: Embedder
+llm: LLM
+extractor: Extractor
+gate: SurprisalGate
+
+
+def _flag(name: str, default: str = "0") -> bool:
+    return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _init() -> None:
-    global store, embedder
+    global store, embedder, llm, extractor, gate
     os.makedirs(DATA_DIR, exist_ok=True)
     store = MemoryStore(DB_PATH, schema_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql"))
     embedder = Embedder(
@@ -50,8 +60,27 @@ def _init() -> None:
         timeout=float(os.environ.get("CMEM_EMBED_TIMEOUT", "20")),
         batch_size=int(os.environ.get("CMEM_EMBED_BATCH", "16")),
     )
+    # 写入门控用到的 LLM：抽取事实 + 逐条判定（mem0 那套）
+    llm = LLM(
+        base_url=os.environ.get("CMEM_LLM_BASE", ""),
+        api_key=os.environ.get("CMEM_LLM_KEY", ""),
+        model=os.environ.get("CMEM_LLM_MODEL", ""),
+        timeout=float(os.environ.get("CMEM_LLM_TIMEOUT", "60")),
+    )
+    extractor = Extractor(llm, store, ExtractConfig(
+        enabled=_flag("CMEM_EXTRACT"),
+        max_facts=int(os.environ.get("CMEM_EXTRACT_MAX_FACTS", "6")),
+        neighbor_k=int(os.environ.get("CMEM_EXTRACT_NEIGHBORS", "5")),
+    ))
+    gate = SurprisalGate(
+        embedder=embedder,
+        threshold=float(os.environ.get("CMEM_SURPRISAL_THRESHOLD", "0.35")),
+    )
     print(
-        f"[cmem] db={DB_PATH} embedding={'on:' + embedder.model if embedder.enabled else 'off (BM25 only)'}",
+        f"[cmem] db={DB_PATH} "
+        f"embedding={'on:' + embedder.model if embedder.enabled else 'off (BM25 only)'} "
+        f"extract={'on:' + llm.model if extractor.enabled else 'off'} "
+        f"surprisal_threshold={gate.threshold}",
         flush=True,
     )
 
@@ -81,6 +110,14 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("body too large")
         raw = self.rfile.read(length)
         return json.loads(raw.decode("utf-8")) if raw else {}
+
+    def _raw_body(self, limit: int = MAX_BODY) -> bytes:
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0:
+            return b""
+        if length > limit:
+            raise ValueError(f"body too large ({length} > {limit})")
+        return self.rfile.read(length)
 
     def _authorized(self) -> bool:
         if not AUTH_TOKEN:
@@ -114,6 +151,9 @@ class Handler(BaseHTTPRequestHandler):
                 "db": DB_PATH,
                 "stats": store.stats(),
                 "embedding": embedder.health(),
+                "llm": llm.health(),
+                "extract_enabled": extractor.enabled,
+                "surprisal_threshold": gate.threshold,
             }))
         elif path == "/stats":
             self._guard(lambda: self._json(200, {"ok": True, "stats": store.stats()}))
@@ -126,6 +166,8 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/log":
             limit = int((query.get("limit") or ["50"])[0])
             self._guard(lambda: self._json(200, {"ok": True, "items": self._recent_log(limit)}))
+        elif path == "/export":
+            self._guard(self._export)
         else:
             self._json(404, {"ok": False, "error": "not found"})
 
@@ -140,6 +182,12 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._forget(mem_id))
         elif path == "/consolidate":
             self._guard(lambda: self._consolidate())
+        elif path == "/import":
+            self._guard(self._import)
+        elif path == "/surprisal":
+            self._guard(self._surprisal)
+        elif path == "/extract":
+            self._guard(self._extract)
         else:
             self._json(404, {"ok": False, "error": "not found"})
 
@@ -228,6 +276,83 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 seen.add(key)
         self._json(200, {"ok": True, "removed": removed})
+
+    def _export(self) -> None:
+        """导出成 JSONL：一行一条记忆，第一行是清单（条数 + 内容指纹）。
+
+        这是「转移格式」，不是存储格式。直接拷 memories.db 在 WAL 模式下
+        会丢最近的写入，而且 .db 是物理格式，schema 一变就不可读。
+        """
+        manifest = store.export_manifest()
+        records = store.export_records()
+        lines = [json.dumps(manifest, ensure_ascii=False)]
+        lines.extend(json.dumps(r, ensure_ascii=False) for r in records)
+        body = ("\n".join(lines) + "\n").encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Content-Disposition", 'attachment; filename="memories.jsonl"')
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _import(self) -> None:
+        """导入 JSONL。?mode=merge（默认，分配新 id）或 ?mode=replace（整库替换）。"""
+        qs = parse_qs(urlparse(self.path).query)
+        mode = (qs.get("mode") or ["merge"])[0]
+        raw = self._raw_body(limit=512 << 20)
+        if not raw:
+            raise ValueError("empty body")
+        text = raw.decode("utf-8", "replace")
+
+        records: list[dict] = []
+        bad = 0
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                bad += 1
+        if not records:
+            raise ValueError("no parseable records")
+
+        manifest = next((r for r in records if isinstance(r, dict) and r.get("type") == "manifest"), None)
+        with _lock:
+            res = store.import_records(records, mode=mode)
+
+        check = "ok"
+        if manifest:
+            expected = manifest.get("count")
+            if expected is not None and int(expected) != res["count"]:
+                check = f"mismatch: 清单 {expected} 条，库内现有 {res['count']} 条"
+            elif manifest.get("content_sha256") and mode == "replace":
+                fp = store.fingerprint()
+                if fp["sha256"] != manifest["content_sha256"]:
+                    check = "content_sha256 不一致：记忆内容与导出时不同"
+        self._json(200, {"ok": True, **res, "bad_lines": bad, "manifest_check": check})
+
+    def _surprisal(self) -> None:
+        """惊讶度门控：这一轮值不值得写进 L0。"""
+        body = self._body()
+        text = str(body.get("text") or "")
+        context = str(body.get("context") or "")
+        res = gate.score(text, context)
+        self._json(200, {"ok": True, **res})
+
+    def _extract(self) -> None:
+        """LLM 抽取 + 逐条判定（ADD/UPDATE/DELETE/NONE）。
+
+        耗时可能到几十秒（两次 LLM 调用），调用方应当 fire-and-forget。
+        没配 LLM 时返回 503 和 degraded 原因，调用方退回到直接存原话。
+        """
+        body = self._body()
+        res = extractor.process_turn(
+            user_text=str(body.get("user_text") or ""),
+            assistant_text=str(body.get("assistant_text") or ""),
+            subject=str(body.get("subject") or "self"),
+        )
+        self._json(200 if res.get("ok") else 503, res)
 
     def _recent_log(self, limit: int) -> list[dict]:
         rows = store.conn.execute(
