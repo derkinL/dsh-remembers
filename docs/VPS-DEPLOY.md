@@ -95,13 +95,17 @@ sudo ufw status
 
 ## 6. 备份（别跳这一步）
 
-记忆是唯一不可再生的数据。加个 cron：
+记忆是唯一不可再生的数据。一条命令装好定时任务：
 
 ```bash
-crontab -e
-# 每天 04:10 备份，保留 14 份
-10 4 * * * cd /opt/dsh-remembers/service && docker compose exec -T companion-memory python backup.py backup --keep 14 >> /var/log/cmem-backup.log 2>&1
+cd /opt/dsh-remembers/service
+chmod +x install-cron.sh
+./install-cron.sh                  # 每天 04:10，保留 14 份
+# 改时间/份数：SCHEDULE="30 3 * * *" KEEP=30 ./install-cron.sh
+# 卸掉：       ./install-cron.sh --remove
 ```
+
+脚本是幂等的，重复跑只更新不叠加；而且**装之前会先真跑一次备份**，跑不通就不写 cron——不会装一个永远失败的定时任务。
 
 手动验证一次：
 
@@ -116,6 +120,16 @@ docker compose exec companion-memory python backup.py list
 docker compose exec companion-memory python backup.py restore memories-20261023-204729.db
 docker compose restart
 ```
+
+<details>
+<summary>手动写 cron 的话（不用脚本）</summary>
+
+```bash
+crontab -e
+10 4 * * * cd /opt/dsh-remembers/service && docker compose exec -T companion-memory python backup.py backup --keep 14 >> /var/log/cmem-backup.log 2>&1
+```
+
+</details>
 
 **异地再备一份**（记忆丢了没法重建）：
 

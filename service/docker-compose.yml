@@ -1,7 +1,7 @@
 services:
   companion-memory:
     build: .
-    image: companion-memory:local
+    image: dsh-remembers-service:1.0.0   # 带版本：重建前先 bump，出问题能回滚到上一个 tag
     container_name: companion-memory
     restart: unless-stopped
     ports:
