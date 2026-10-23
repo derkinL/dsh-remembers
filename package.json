@@ -21,8 +21,9 @@
       "patch": "./cordis.patch.yml"
     }
   },
+  "_peerRangeNote": "用 * 而不是版本范围：npm 的预发布匹配规则要求范围里存在同元组且带预发布标签的比较符，否则像 0.2.1-rc.2 这样的宿主版本会被静默排除（用户侧表现为 ERESOLVE）。本插件只用到 @deepseek-ai/dsh-llm 的 createUserMessage，DSH 加载插件时也会自己检查 peer，所以这里不设上界，把兼容判断交给宿主。",
   "peerDependencies": {
-    "@deepseek-ai/dsh-llm": ">=0.1.0-rc.6 <1.0.0-0"
+    "@deepseek-ai/dsh-llm": "*"
   },
   "engines": {
     "node": "^22.19.0 || >=24"
