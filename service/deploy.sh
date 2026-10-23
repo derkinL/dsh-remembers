@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# companion-memory 一键部署（Linux VPS）
+# companion-memory 一键部署（Linux VPS）—— **Docker 方式，备选**
+#
+# 默认路径是裸跑：sudo ./deploy-native.sh（见 ../docs/NATIVE-DEPLOY.md）。
+# 这个脚本只在「拉镜像和装依赖都通畅」时才值得用；拉不到 registry-1.docker.io 或
+# pypi.org 的环境请直接走裸跑，配镜像源比省下的麻烦多。
 #
 # 做什么：检查环境 → 生成鉴权 token → 建目录 → 构建镜像 → 启动 → 等健康检查
 # 不做什么：不自动装 Docker（权限大、风险高），只检测并给命令；不动防火墙规则

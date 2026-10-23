@@ -1,8 +1,32 @@
-# 裸跑部署（不用 Docker）
+# 裸跑部署（不用 Docker）—— 默认路径
 
-> **状态：未实测。** 仓库里有个 `service/deploy-native.sh` 把下面的步骤自动做了一遍，但它是在 Windows 上写的，没在真实 Ubuntu 上验证过（本地没有 systemd 可用）。**Docker 才是走过验证的路径**。真要换，第一次请手工照本文做一遍、确认每一步，再信任脚本。
+> **这是默认部署方式。** 一条命令：`sudo ./deploy-native.sh`。
+>
+> 诚实说明：这个脚本是在 Windows 上写的，**还没在真实 Ubuntu 上跑过一遍**（开发机没有 systemd）。它是照本文的手工步骤逐条实现的，但第一次部署请盯着每一步输出，尤其「等待健康检查」那一段。出问题就照下面的手工步骤逐条对照，两边的逻辑是一致的。
 
 Docker 只是**选项**，不是依赖。`requirements.txt` 里只有 `numpy>=1.26`，`Dockerfile` 的结尾就是 `python server.py`——没别的魔法。
+
+## 先记住一件事：端口要对齐
+
+服务默认 `127.0.0.1:8080`。**插件默认连的也是 8080。**
+
+如果你把服务放到别的端口（比如为避让改成 8081），必须同时做两件事，否则插件每步召回都静默失败：
+
+```bash
+# ① 服务端口
+service/.env  →  CMEM_PORT=8081
+
+# ② 让插件知道真实地址（二选一）
+export CMEM_URL=http://127.0.0.1:8081          # DSH 的运行环境里
+# 或写进 profile 的 cordis.patch.yml：
+#   - insert:
+#       - id: dsh-remembers
+#         name: 'dsh-remembers'
+#         config:
+#           endpoint: http://127.0.0.1:8081
+```
+
+`./install.sh` 会从 `.env` 读端口做健康检查，并在端口不是 8080 时把上面这段提示打出来。
 
 这份清单给你在 VPS 上裸跑。原则和 Docker 版一样：**别人拿不到、开机自启、崩溃自己起、备份别跳过。**
 

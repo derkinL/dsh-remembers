@@ -25,9 +25,31 @@ Docker 单容器
 
 ## 快速开始
 
+**默认裸跑**（只要 numpy，不用 Docker）：
+
 ```bash
-cp .env.example .env          # 填 embedding 端点（不填也能跑，只是没有语义召回）
+cp .env.example .env          # 填 CMEM_EMBED_*（语义召回）和 CMEM_LLM_*（episode 摘要）
+sudo ./deploy-native.sh       # 建 venv + cmem 用户 + systemd unit + 启动 + 等健康
+```
+
+它做的事就是下面这些手工步骤的自动化版，出问题可以逐条对照：[../docs/NATIVE-DEPLOY.md](../docs/NATIVE-DEPLOY.md)。
+
+手工跑（前台，调试用；退出就停）：
+
+```bash
+CMEM_DATA_DIR=./data CMEM_PORT=8080 python server.py
+```
+
+**Docker 方式**（备选，拉镜像和装依赖都通畅时才值得）：
+
+```bash
+cp .env.example .env
 docker compose up -d --build
+```
+
+验证：
+
+```bash
 curl -s localhost:8080/health | python -m json.tool
 ```
 

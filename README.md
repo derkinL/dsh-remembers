@@ -21,10 +21,14 @@
 
 | 项 | 要求 | 怎么查 |
 |---|---|---|
-| Docker | ≥ 20.10 + compose v2 | `docker compose version` |
+| **Python** | ≥ 3.10 + venv | `python3 -V` |
+| **systemd** | 任何现代发行版都有 | `systemctl --version` |
 | Node.js | ≥ 22.19 | `node -v` |
 | DSH | 0.1.x / 0.2.x 都行 | `dsh --version` |
 | 内存 | ≥ 512 MB | `free -m` |
+| ~~Docker~~ | **不需要** | 想用也行，见 [Docker 方式](#docker-方式备选) |
+
+只依赖 `numpy` 一个包。不用 Docker 是默认路径——单机单用户的小服务，Docker 那层只多出两个可能坏的外部依赖（拉镜像、装依赖）。
 
 ### 三步装完
 
@@ -33,16 +37,16 @@
 git clone https://github.com/derkinL/dsh-remembers
 cd dsh-remembers
 
-# 2. 起记忆服务（Docker，首次构建约 1-3 分钟）
+# 2. 起记忆服务（裸跑 + systemd，不用 Docker）
 cd service
 cp .env.example .env
-#    编辑 .env 填三行：CMEM_EMBED_BASE / CMEM_EMBED_KEY / CMEM_EMBED_MODEL
-#    不填也能跑，但只剩关键词检索，换个说法就召回不到
-./deploy.sh
+#    编辑 .env：CMEM_EMBED_*（语义检索）和 CMEM_LLM_*（episode 摘要）
+#    都不填也能跑，但只剩关键词检索，且前情提要那条线不通
+sudo ./deploy-native.sh        # 建 venv、建 cmem 用户、写 systemd unit、启动
 
 # 3. 装插件
 cd ..
-./install.sh              # 装 desktop profile：DSH_PROFILE=desktop ./install.sh
+./install.sh                   # 装 desktop profile：DSH_PROFILE=desktop ./install.sh
 ```
 
 然后重启 DSH：
@@ -56,6 +60,8 @@ dsh --profile web
 ```
 [dsh-remembers] loaded {"version":"1.0.0","endpoint":"http://127.0.0.1:8080","captureRaw":true}
 ```
+
+> 服务默认监听 `127.0.0.1:8080`。要换端口就在 `.env` 里改 `CMEM_PORT`，同时给插件设 `CMEM_URL=http://127.0.0.1:<端口>`——插件默认连的是 8080。`install.sh` 会读 `.env` 的端口，并在端口不是 8080 时提示你怎么对齐。
 
 ### 装完先验三件事
 
@@ -89,11 +95,13 @@ curl -s localhost:8080/search -H 'Content-Type: application/json' \
 
 | 现象 | 去看 |
 |---|---|
-| 容器起不来 | `docker compose logs --tail 100` |
+| 服务起不来（裸跑） | `systemctl status dsh-remembers` + `journalctl -u dsh-remembers -n 50` |
+| 服务起不来（Docker） | `docker compose logs --tail 100` |
 | 没有 `loaded` 日志 | profile 的 `dsh.profile.bundles` 里有没有 `dsh-remembers` |
 | 召回老是空 | `curl localhost:8080/log?limit=20`，看 outcome |
 | embedding 报错 | `/health` 里的 `last_error` |
-| 想跨机访问 | [docs/VPS-DEPLOY.md](docs/VPS-DEPLOY.md)（防火墙、备份 cron、离线镜像、SSH 隧道） |
+| 端口换了就连不上 | 插件默认连 8080；给 DSH 环境设 `CMEM_URL=http://127.0.0.1:<端口>` |
+| 想跨机访问 | [docs/VPS-DEPLOY.md](docs/VPS-DEPLOY.md)（防火墙、备份 cron、SSH 隧道） |
 
 ## 为什么不用现成的记忆方案
 
@@ -156,20 +164,22 @@ curl -s localhost:8080/search -H 'Content-Type: application/json' \
 | 插件 | `agent/pre-step` | 检索记忆，**有命中才注入**，空就不出现 |
 | 插件 | `turn/end` | 原话写进 L0 |
 | 插件 | `persona_update` 工具 | 只写自我认知那一半 |
-| 服务 | `service/`（Docker） | SQLite 单文件三路索引：结构化 / BM25 / 向量；分层衰减 + 诚实出口 |
+| 服务 | `service/`（Python + numpy） | SQLite 单文件三路索引：结构化 / BM25 / 向量；分层衰减 + 诚实出口 |
 
 插件是薄客户端，重活在服务里。服务挂了只影响「想起」和人格刷新，不影响对话本身——人格用上一份缓存。
 
 ## 安装
 
-**1. 先起记忆服务**（Docker，零框架依赖：`python:3.12-slim` + numpy）
+**1. 先起记忆服务**（裸跑 + systemd，只依赖 numpy）
 
 ```bash
 git clone https://github.com/derkinL/dsh-remembers
 cd dsh-remembers/service
-cp .env.example .env          # 填 embedding 端点（不填也能跑，只有 BM25）
-./deploy.sh
+cp .env.example .env          # 填 CMEM_EMBED_*（语义）和 CMEM_LLM_*（episode）
+sudo ./deploy-native.sh
 ```
+
+脚本会：建 venv 装 numpy → 建 `cmem` 系统用户 → 建 `data/`（700）→ 写 systemd unit（带 `ProtectSystem=strict` 加固）→ 启动 → 等健康检查。
 
 **2. 再装插件**
 
@@ -178,6 +188,18 @@ cd ..
 ./install.sh                   # 默认 web profile
 DSH_PROFILE=desktop ./install.sh
 ```
+
+### Docker 方式（备选）
+
+Docker 只是可选项，不是依赖。适合：机器上已经有一堆 Docker 服务要统一编排，或者不想在宿主机装 Python 包。
+
+```bash
+cd service
+cp .env.example .env
+./deploy.sh                    # 需要能拉到 python:3.12-slim，且能 pip 装 numpy
+```
+
+两种方式的数据互通：`service/data/` 一个目录，互迁只需要改属主（`chown -R cmem:cmem data` ↔ 改回来）。详见 [docs/NATIVE-DEPLOY.md](docs/NATIVE-DEPLOY.md) 和 [docs/VPS-DEPLOY.md](docs/VPS-DEPLOY.md)。
 
 或者直接从 GitHub 装（需要先起服务）：
 

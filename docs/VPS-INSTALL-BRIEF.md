@@ -49,27 +49,52 @@ git clone https://github.com/derkinL/dsh-remembers /opt/dsh-remembers
 
 ## 第 1 步：起记忆服务
 
-> **先选一条路**：Docker（本节）还是裸跑（[NATIVE-DEPLOY.md](NATIVE-DEPLOY.md)，venv + systemd，更新不用重建镜像）。两条路只能选一条，别混着来。
+**默认裸跑（Python + systemd），不用 Docker。** 只依赖 `numpy`。Docker 是备选，只在拉镜像和装依赖都通畅时才值得。
+
+> 拉不到 `registry-1.docker.io` / `pypi.org` 的环境，别碰 Docker 那条路——配镜像源、改 Dockerfile 换源的工夫，比裸跑麻烦得多。
+
+### 1.1 配置
 
 ```bash
 cd /opt/dsh-remembers/service
 cp -n .env.example .env
+chmod 600 .env
 ```
 
-编辑 `.env`，填这三行（值向用户要）：
+编辑 `.env`，两组值都要（向用户要）：
 
 ```bash
+# 语义检索要它；不填只剩关键词检索
 CMEM_EMBED_BASE=https://你的端点/v1
 CMEM_EMBED_KEY=sk-xxxx
 CMEM_EMBED_MODEL=qwen3.7-text-embedding-flash
+
+# episode 摘要要它；不填则前情提要那条线不通
+CMEM_LLM_BASE=https://api.deepseek.com/v1
+CMEM_LLM_KEY=sk-xxxx
+CMEM_LLM_MODEL=deepseek-flash
 ```
 
-然后：
+### 1.2 启动
+
+**优先用脚本**（它幂等，重复跑只更新 unit 和依赖）：
 
 ```bash
-chmod +x deploy.sh
-./deploy.sh
+cd /opt/dsh-remembers/service
+chmod +x deploy-native.sh
+sudo ./deploy-native.sh            # 默认 8080；要改端口加 --port 8081
 ```
+
+它做这些：建 venv 装 numpy → 建 `cmem` 系统用户 → 建 `data/`（700）→ 写 `/etc/systemd/system/dsh-remembers.service`（带 `ProtectSystem=strict` 加固、`EnvironmentFile` 指向 .env）→ 启动 → 等健康检查。
+
+**如果你要自己写 unit**（比如用 `systemd --user` 不想 sudo），照 [NATIVE-DEPLOY.md](NATIVE-DEPLOY.md) 里的模板，但这两条不能少：
+
+```ini
+EnvironmentFile=/opt/dsh-remembers/service/.env   # server.py 自己不读 .env
+ReadWritePaths=/opt/dsh-remembers/service/data     # ProtectSystem=strict 下唯一可写目录
+```
+
+用 `systemd --user` 的话，开机自启还需要一条 root 命令：`sudo loginctl enable-linger <用户名>`。不做的话 SSH 一断服务就被回收。
 
 **验证：**
 

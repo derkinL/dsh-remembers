@@ -1,4 +1,8 @@
-# VPS 部署清单
+# VPS 部署清单（Docker 方式）
+
+> **这是备选路径。** 默认部署方式是裸跑（Python + systemd），见 [NATIVE-DEPLOY.md](NATIVE-DEPLOY.md)。
+>
+> 用 Docker 只在一种情况下划算：机器上已经有一堆容器要统一编排，或者不想在宿主机装 Python 包。**如果拉不到 `registry-1.docker.io` 或 `pypi.org`，别走这条路**——配镜像源、改 Dockerfile 换源的工夫比裸跑麻烦得多。
 
 记忆是**极私密**的数据。这份清单的第一原则不是「跑起来」，是「别人拿不到」。
 
