@@ -130,7 +130,7 @@ curl -s localhost:8080/search -H 'Content-Type: application/json' \
 
 | 字段 | 谁写 | 放在哪 | 上限 |
 |---|---|---|---|
-| **宪法区** `constitution` | **只有你**（设置页） | `systemPrompt` 的 `remembers:persona` 段，前半 | 8000 字符 |
+| **宪法区** `constitution` | **只有你**（设置页） | `systemPrompt` 的 `remembers:persona` 段，前半 | 10000 字符 |
 | **自我认知区** `self_model` | 你 **和** 她（`persona_update` 工具） | 同一段，排在后半 | 4000 字符 |
 
 **分区不是界面上的只读框，是服务端的墙。** AI 侧那个写接口是 `POST /persona/self`，它压根没有 `constitution` 这个参数；硬塞进去也被忽略。插件坏了、模型抽了，最多也就改掉半张卡。
