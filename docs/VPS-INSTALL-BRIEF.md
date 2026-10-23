@@ -49,6 +49,8 @@ git clone https://github.com/derkinL/dsh-remembers /opt/dsh-remembers
 
 ## 第 1 步：起记忆服务
 
+> **先选一条路**：Docker（本节）还是裸跑（[NATIVE-DEPLOY.md](NATIVE-DEPLOY.md)，venv + systemd，更新不用重建镜像）。两条路只能选一条，别混着来。
+
 ```bash
 cd /opt/dsh-remembers/service
 cp -n .env.example .env
