@@ -170,11 +170,22 @@ class Handler(BaseHTTPRequestHandler):
         if args and str(args[0]).startswith(("4", "5")):
             sys.stderr.write("[cmem] %s\n" % (fmt % args))
 
+    def _cors_headers(self) -> None:
+        # 插件设置页在浏览器里跨域访问本服务（页面在 dsh 的端口，服务在 8081），
+        # 缺这些头 fetch 会被浏览器拦成 "Failed to fetch"。
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header(
+            "Access-Control-Allow-Headers", "Content-Type, X-Auth-Token, Authorization"
+        )
+        self.send_header("Access-Control-Max-Age", "86400")
+
     def _json(self, code: int, payload: dict) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self._cors_headers()
         self.end_headers()
         self.wfile.write(body)
 
@@ -217,6 +228,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json(500, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
 
     # -- 路由 ---------------------------------------------------------------
+
+    def do_OPTIONS(self) -> None:
+        # CORS 预检：浏览器发 POST（带自定义头）前会先探一次
+        self.send_response(204)
+        self._cors_headers()
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
