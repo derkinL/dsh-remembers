@@ -166,10 +166,12 @@ DSH 的 profile MCP 配置里加一条 stdio 命令：
 
 - **注入走 pre-step 返回新 messages**，不是 `agent.appendUserMessage`——直接 append 会绕过宿主的消息闸门。
 - **消息用宿主构造器** `createUserMessage({ content:[{type:"text",text}], source:{ kind:"plugin:dsh-remembers", plugin, form } })`，不手搓对象。
-- **不用 system prompt**：persona 声明 `complete:true` 的预设会把其它段落静默丢掉。
+- **人格走 system prompt 的独立段，记忆走 pre-step**：人格是「一直成立的前提」，得摆在权重最高的位置；记忆是「想起什么算什么」，有命中才追加。人格段确实会被声明 `complete:true` 的预设整段吞掉，所以 `agent.inject` 那条 L4 兜底路保留着。
 - **空结果不注入**，且**同内容去重**（sha256，同一会话不重复塞）。
 
-本地验证：mock ctx + 真服务，11 项断言全过（profile 注入、召回注入、去重、无命中不注入、subagent 跳过、L0 写入、原话可检索、空轮不写）。
+本地验证：mock ctx + 真服务，16 项断言全过（profile 注入、召回注入、去重、无命中不注入、subagent 跳过、L0 写入、原话可检索、空轮不写、人格段接管 self 的 L4、AI 改不动宪法、越权参数被忽略、超长拒绝、人格段渲染、空人格不注入）。
+
+服务跑起来不需要 Docker：`requirements.txt` 里只有 `numpy>=1.26`，`python server.py` 直接起。Docker 只是给 VPS 部署用的（隔离、开机自启、备份 cron）。
 
 > **未验证**：真实 `@deepseek-ai/dsh-llm`（打包在 app.asar 内，磁盘上没有展开包），本地用结构等价的 mock 替身。装到 VPS 后第一件事是确认日志里有 `[dsh-remembers] loaded`。
 

@@ -81,6 +81,45 @@ curl -s localhost:8080/health | python3 -m json.tool
 
 embedding 调不通也不致命——写入会跳过向量，BM25 照常工作，`/health` 的 `last_error` 会告诉你原因。
 
+## 4.5 人格设定（这次新增的那半边）
+
+人格和记忆共用一个服务，但入口不一样：
+
+| 想用 | 怎么装 | 为什么 |
+|---|---|---|
+| 记忆（L0/L1/L2/L3/L4） | 插件 **或** MCP 都行 | 两者都是 pre-step 追加消息 |
+| **人格段（宪法 + 自我认知）** | **只能插件** | MCP 只提供工具，不往 systemPrompt 注册段落 |
+
+所以第 7 节里 `mcp_server.py` 那套**没有人格注入**，只有 `memory_*` 工具。
+
+### 建表是自动的
+
+老库升级不用手迁：`schema.sql` 是 `CREATE TABLE IF NOT EXISTS` + `INSERT OR IGNORE`，服务启动时自己补 `persona` 表，两半默认为空。
+
+**两半都空 = 整段不注入**。所以装完先去设置页把宪法填上，否则看起来像「没生效」。
+
+### 改完要重建镜像
+
+改了 `server.py` / `schema.sql` / `memory_core.py` 之后，只 `docker compose restart` 不够——代码在镜像里：
+
+```bash
+docker compose up -d --build
+```
+
+### 设置页要能 HTTP 到服务
+
+人格是在 DSH 的设置页改的，页面用 `fetch` 打 `CMEM_URL`：
+
+- 服务绑 `127.0.0.1:8080` 且 DSH 同机 → 直接可写
+- DSH 在另一台 → 走第 7 节的 SSH 隧道，或者绑内网地址 + 加 token
+- **别为了改人格把 8080 裸放公网**
+
+### 备份已经覆盖人格
+
+`backup.py` 用的是 SQLite 在线整库备份（`src.backup(dst)`），`persona` 表在里头，每日 cron 就带上了。
+
+但 `/export` 的 JSONL **不含**人格 —— 那是记忆的迁移格式，不是整库。两者别搞混。
+
 ## 5. 防火墙（只在需要跨机时）
 
 ```bash
