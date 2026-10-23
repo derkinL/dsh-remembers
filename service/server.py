@@ -15,6 +15,7 @@
   GET  /persona                     人格设定：宪法区 + 自我认知区
   POST /persona                     设置页保存（两半都能写）
   POST /persona/self                插件/AI 写入（只能写自我认知区，宪法区没有参数）
+  POST /episode                     把一段对话压成一条 L3 事件记录（需要配 LLM）
 """
 
 from __future__ import annotations
@@ -275,6 +276,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(self._set_self_model)
         elif path == "/extract":
             self._guard(self._extract)
+        elif path == "/episode":
+            self._guard(self._episode)
         else:
             self._json(404, {"ok": False, "error": "not found"})
 
@@ -469,6 +472,24 @@ class Handler(BaseHTTPRequestHandler):
         with _lock:
             data = store.set_self_model(text)
         self._json(200, self._persona_payload(data))
+
+    def _episode(self) -> None:
+        """把一段对话压成一条 L3 事件记录（episode）。
+
+        调用时机由插件决定（攒够 N 轮或超时），这里只负责压缩 + 落库。
+        只要求配了 LLM，不看 extract 开关——逐条抽取按轮算钱，episode 按段算。
+        没配 LLM 时返回 503，插件侧静默跳过：这条链路不能影响对话本身。
+        """
+        body = self._body()
+        turns = body.get("turns")
+        if not isinstance(turns, list) or not turns:
+            raise ValueError("turns is required")
+        res = extractor.summarize_episode(
+            turns=turns[:400],
+            subject=str(body.get("subject") or "self"),
+            window_hint=str(body.get("window") or ""),
+        )
+        self._json(200 if res.get("ok") else 503, res)
 
     def _get_config(self) -> None:
         """给设置页读的配置。密钥一律脱敏，只告诉前端「设了没有」。"""

@@ -25,6 +25,9 @@ const ENV = {
   personaMaxChars: ["CMEM_PERSONA_MAX_CHARS"],
   personaRefreshMs: ["CMEM_PERSONA_REFRESH_MS"],
   personaAllowWrite: ["CMEM_PERSONA_ALLOW_WRITE"],
+  episodeEnabled: ["CMEM_EPISODE"],
+  episodeEveryTurns: ["CMEM_EPISODE_TURNS"],
+  episodeMaxMinutes: ["CMEM_EPISODE_MINUTES"],
 };
 
 function pick(env, names) {
@@ -80,5 +83,13 @@ export function resolveConfig(input = {}, env = process.env) {
     personaRefreshMs: toInt(value("personaRefreshMs"), 60000, 1000, 600000),
     // 给不给 AI 写「自我认知区」的权限。宪法区无论如何都写不到（服务端没有那个入口）
     personaAllowWrite: toBool(value("personaAllowWrite"), true),
+
+    // episode：攒够一段对话就压成一条 L3 事件，防止上下文被 compaction 压扁后什么都不剩。
+    // 服务端没配 LLM 时会静默跳过（日志记 episode_degraded），不影响对话。
+    episodeEnabled: toBool(value("episodeEnabled"), true),
+    // 攒够这么多轮就压一次。20 轮大概是一段完整话题的量
+    episodeEveryTurns: toInt(value("episodeEveryTurns"), 20, 3, 200),
+    // 或者从这一段开始算起超过这么久也压一次：夜里断断续续聊也能收住
+    episodeMaxMinutes: toInt(value("episodeMaxMinutes"), 120, 5, 1440),
   };
 }

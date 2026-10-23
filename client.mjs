@@ -124,4 +124,12 @@ export class MemoryClient {
   async setSelfModel(text) {
     return this.#request("POST", "/persona/self", { text });
   }
+
+  /**
+   * 把一段对话压成一条 L3 事件记录（episode）。
+   * 要调 LLM，所以超时给足；服务端没配 LLM 时返回 {ok:false,degraded}。
+   */
+  async episode({ turns, subject = "self", window }) {
+    return this.#request("POST", "/episode", { turns, subject, window }, 120000);
+  }
 }

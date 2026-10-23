@@ -121,6 +121,8 @@ export function apply(ctx, input = {}) {
         turnUser: "",
         turnAssistant: "",
         recentUser: [],           // 最近几条用户输入，给惊讶度门控做参照
+        episodeTurns: [],         // 攒着等压成 episode 的轮次
+        episodeStartedAt: 0,      // 这一段从什么时候开始（ms）
         writes: Promise.resolve(),
       };
       states.set(id, state);
@@ -298,7 +300,56 @@ export function apply(ctx, input = {}) {
         })
         .catch((error) => log("extract_error", { error: String(error?.message ?? error) }));
     }
+
+    // ---- 门控 3：episode 缓冲 ----
+    // 跟上面两个门控是独立的事：那两个决定「存不存原话 / 抽不抽事实」，
+    // 这个决定「要不要把这一段压成一条前情」。上下文被 compaction 压扁之后，
+    // 只有它留下的东西还能告诉未来的她「这段时间我们是怎么过来的」。
+    trackEpisode(state, user, assistant);
   });
+
+  // -------------------------------------------------------------------------
+  // episode：攒够一段就压成 L3 事件
+  // -------------------------------------------------------------------------
+  // 为什么不用内核的 compaction 摘要：那份摘要是 DSH 自己算的，用完就扔，
+  // 而且格式面向"接着聊"，不是"记住"。这里自己留一份，格式面向以后回想。
+  // 触发条件二选一：攒够 episodeEveryTurns 轮，或者这一段聊了超过 episodeMaxMinutes。
+  function trackEpisode(state, user, assistant) {
+    if (!config.episodeEnabled || !client.enabled) return;
+    if (!user) return;
+
+    if (!state.episodeStartedAt) state.episodeStartedAt = Date.now();
+    state.episodeTurns.push({ user: clip(user, 800), assistant: clip(assistant, 800) });
+    if (state.episodeTurns.length > 400) state.episodeTurns.shift();   // 硬上限，防内存涨
+
+    const minutes = (Date.now() - state.episodeStartedAt) / 60000;
+    const enough = state.episodeTurns.length >= config.episodeEveryTurns;
+    const overdue = minutes >= config.episodeMaxMinutes && state.episodeTurns.length >= 3;
+    if (!enough && !overdue) return;
+
+    flushEpisode(state);
+  }
+
+  function flushEpisode(state) {
+    const turns = state.episodeTurns;
+    const startedAt = state.episodeStartedAt || Date.now();
+    state.episodeTurns = [];
+    state.episodeStartedAt = 0;
+    if (turns.length === 0) return;
+
+    const fmt = (ms) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
+    // fire-and-forget：压一段要几十秒，绝不能挂在 turn/end 上
+    client.episode({ turns, window: `${fmt(startedAt)} ~ ${fmt(Date.now())}` })
+      .then((res) => {
+        if (res?.ok) {
+          log("episode_saved", { session: state.id, id: res.id, turns: turns.length, chars: res.chars });
+        } else {
+          // 服务端没配 LLM 是最常见的原因，这不是错误，只是这条链路没开
+          log("episode_degraded", { session: state.id, reason: res?.degraded || "unavailable" });
+        }
+      })
+      .catch((error) => log("episode_error", { session: state.id, error: String(error?.message ?? error) }));
+  }
 
   // -------------------------------------------------------------------------
   // 4. 人格段：注册 + 定时刷新 + 自我认知写入工具

@@ -185,3 +185,33 @@ docker compose exec companion-memory python backup.py list
 6. 哪些步骤跳过了 / 失败了，以及原因
 
 **不要**在报告里说「全部完成」而实际有一步没过——这套东西最怕的就是静默失败。
+
+## 附：更新已有部署
+
+如果这台机器已经装过旧版本，**别重装整套**，只做这三步：
+
+```bash
+cd /opt/dsh-remembers
+git pull
+DSH_PROFILE=<PROFILE> ./install.sh --no-service
+cd service && docker compose up -d --build
+```
+
+然后重启 DSH，确认日志里 `[dsh-remembers] loaded` 还在。
+
+三条注意：
+
+| 项 | 说明 |
+|---|---|
+| 不会丢东西 | `install.sh` 先把旧版本挪成 `dsh-remembers.bak.<时间戳>`，再覆盖 |
+| `--build` 不能省 | `server.py` / `extractor.py` 的改动在镜像里，只 `docker compose restart` 不生效 |
+| 数据不用迁 | `persona` 和 `memory` 都在 `data/memories.db`；schema 用 `CREATE TABLE IF NOT EXISTS`，服务启动自动补表 |
+
+更新完可以顺手验一下新端点回来了没有：
+
+```bash
+curl -s -X POST localhost:8080/episode -H 'Content-Type: application/json' \
+  -d '{"turns":[{"user":"测试","assistant":"收到"}],"window":"test"}'
+```
+
+返回 `{"ok": false, "degraded": "llm-disabled"}` 也是正常的——说明端点在了，只是还没配 LLM（要配 `CMEM_LLM_*` 才会真的压缩）。返回 404 才是没更新成功。

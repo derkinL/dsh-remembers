@@ -10,3 +10,9 @@
       #   personaMaxChars: 4000    # 注进提示词的上限，超了截断
       #   personaRefreshMs: 60000  # 缓存刷新周期；新会话仍会强制刷一次
       #   personaAllowWrite: true  # 给不给 AI 写「自我认知」那半（宪法那半永远不给）
+      #
+      # episode：攒够一段对话就压成一条 L3 事件，防止上下文被 compaction 压扁后什么都不剩。
+      # 服务端没配 LLM 时会静默跳过，不影响对话。
+      #   episodeEnabled: true
+      #   episodeEveryTurns: 20    # 攒够多少轮压一次
+      #   episodeMaxMinutes: 120   # 或者这一段聊超多少分钟也压一次

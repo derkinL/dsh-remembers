@@ -54,12 +54,35 @@ DECIDE_SYSTEM = """你在管理一个记忆库。下面是「新事实」和「�
 [{"fact_index": 0, "op": "ADD|UPDATE|DELETE|NONE", "target_id": 123, "text": "合并后的完整文本", "reason": "一句话理由"}]"""
 
 
+EPISODE_SYSTEM = """你把一段连续对话压缩成一条「以后想起来有用」的事件记录。
+
+写什么：
+- 这段时间聊了什么（一两句抓主线，别逐条复述）
+- 她当时的状态和情绪走向（累、松下来、突然提起某件事）
+- 出现的转折、承诺、约定
+- 还没解决、下次可能要接着说的话头
+
+不写什么：
+- 寒暄、确认、重复过的内容
+- 助手自己说了什么（除非她明显因为那句话改变了语气）
+- 推测出来的东西
+
+输出要求：
+- Markdown，150-400 字，2-4 条短句，每条以「- 」开头
+- 第一行是日期标题，形如「## 2026-10-24 凌晨」
+- 只写确实成立的事，不确定的一律不写
+- 直接输出正文，前后不要任何说明文字"""
+
+
 @dataclass
 class ExtractConfig:
     enabled: bool = False
     max_facts: int = 6
     neighbor_k: int = 5
     max_context_chars: int = 3000
+    # episode 摘要的输入上限：超了留后面那段，近况比开头重要
+    episode_max_chars: int = 12000
+    episode_per_turn_chars: int = 800
 
 
 class Extractor:
@@ -138,6 +161,80 @@ class Extractor:
             details.append({"fact": text[:60], "op": op, "reason": decision.get("reason")})
 
         return {"ok": True, "facts": len(facts), "applied": applied, "details": details}
+
+    # -- episode：把一段对话压成事件线 ---------------------------------------
+
+    def summarize_episode(self, turns: list[dict], subject: str = "self",
+                          window_hint: str = "") -> dict:
+        """把一批对话轮次压成一条 L3 事件记录。
+
+        和 process_turn 的分工：
+          process_turn 抽「原子事实」（她过敏、她养猫），一条句话，长期有效。
+          summarize_episode 留「前情」（这段时间她怎么过来的），一段话，会过时。
+
+        为什么需要它：上下文被 compaction 压扁之后，早期对话只剩内核生成的
+        一份摘要，而那份摘要用完就扔。这条链路自己留一份，落在库里。
+
+        任何失败都不抛，返回 degraded，调用方静默跳过。
+        """
+        # 只看 LLM 通不通，不看 extract 开关：逐条抽取按轮算钱，episode 按段算，
+        # 两个开关应该分开。配了 LLM 就能用 episode，哪怕 extract 一直关着。
+        if self.llm is None or not getattr(self.llm, "enabled", False):
+            return {"ok": False, "degraded": "llm-disabled"}
+        if not isinstance(turns, list) or not turns:
+            return {"ok": True, "skipped": "empty"}
+
+        transcript = self._transcript(turns)
+        if not transcript:
+            return {"ok": True, "skipped": "empty-transcript"}
+
+        prompt = (f"时间：{window_hint}\n\n对话：\n{transcript}"
+                  if window_hint else f"对话：\n{transcript}")
+        text = self.llm.chat(EPISODE_SYSTEM, prompt, max_tokens=700)
+        if not text:
+            return {"ok": False, "degraded": "llm-failed",
+                    "error": getattr(self.llm, "last_error", None)}
+
+        text = text.strip()
+        if len(text) < 10:
+            return {"ok": False, "degraded": "too-short"}
+
+        vec = None
+        vec_model = None
+        if self.embedder is not None and getattr(self.embedder, "enabled", False):
+            vec = self.embedder.embed_one(text)
+            vec_model = self.embedder.model if vec else None
+
+        from memory_core import MemoryInput  # 延迟导入，避免循环
+        mid = self.store.add(MemoryInput(
+            text=text,
+            tier="L3",
+            subject=subject,
+            tags=["episode", f"turns:{len(turns)}"],
+            vec=vec,
+            vec_model=vec_model,
+        ))
+        return {"ok": True, "id": mid, "text": text, "chars": len(text), "turns": len(turns)}
+
+    def _transcript(self, turns: list[dict]) -> str:
+        lines = []
+        per = max(50, int(self.config.episode_per_turn_chars))
+        for turn in turns:
+            if not isinstance(turn, dict):
+                continue
+            user = str(turn.get("user") or "").strip()
+            assistant = str(turn.get("assistant") or "").strip()
+            if not user:
+                continue
+            lines.append(f"用户：{user[:per]}")
+            if assistant:
+                lines.append(f"她：{assistant[:per]}")
+        text = "\n".join(lines)
+        cap = max(1000, int(self.config.episode_max_chars))
+        if len(text) > cap:
+            # 留尾巴：近况比开头重要，开头的内容多半已经被前几条 episode 收过了
+            text = "…（前文已省略）\n" + text[-cap:]
+        return text
 
     # -- 内部 ---------------------------------------------------------------
 

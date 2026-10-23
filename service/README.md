@@ -86,6 +86,7 @@ score = 0.55 · bm25/(bm25+3) + 0.25 · max(0, cos) + 0.20 · 2^(-age/半衰期)
 | GET | `/persona` | 人格设定：宪法区 + 自我认知区 + 各自长度与上限 |
 | POST | `/persona` | 设置页保存，两半都能写（没传的字段保持原值） |
 | POST | `/persona/self` | **AI 侧入口，只能写自我认知区** —— 没有 `constitution` 参数 |
+| POST | `/episode` | 把一段对话压成一条 L3 事件记录（要配 LLM，不看 `extract` 开关） |
 | POST | `/ingest` | 写一条，`embed:false` 可跳过向量 |
 | POST | `/search` | 混合检索，`query` + `focus` |
 | POST | `/forget/{id}` | 删除 |

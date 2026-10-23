@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 插件行为测试：用 mock ctx 模拟 DSH 调用这些钩子，服务是真的（HTTP）。
  *
  * 覆盖：profile 注入 / 召回注入 / 同内容去重 / 无命中不注入 / L0 原话写入
@@ -75,7 +75,7 @@ async function main() {
   console.log(`服务就绪 memories=${health.stats.memories}`);
 
   // -------------------------------------------------------------------------
-  apply(ctx, { endpoint: BASE, captureMinChars: 6, personaRefreshMs: 1000 });
+  apply(ctx, { endpoint: BASE, captureMinChars: 6, personaRefreshMs: 1000, episodeEveryTurns: 3 });
   console.log(`插件：${name}  inject=[${inject.join(",")}]  handlers=${[...handlers.keys()].join(",")}`);
   assert.ok(handlers.has("agent/pre-step"), "pre-step 钩子必须注册");
   assert.ok(handlers.has("agent/created"), "agent/created 钩子必须注册");
@@ -228,7 +228,44 @@ async function main() {
   ok("空人格不注入");
 
   // -------------------------------------------------------------------------
-  console.log("\n[6] 其他");
+  console.log("\n[6] episode 缓冲与触发");
+  // 攒够 episodeEveryTurns(=3) 轮就该往服务端打一次 /episode。
+  // 服务端没配 LLM 时返回 503，插件应当记 episode_degraded 而不是抛错。
+  const episodeBefore = logs.filter((l) => l.includes("episode_")).length;
+  for (let i = 0; i < 3; i += 1) {
+    handlers.get("session/event")(session, {
+      type: "user/message",
+      data: userMsg(`第 ${i + 1} 轮：还在弄记忆插件，脑子有点糊了`),
+    });
+    handlers.get("session/event")(session, {
+      type: "assistant/message",
+      data: { message: assistantMsg("先停一下，明天再验。") },
+    });
+    handlers.get("turn/end")(session);
+  }
+  await new Promise((r) => setTimeout(r, 1500));
+
+  const episodeLogs = logs.filter((l) => l.includes("episode_"));
+  assert.ok(episodeLogs.length > episodeBefore, "攒够轮次后必须真的发出 episode 请求");
+  const lastEpisode = episodeLogs.at(-1) || "";
+  assert.ok(
+    lastEpisode.includes("episode_degraded") || lastEpisode.includes("episode_saved"),
+    `episode 结果应是 saved 或 degraded，实际：${lastEpisode}`,
+  );
+  ok("episode 已触发", lastEpisode.slice(0, 110));
+
+  // 触发后缓冲必须清空，不然会重复压同一段
+  const bufferAfter = episodeLogs.filter((l) => l.includes("episode_")).length;
+  handlers.get("turn/end")(session);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(
+    logs.filter((l) => l.includes("episode_")).length, bufferAfter,
+    "空轮不该再触发一次 episode",
+  );
+  ok("空轮不重复触发");
+
+  // -------------------------------------------------------------------------
+  console.log("\n[7] 其他");
   assert.ok(effects >= 1, "应注册清理 effect");
   ok("清理 effect 已注册", `count=${effects}`);
   const skippedLogs = logs.filter((l) => l.includes("recall_error") || l.includes("profile_error"));

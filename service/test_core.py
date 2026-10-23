@@ -1,4 +1,4 @@
-﻿"""本地自测：不依赖 Docker / 外部 API，验证分词、BM25、衰减、融合、诚实出口。"""
+"""本地自测：不依赖 Docker / 外部 API，验证分词、BM25、衰减、融合、诚实出口。"""
 
 from __future__ import annotations
 
@@ -119,11 +119,83 @@ def test_persona(store) -> None:
     print("  单边写入不影响另一半的时间戳 ...ok")
 
 
+class _FakeLLM:
+    """替身：不联网，固定返回一段 episode 文本。"""
+
+    def __init__(self, reply):
+        self.reply = reply
+        self.enabled = True
+        self.last_error = None
+        self.calls = 0
+
+    def chat(self, system, user, max_tokens=1200):
+        self.calls += 1
+        return self.reply
+
+    def chat_json(self, *a, **k):
+        return None
+
+
+class _DeadLLM(_FakeLLM):
+    def __init__(self):
+        super().__init__(None)
+        self.last_error = "HTTP 401: bad key"
+
+
+def test_episode(store) -> None:
+    """episode：一段对话压成一条 L3；失败不抛、不写脏数据。"""
+    from extractor import ExtractConfig, Extractor
+
+    print("\n--- episode 摘要 ---")
+    turns = [
+        {"user": "今天又在弄那个记忆插件", "assistant": "弄到哪一步了？"},
+        {"user": "人格那块终于跑通了，就是困", "assistant": "先睡，明天再验。"},
+    ]
+
+    # 1) LLM 调用失败 → degraded，不抛、不落库
+    dead = Extractor(_DeadLLM(), store, ExtractConfig(), embedder=None)
+    before = store.stats()["memories"]
+    res = dead.summarize_episode(turns, window_hint="2026-10-24 00:10")
+    assert res["ok"] is False and res["degraded"] == "llm-failed", res
+    assert store.stats()["memories"] == before, "失败的 episode 不该落库"
+    print(f"  LLM 失败 → degraded={res['degraded']}，库没变 ...ok")
+
+    # 2) 完全没 LLM
+    none_llm = Extractor(None, store, ExtractConfig(), embedder=None)
+    res = none_llm.summarize_episode(turns)
+    assert res["ok"] is False and res["degraded"] == "llm-disabled", res
+    print("  没 LLM → degraded=llm-disabled ...ok")
+
+    # 3) 正常：落一条 L3，带 episode 标签
+    fake = _FakeLLM("## 2026-10-24 凌晨\n\n- 她在弄记忆插件，人格那块跑通了。\n- 人很困，说好明天再验。")
+    ex = Extractor(fake, store, ExtractConfig(), embedder=None)
+    res = ex.summarize_episode(turns, window_hint="2026-10-24 00:10 ~ 00:40")
+    assert res["ok"] is True, res
+    assert res["turns"] == 2
+    row = store.conn.execute("SELECT tier, tags, text FROM memory WHERE id=?", (res["id"],)).fetchone()
+    assert row["tier"] == "L3", f"episode 必须是 L3，实际 {row['tier']}"
+    assert "episode" in (row["tags"] or ""), row["tags"]
+    assert "人格那块跑通了" in row["text"]
+    print(f"  落库成功 → id={res['id']} tier=L3 {res['chars']} 字符 ...ok")
+
+    # 4) 能被检索到（以后回想得起来）
+    hits = store.search("记忆插件 人格 困", top_k=3, now=NOW)
+    assert any(h.id == res["id"] for h in hits), "刚写的 episode 应该能被检索到"
+    print("  可被检索 ...ok")
+
+    # 5) 空输入 → skipped，不浪费 LLM 调用
+    calls_before = fake.calls
+    assert ex.summarize_episode([])["skipped"] == "empty"
+    assert fake.calls == calls_before, "空输入不该调 LLM"
+    print("  空输入不调 LLM ...ok")
+
+
 def main():
     store = build()
     print("stats:", store.stats())
 
     test_persona(store)
+    test_episode(store)
 
     # 1) 纯关键词命中
     show("query=加班 (关键词)", store.search("加班", top_k=3, now=NOW))
