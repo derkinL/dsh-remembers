@@ -1,0 +1,21 @@
+# 测试替身（假的 @deepseek-ai/dsh-llm），绝不提交
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+_tmp/
+
+# 记忆数据：极私密，永不入库
+service/data/
+*.db
+*.db-wal
+*.db-shm
+
+# 密钥
+.env
+service/.env
+
+# 系统
+.DS_Store
+Thumbs.db

@@ -1,0 +1,31 @@
+services:
+  companion-memory:
+    build: .
+    image: companion-memory:local
+    container_name: companion-memory
+    restart: unless-stopped
+    ports:
+      # 只绑本机回环；要跨机访问改成 "0.0.0.0:8080:8080" 并务必设 CMEM_AUTH_TOKEN
+      - "127.0.0.1:8080:8080"
+    environment:
+      CMEM_EMBED_BASE: ${CMEM_EMBED_BASE:-}
+      CMEM_EMBED_KEY: ${CMEM_EMBED_KEY:-}
+      CMEM_EMBED_MODEL: ${CMEM_EMBED_MODEL:-}
+      CMEM_EMBED_BATCH: ${CMEM_EMBED_BATCH:-16}
+      CMEM_EMBED_TIMEOUT: ${CMEM_EMBED_TIMEOUT:-20}
+      CMEM_AUTH_TOKEN: ${CMEM_AUTH_TOKEN:-}
+      CMEM_PORT: "8080"
+    volumes:
+      # 记忆就是这一个目录，备份 = 拷这个目录
+      - ./data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

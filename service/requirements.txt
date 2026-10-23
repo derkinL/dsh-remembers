@@ -1,0 +1,3 @@
+# companion-memory —— 情感陪伴记忆服务
+# 零框架依赖：标准库 HTTP + numpy
+numpy>=1.26

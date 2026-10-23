@@ -1,0 +1,41 @@
+{
+  "name": "dsh-remembers",
+  "version": "1.0.0",
+  "description": "情感陪伴向的 DSH 记忆插件：自动想起该想起的，宁可说想不起也不编。后端是 companion-memory 服务",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.mjs",
+    "client.mjs",
+    "config.mjs",
+    "cordis.patch.yml",
+    "install.sh",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm": ">=0.1.0-rc.6 <1.0.0-0"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "memory",
+    "long-term-memory",
+    "companion",
+    "bm25",
+    "rag"
+  ],
+  "license": "MIT"
+}

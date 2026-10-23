@@ -1,0 +1,20 @@
+# 仓库内一律 LF。Windows 上 core.autocrlf=true 会把 shell 脚本写成 CRLF，
+# 到 Linux 上就变成 `bad interpreter: /usr/bin/env bash^M`。
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.py   text eol=lf
+*.mjs  text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.sql  text eol=lf
+*.json text eol=lf
+*.txt  text eol=lf
+
+# 二进制
+*.png  binary
+*.jpg  binary
+*.gz   binary
+*.tar  binary
+*.db   binary

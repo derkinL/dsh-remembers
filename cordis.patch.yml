@@ -1,0 +1,5 @@
+# DSH 插件注册补丁
+# 用 insert 而不是覆盖：不动宿主已有的插件列表
+- insert:
+    - id: dsh-remembers
+      name: 'dsh-remembers'
