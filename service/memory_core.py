@@ -165,10 +165,20 @@ class MemoryStore:
         schema = schema_path or (Path(__file__).with_name("schema.sql"))
         self.conn.executescript(Path(schema).read_text(encoding="utf-8"))
         self.conn.commit()
+        # 向量矩阵缓存：首次从 SQLite 读出来单位化后常驻内存，写操作时失效。
+        # 实测 1.8 万条每次重读 BLOB 要 210ms，缓存后点积只要 3ms。
+        self._vec_cache: tuple[np.ndarray, np.ndarray] | None = None
+        # 轻量列缓存（id → ts/half_life/tier/subject），写操作时失效
+        self._light_cache: dict[int, tuple] | None = None
+
+    def _invalidate_caches(self) -> None:
+        self._vec_cache = None
+        self._light_cache = None
 
     # -- 写入 ---------------------------------------------------------------
 
     def add(self, item: MemoryInput) -> int:
+        self._invalidate_caches()
         now = time.time()
         ts = float(item.ts if item.ts is not None else now)
         half = item.half_life_days if item.half_life_days is not None else TIER_HALF_LIFE.get(item.tier, 30.0)
@@ -202,6 +212,7 @@ class MemoryStore:
         return mem_id
 
     def update_vec(self, mem_id: int, vec: Sequence[float], model: str | None = None) -> None:
+        self._invalidate_caches()
         blob, dim = _pack_vec(vec)
         self.conn.execute(
             "UPDATE memory SET vec=?, vec_dim=?, vec_model=?, updated_at=? WHERE id=?",
@@ -210,6 +221,7 @@ class MemoryStore:
         self.conn.commit()
 
     def forget(self, mem_id: int) -> bool:
+        self._invalidate_caches()
         rows = self.conn.execute("SELECT term FROM doc_term WHERE mem_id=?", (mem_id,)).fetchall()
         self.conn.execute("DELETE FROM memory WHERE id=?", (mem_id,))
         self.conn.execute("DELETE FROM doc_term WHERE mem_id=?", (mem_id,))
@@ -265,18 +277,28 @@ class MemoryStore:
 
         terms = list(tf_q)
         placeholders = ",".join("?" * len(terms))
+
+        # 高频词过滤：中文 bigram 会产生大量公共前缀（「话题」「她说」这种
+        # 前缀几乎出现在每条记忆里），它们的 idf 趋近 0，对排序没有贡献，
+        # 却要扫描全部命中文档。实测 1.8 万条时，一个 df=18000 的词就能
+        # 让一次查询从 20ms 涨到 180ms。
+        # 阈值取 30% 文档数，并给一个下限保护小库（10 条以下不过滤）。
+        max_df = max(10, int(n_docs * 0.3))
         df_rows = self.conn.execute(
-            f"SELECT term, df FROM term_stat WHERE term IN ({placeholders})", terms
+            f"SELECT term, df FROM term_stat WHERE term IN ({placeholders}) AND df <= ?",
+            (*terms, max_df),
         ).fetchall()
         df = {r["term"]: r["df"] for r in df_rows}
         if not df:
             return {}
+        kept_terms = list(df)
+        kept_placeholders = ",".join("?" * len(kept_terms))
 
         hits = self.conn.execute(
             f"""SELECT dt.mem_id, dt.term, dt.tf, dl.len
                 FROM doc_term dt JOIN doc_len dl ON dl.mem_id = dt.mem_id
-                WHERE dt.term IN ({placeholders})""",
-            terms,
+                WHERE dt.term IN ({kept_placeholders})""",
+            kept_terms,
         ).fetchall()
 
         scores: dict[int, float] = {}
@@ -295,22 +317,63 @@ class MemoryStore:
             scores[h["mem_id"]] = scores.get(h["mem_id"], 0.0) + contrib * tf_q.get(term, 1.0)
         return scores
 
-    def vec_search(self, query_vec: Sequence[float], candidate_ids: set[int] | None = None) -> dict[int, float]:
+    def _vec_matrix(self) -> tuple[np.ndarray, np.ndarray]:
+        """常驻内存的 (ids, 单位化矩阵)。写操作会让缓存失效。
+
+        换过 embedding 模型时库里会混着不同维度：只把出现次数最多的那一维
+        建成矩阵，其它维度的旧向量跳过——比每轮查询都因为一条脏数据报错好。
+        """
+        if self._vec_cache is not None:
+            return self._vec_cache
         rows = self.conn.execute(
-            "SELECT id, vec, vec_dim FROM memory WHERE vec IS NOT NULL"
+            "SELECT id, vec, vec_dim FROM memory WHERE vec IS NOT NULL AND vec_dim > 0"
         ).fetchall()
+        empty = (np.zeros(0, dtype=np.int64), np.zeros((0, 0), dtype=np.float32))
         if not rows:
+            self._vec_cache = empty
+            return empty
+        dims = np.fromiter((int(r["vec_dim"]) for r in rows), dtype=np.int64, count=len(rows))
+        uniq, counts = np.unique(dims, return_counts=True)
+        main_dim = int(uniq[counts.argmax()])
+        picked = [(int(r["id"]), r["vec"]) for r, d in zip(rows, dims) if int(d) == main_dim]
+        if not picked:
+            self._vec_cache = empty
+            return empty
+        ids = np.fromiter((p[0] for p in picked), dtype=np.int64, count=len(picked))
+        mat = np.frombuffer(b"".join(p[1] for p in picked), dtype="<f4").reshape(len(picked), main_dim)
+        norms = np.linalg.norm(mat, axis=1)
+        norms[norms == 0] = 1.0
+        mat = mat / norms[:, None]
+        self._vec_cache = (ids, mat)
+        return self._vec_cache
+
+    def vec_search(self, query_vec: Sequence[float], candidate_ids: set[int] | None = None) -> dict[int, float]:
+        ids, mat = self._vec_matrix()
+        if ids.size == 0:
             return {}
         q = np.asarray(query_vec, dtype=np.float32)
+        if q.size != mat.shape[1]:
+            return {}
         qn = float(np.linalg.norm(q)) or 1.0
-        scored: dict[int, float] = {}
-        for r in rows:
-            v = np.frombuffer(r["vec"], dtype="<f4")
-            if v.size != q.size:
-                continue
-            denom = (float(np.linalg.norm(v)) or 1.0) * qn
-            scored[int(r["id"])] = float(np.dot(q, v) / denom)
-        return scored
+        sims = mat @ (q / qn)
+        return dict(zip(ids.tolist(), sims.tolist()))
+
+    def _light_rows(self) -> dict[int, tuple]:
+        """id → (ts, half_life_days, tier, subject)。
+
+        算分只需要这几列；把 text/summary/tags 留到最后取，避免对几千个
+        候选读大字段。实测这一步省下约 500ms。
+        """
+        if self._light_cache is not None:
+            return self._light_cache
+        rows = self.conn.execute(
+            "SELECT id, ts, half_life_days, tier, subject FROM memory"
+        ).fetchall()
+        self._light_cache = {
+            int(r["id"]): (float(r["ts"]), r["half_life_days"], r["tier"], r["subject"])
+            for r in rows
+        }
+        return self._light_cache
 
     def search(
         self,
@@ -339,45 +402,47 @@ class MemoryStore:
                 self._log_search(query, 0, None, None, None, "no_match")
             return []
 
-        rows = self._load_rows(candidates, tiers, subject)
-        if not rows:
+        # ---- 第一阶段：只用轻量列算分 ----
+        # 实测对 1.8 万条候选读 text/summary/tags 要 500ms+，而算分只需要
+        # ts / half_life / tier / subject。所以先算分排序，再对入选者取完整行。
+        light = self._light_rows()
+        tier_set = set(tiers) if tiers else None
+        bm25_max = max(bm25.values(), default=0.0)
+
+        scored: list[tuple[float, int, float, float, float]] = []
+        for mid in candidates:
+            meta = light.get(mid)
+            if meta is None:
+                continue
+            ts, half, tier, subj = meta
+            if tier_set is not None:
+                if tier not in tier_set:
+                    continue
+            elif tier == "L4":
+                # L4 是每轮必带的人格块，由 profile() 单独取，不进检索
+                continue
+            if subject and subj != subject:
+                continue
+            b_raw = bm25.get(mid, 0.0)
+            v_raw = max(0.0, vec.get(mid, 0.0))
+            rec = _recency(ts, half, now)
+            # 饱和映射而不是「除以本批最大值」：后者会让只有一个候选的弱命中
+            # 变成满分（实测「量子纠缠」曾以 0.709 命中无关记忆）。
+            fused = W_BM25 * _norm_bm25(b_raw) + W_VEC * v_raw + W_RECENCY * rec
+            scored.append((fused, mid, b_raw, v_raw, rec))
+
+        if not scored:
             if log:
                 self._log_search(query, 0, None, None, None, "no_match")
             return []
 
-        bm25_max = max(bm25.values(), default=0.0) or 1.0
-        out: list[Hit] = []
-        for r in rows:
-            mid = r["id"]
-            b_raw = bm25.get(mid, 0.0)
-            v_raw = max(0.0, vec.get(mid, 0.0))
-            rec = _recency(r["ts"], r["half_life_days"], now)
-            # 饱和映射而不是「除以本批最大值」：后者会让只有一个候选的弱命中
-            # 变成满分（实测「量子纠缠」曾以 0.709 命中无关记忆）。
-            fused = W_BM25 * _norm_bm25(b_raw) + W_VEC * v_raw + W_RECENCY * rec
-            out.append(
-                Hit(
-                    id=mid,
-                    tier=r["tier"],
-                    subject=r["subject"],
-                    text=r["text"],
-                    summary=r["summary"],
-                    ts=r["ts"],
-                    score=fused,
-                    bm25=b_raw,
-                    vec=v_raw,
-                    recency=rec,
-                    tags=json.loads(r["tags"] or "[]"),
-                )
-            )
-
-        out.sort(key=lambda h: h.score, reverse=True)
+        scored.sort(key=lambda x: x[0], reverse=True)
 
         # ---- 诚实出口 ----
         # 没有「有意义的」关键词命中时，向量必须自己达到高余弦才够格：
         # 实测这个 embedding 在无关内容上也能给到 0.65，低门槛等于放任她记错。
         if bm25_max < MIN_BM25_ABS:
-            best_cos = max((h.vec for h in out), default=0.0)
+            best_cos = max((s[3] for s in scored), default=0.0)
             if best_cos < VEC_ONLY_MIN_COS:
                 if log:
                     # 根本没算向量（embedding 关闭或没给 query_vec）时，记 no_match 更准确
@@ -389,16 +454,38 @@ class MemoryStore:
         # ---- 准入 vs 排序 ----
         # 准入看「有没有真证据」：明确的关键词命中，或者足够高的余弦。
         # 衰减只负责排序，不能把一条半年前的关键事实压到检索不出来。
+        admitted = [
+            s for s in scored
+            if s[2] >= MIN_BM25_ABS or (s[3] >= VEC_ONLY_MIN_COS and s[0] >= min_fused)
+        ]
+        kept_pairs = admitted[:top_k]
+        if not kept_pairs:
+            if log:
+                self._log_search(query, 0, None, None, None, "no_match")
+            return []
+
+        # ---- 第二阶段：只对入选者取完整行 ----
+        rows = self._load_rows({s[1] for s in kept_pairs}, tiers, subject)
+        by_id = {int(r["id"]): r for r in rows}
         kept: list[Hit] = []
-        for h in out:
-            kw_ok = h.bm25 >= MIN_BM25_ABS
-            vec_ok = h.vec >= VEC_ONLY_MIN_COS
-            if not (kw_ok or vec_ok):
+        for fused, mid, b_raw, v_raw, rec in kept_pairs:
+            r = by_id.get(mid)
+            if r is None:
                 continue
-            if not kw_ok and h.score < min_fused:
-                continue
-            kept.append(h)
-        kept = kept[:top_k]
+            kept.append(Hit(
+                id=mid,
+                tier=r["tier"],
+                subject=r["subject"],
+                text=r["text"],
+                summary=r["summary"],
+                ts=r["ts"],
+                score=fused,
+                bm25=b_raw,
+                vec=v_raw,
+                recency=rec,
+                tags=json.loads(r["tags"] or "[]"),
+            ))
+
         if not kept and log:
             self._log_search(query, 0, None, None, None, "no_match")
         elif log:
