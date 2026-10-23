@@ -71,7 +71,7 @@ def _init() -> None:
         enabled=_flag("CMEM_EXTRACT"),
         max_facts=int(os.environ.get("CMEM_EXTRACT_MAX_FACTS", "6")),
         neighbor_k=int(os.environ.get("CMEM_EXTRACT_NEIGHBORS", "5")),
-    ))
+    ), embedder=embedder)
     gate = SurprisalGate(
         embedder=embedder,
         threshold=float(os.environ.get("CMEM_SURPRISAL_THRESHOLD", "0.35")),
@@ -186,6 +186,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(self._import)
         elif path == "/surprisal":
             self._guard(self._surprisal)
+        elif path == "/reindex":
+            self._guard(self._reindex)
         elif path == "/extract":
             self._guard(self._extract)
         else:
@@ -338,6 +340,12 @@ class Handler(BaseHTTPRequestHandler):
         text = str(body.get("text") or "")
         context = str(body.get("context") or "")
         res = gate.score(text, context)
+        self._json(200, {"ok": True, **res})
+
+    def _reindex(self) -> None:
+        """重建倒排索引。改了分词/权重，或者从老库升级过来之后跑一次。"""
+        with _lock:
+            res = store.reindex()
         self._json(200, {"ok": True, **res})
 
     def _extract(self) -> None:

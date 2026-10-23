@@ -28,9 +28,12 @@ EXTRACT_SYSTEM = """你从一段对话里抽取值得长期记住的事实。
 - 助手自己的话里没有新信息的部分
 
 严格输出 JSON 数组，不要任何其他文字：
-[{"text": "一句话", "tier": "L1|L2|L3", "subject": "self|人物名", "importance": 0.0}]
+[{"text": "一句话", "tier": "L1|L2|L3", "subject": "self|人物名", "importance": 0.0, "keywords": ["词1", "词2"]}]
 
 importance 表示「这件事对长期关系有多重要」，0.0-1.0。
+keywords 给 2-6 个「别人换个说法来问这件事时可能用到的词」——
+比如「她对香菜过敏」可以是 ["香菜", "过敏", "忌口", "饮食"]。
+这些词用来在语义召回之外补关键词召回，务必是原文里没有但意思相同的词。
 没有值得记的就输出 []。"""
 
 DECIDE_SYSTEM = """你在管理一个记忆库。下面是「新事实」和「这些事实最相似的已有记忆」。
@@ -60,10 +63,13 @@ class ExtractConfig:
 
 
 class Extractor:
-    def __init__(self, llm, store, config: ExtractConfig | None = None):
+    def __init__(self, llm, store, config: ExtractConfig | None = None, embedder=None):
         self.llm = llm
         self.store = store
         self.config = config or ExtractConfig()
+        # 抽取出来的事实也要算向量，否则它们只能被关键词命中，
+        # 「吃的东西有什么忌口」这种换个说法的问法就召回不到「对香菜过敏」。
+        self.embedder = embedder
 
     @property
     def enabled(self) -> bool:
@@ -136,21 +142,34 @@ class Extractor:
     # -- 内部 ---------------------------------------------------------------
 
     def _extract(self, user_text: str, assistant_text: str):
+        """抽取事实。空结果重试一次。
+
+        实测 deepseek-flash 在 temperature=0 下也会偶发返回空数组——
+        同一条「我爸住院了」有过抽出 1 条、也有过抽出 0 条。
+        漏抽比多抽一次更贵（那条记忆就永远没了），所以重试一次。
+        """
         convo = f"用户：{user_text[:self.config.max_context_chars]}"
         if assistant_text:
             convo += f"\n她：{assistant_text[:self.config.max_context_chars]}"
-        result = self.llm.chat_json(EXTRACT_SYSTEM, convo, max_tokens=900)
-        if result is None:
-            return None
-        if not isinstance(result, list):
-            result = result.get("facts") if isinstance(result, dict) else None
+
+        last = None
+        for _attempt in range(2):
+            result = self.llm.chat_json(EXTRACT_SYSTEM, convo, max_tokens=900)
+            if result is None:
+                continue
             if not isinstance(result, list):
-                return None
-        cleaned = []
-        for item in result[: self.config.max_facts]:
-            if isinstance(item, dict) and str(item.get("text") or "").strip():
-                cleaned.append(item)
-        return cleaned
+                nested = result.get("facts") if isinstance(result, dict) else None
+                if not isinstance(nested, list):
+                    continue
+                result = nested
+            cleaned = [
+                item for item in result[: self.config.max_facts]
+                if isinstance(item, dict) and str(item.get("text") or "").strip()
+            ]
+            last = cleaned
+            if cleaned:
+                return cleaned
+        return last
 
     def _decide(self, fact: dict, index: int, neighbors):
         if not neighbors:
@@ -189,9 +208,16 @@ class Extractor:
         tier = str(fact.get("tier") or "L1").upper()
         if tier not in {"L0", "L1", "L2", "L3", "L4"}:
             tier = "L1"
+        vec = None
+        vec_model = None
+        if self.embedder is not None and getattr(self.embedder, "enabled", False):
+            vec = self.embedder.embed_one(text)
+            vec_model = self.embedder.model if vec else None
         return MemoryInput(
             text=text,
             tier=tier,
             subject=str(fact.get("subject") or subject),
-            tags=["extracted"],
+            tags=["extracted"] + [str(k) for k in (fact.get("keywords") or [])][:8],
+            vec=vec,
+            vec_model=vec_model,
         )

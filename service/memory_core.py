@@ -42,6 +42,7 @@ MIN_FUSED = 0.30          # 融合分低于此值不返回
 MIN_BM25_ABS = 0.5        # BM25 绝对分低于此值视为「没有关键词命中」（滤掉单字噪声）
 VEC_ONLY_MIN_COS = 0.55   # 没有任何关键词命中时，向量单独活命所需的余弦下限
 CHAR_WEIGHT = 0.5         # 单字词相对 bigram 的权重
+TAG_WEIGHT = 1.5          # 标签词在倒排里的权重（换个说法主要靠它）
 FOCUS_BOOST = 4.0         # 最新用户输入的额外倍数（合计 5 倍）
 BM25_SATURATION = 3.0     # BM25 绝对分 → [0,1) 的饱和常数，不依赖同批最大值
 
@@ -237,7 +238,7 @@ class MemoryStore:
             ),
         )
         mem_id = int(cur.lastrowid)
-        self._index_terms(mem_id, item.text, item.summary)
+        self._index_terms(mem_id, item.text, item.summary, item.tags)
         self.conn.commit()
         return mem_id
 
@@ -257,7 +258,7 @@ class MemoryStore:
         """
         self._invalidate_caches()
         row = self.conn.execute(
-            "SELECT text, summary FROM memory WHERE id=?", (mem_id,)
+            "SELECT text, summary, tags FROM memory WHERE id=?", (mem_id,)
         ).fetchone()
         if row is None:
             return False
@@ -275,9 +276,26 @@ class MemoryStore:
             "UPDATE memory SET text=?, summary=?, updated_at=? WHERE id=?",
             (text, effective_summary, time.time(), mem_id),
         )
-        self._index_terms(mem_id, text, effective_summary)
+        self._index_terms(mem_id, text, effective_summary, json.loads(row["tags"] or "[]"))
         self.conn.commit()
         return True
+
+    def reindex(self) -> dict:
+        """重建全部倒排索引。
+
+        改了分词规则、权重、或者给老库补上 tags 索引之后跑一次。
+        只重建派生索引，不动 memory 表里的正文和向量。
+        """
+        self._invalidate_caches()
+        self.conn.execute("DELETE FROM doc_term")
+        self.conn.execute("DELETE FROM term_stat")
+        self.conn.execute("DELETE FROM doc_len")
+        rows = self.conn.execute("SELECT id, text, summary, tags FROM memory").fetchall()
+        for r in rows:
+            self._index_terms(int(r["id"]), r["text"], r["summary"], json.loads(r["tags"] or "[]"))
+        self.conn.commit()
+        terms = self.conn.execute("SELECT COUNT(*) FROM term_stat").fetchone()[0]
+        return {"reindexed": len(rows), "terms": terms}
 
     def forget(self, mem_id: int) -> bool:
         self._invalidate_caches()
@@ -291,9 +309,15 @@ class MemoryStore:
         self.conn.commit()
         return True
 
-    def _index_terms(self, mem_id: int, text: str, summary: str | None) -> None:
+    def _index_terms(self, mem_id: int, text: str, summary: str | None,
+                     tags: Sequence[str] | None = None) -> None:
         # 摘要命中按半权计入，避免摘要词压过原话
         tokens = tokenize(text) + [(t, w * 0.5) for t, w in tokenize(summary or "")]
+        # 标签也进倒排。权重 1.5 而不是 0.8：实测「家里谁生病了」对一条
+        # tag 含「生病」的记忆只拿到 bm25=0.49，差 0.01 过不了门槛。
+        # 换个说法的检索主要靠这些 tag，「宁可让标签重一点」。
+        if tags:
+            tokens += [(t, w * TAG_WEIGHT) for t, w in tokenize(" ".join(str(x) for x in tags))]
         tf = _tf_map(tokens)
         length = sum(tf.values()) or 1.0
         self.conn.execute("DELETE FROM doc_term WHERE mem_id=?", (mem_id,))
@@ -717,7 +741,7 @@ class MemoryStore:
                 cur = self.conn.execute(f"INSERT INTO memory({cols}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", vals)
                 mem_id = int(cur.lastrowid)
 
-            self._index_terms(mem_id, text, rec.get("summary"))
+            self._index_terms(mem_id, text, rec.get("summary"), tags)
             imported += 1
 
         self.conn.commit()

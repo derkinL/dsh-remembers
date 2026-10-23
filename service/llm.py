@@ -105,25 +105,45 @@ class LLM:
 
 
 def _extract_json(text: str):
-    """从可能带 ```json 围栏或前后废话的输出里挖出 JSON。"""
-    s = text.strip()
-    if s.startswith("```"):
-        first_newline = s.find("\n")
-        if first_newline != -1:
-            s = s[first_newline + 1:]
-        if s.rstrip().endswith("```"):
-            s = s.rstrip()[:-3]
-    s = s.strip()
+    """从 LLM 输出里挖出第一个合法的 JSON 值。
+
+    实测 deepseek-flash 会这样返回（temperature=0 也一样）：
+        [{"op":"ADD",...}]
+        <一段解释>
+        ```json
+        [{"op":"ADD",...}]
+        ```
+    所以不能用「找第一个 [ 到最后一个 ]」——那样会把两段拼在一起。
+    正确做法是从每个 `[`/`{` 位置尝试 raw_decode，取第一个能完整解析的。
+    """
+    s = (text or "").strip()
+    if not s:
+        return None
+
     try:
         return json.loads(s)
     except json.JSONDecodeError:
         pass
-    for opener, closer in (("[", "]"), ("{", "}")):
-        start = s.find(opener)
-        end = s.rfind(closer)
-        if start != -1 and end > start:
+
+    # 去掉 markdown 围栏后整体再试一次
+    if "```" in s:
+        start = s.find("```")
+        line_end = s.find("\n", start)
+        if line_end != -1:
+            close = s.find("```", line_end + 1)
+            if close != -1:
+                try:
+                    return json.loads(s[line_end + 1:close].strip())
+                except json.JSONDecodeError:
+                    pass
+
+    # 逐位置扫描：第一个能完整解析出来的 JSON 值就是答案
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(s):
+        if ch in "[{":
             try:
-                return json.loads(s[start:end + 1])
+                obj, _end = decoder.raw_decode(s, i)
+                return obj
             except json.JSONDecodeError:
                 continue
     return None
