@@ -50,11 +50,26 @@ export function apply(ctx, input = {}) {
   // 不写进 export const inject 的原因：某个宿主没有这两个服务时，硬注入会让
   // 整个插件永远停在等待状态 —— 那比少一个人格段严重得多。
   //
+  // 注意 cordis 的版本差异：4.0.5 起 ctx 代理对「未声明的服务属性」是 fail-closed
+  // 的 —— 访问会直接 throw `cannot get property "X" without inject`，而不是返回
+  // undefined。所以探测必须包 try/catch，否则整个 apply 会在入口炸掉、插件整包
+  // 不激活（DSH 0.2.1 上就是这么挂的）。
+  //
   // 优先读 ctx.xxx 属性而不是 ctx.get("xxx")：cordis 的 ctx 代理会把服务方法
   // 绑到正确的 this 上，而 get() 返回的是裸实例，直接调 .section() 有丢 this 的风险。
-  const soft = (key) => (ctx[key] !== undefined
-    ? ctx[key]
-    : (typeof ctx.get === "function" ? ctx.get(key) : undefined));
+  const soft = (key) => {
+    try {
+      const value = ctx[key];
+      if (value !== undefined) return value;
+    } catch {
+      // 未 inject 的宿主会抛错，视为服务不存在，走下面的兜底
+    }
+    try {
+      return typeof ctx.get === "function" ? ctx.get(key) : undefined;
+    } catch {
+      return undefined;
+    }
+  };
   const systemPrompt = soft("systemPrompt");
   const tools = soft("tools");
   /** 绑定过 this 的服务方法；服务不在或没有这个方法时返回 null。 */
