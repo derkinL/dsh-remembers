@@ -1,5 +1,7 @@
 # 裸跑部署（不用 Docker）
 
+> **状态：未实测。** 仓库里有个 `service/deploy-native.sh` 把下面的步骤自动做了一遍，但它是在 Windows 上写的，没在真实 Ubuntu 上验证过（本地没有 systemd 可用）。**Docker 才是走过验证的路径**。真要换，第一次请手工照本文做一遍、确认每一步，再信任脚本。
+
 Docker 只是**选项**，不是依赖。`requirements.txt` 里只有 `numpy>=1.26`，`Dockerfile` 的结尾就是 `python server.py`——没别的魔法。
 
 这份清单给你在 VPS 上裸跑。原则和 Docker 版一样：**别人拿不到、开机自启、崩溃自己起、备份别跳过。**
