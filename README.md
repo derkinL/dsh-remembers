@@ -11,6 +11,88 @@
 
 不是"检索到相关文档"，是"她记得你说过什么"。
 
+## 快速开始（中文）
+
+三步。跑完就能用。
+
+### 前置条件
+
+| 项 | 要求 | 怎么查 |
+|---|---|---|
+| Docker | ≥ 20.10 + compose v2 | `docker compose version` |
+| Node.js | ≥ 22.19 | `node -v` |
+| DSH | 0.1.x / 0.2.x 都行 | `dsh --version` |
+| 内存 | ≥ 512 MB | `free -m` |
+
+### 三步装完
+
+```bash
+# 1. 拿代码
+git clone https://github.com/derkinL/dsh-remembers
+cd dsh-remembers
+
+# 2. 起记忆服务（Docker，首次构建约 1-3 分钟）
+cd service
+cp .env.example .env
+#    编辑 .env 填三行：CMEM_EMBED_BASE / CMEM_EMBED_KEY / CMEM_EMBED_MODEL
+#    不填也能跑，但只剩关键词检索，换个说法就召回不到
+./deploy.sh
+
+# 3. 装插件
+cd ..
+./install.sh              # 装 desktop profile：DSH_PROFILE=desktop ./install.sh
+```
+
+然后重启 DSH：
+
+```bash
+dsh --profile web
+```
+
+看到这行就算成功：
+
+```
+[dsh-remembers] loaded {"version":"1.0.0","endpoint":"http://127.0.0.1:8080","captureRaw":true}
+```
+
+### 装完先验三件事
+
+```bash
+# ① 服务活着（embedding.enabled 要是 true）
+curl -s localhost:8080/health | python3 -m json.tool
+
+# ② 插件真的在送消息（先跟她说一句话，再看）
+curl -s "localhost:8080/log?limit=5"
+#    期望 outcome 是 ok 或 no_match；全空 = 插件没把消息送上去
+
+# ③ 诚实出口还在（应该返回空数组）
+curl -s localhost:8080/search -H 'Content-Type: application/json' \
+  -d '{"query":"量子纠缠退相干","top_k":3}'
+```
+
+**第 ③ 条如果返回了东西，停下。** 那说明她会开始编事给你听，这比失忆严重。
+
+### 灌数据的顺序
+
+| 顺序 | tier | 灌什么 |
+|---|---|---|
+| 1 | L4 | 你是谁、她叫什么、你们之间的称呼和约定 |
+| 2 | L2 | 她的稳定偏好、雷区、家人、宠物 |
+| 3 | L3 | 发生过的重要事件 |
+| 4 | L1 | 零散事实 |
+
+先 L4 再 L2，最后 L3/L1。L4 是地基，灌晚了你每轮都缺人格。L0（原话）插件会自动写，不用管。
+
+### 卡住了看哪里
+
+| 现象 | 去看 |
+|---|---|
+| 容器起不来 | `docker compose logs --tail 100` |
+| 没有 `loaded` 日志 | profile 的 `dsh.profile.bundles` 里有没有 `dsh-remembers` |
+| 召回老是空 | `curl localhost:8080/log?limit=20`，看 outcome |
+| embedding 报错 | `/health` 里的 `last_error` |
+| 想跨机访问 | [docs/VPS-DEPLOY.md](docs/VPS-DEPLOY.md)（防火墙、备份 cron、离线镜像、SSH 隧道） |
+
 ## 为什么不用现成的记忆方案
 
 我拿一个真实的记忆库（153 条，全是开发日志）做了测试：
