@@ -1,0 +1,449 @@
+/**
+ * dsh-remembers 的设置页（浏览器半边）。
+ *
+ * 形态照着 DSH 自己的「模型 → 第三方模型提供商」那块：
+ * 提供商下拉 → API 密钥 → 未配置时的提示 → 「自定义设置」折叠 → 取消 / 保存。
+ *
+ * 三点说明：
+ *  1. 手写 React.createElement，不跑构建。DSH 的 client 插件就是
+ *     `window.__ModuleLoader__.load({id, factory})` + `exports.apply/inject`。
+ *  2. 只用原生元素加内联样式，不依赖 `@deepseek-ai/dsh-client-ui-primitives`
+ *     是否被 seed —— 尺寸和配色尽量贴 DSH 的 `--dsw-*` 变量。
+ *  3. 密钥只往服务端写，永不回显。服务端返回的是 `sk-03a…8719` 这种掩码，
+ *     输入框留空 = 保持原值。
+ */
+window.__ModuleLoader__.load({
+  id: "dsh-remembers",
+  factory: (e) => {
+    const module = { exports: {} };
+    const exports = module.exports;   // CommonJS 语义：exports 是 module.exports 的别名
+    try {
+      const React = e("react");
+      const h = React.createElement;
+
+      const DEFAULT_SERVICE_URL = "http://127.0.0.1:8080";
+      const URL_KEY = "dsh-remembers:serviceUrl";
+
+      const PRESETS = {
+        deepseek: {
+          label: "DeepSeek",
+          llm_base: "https://api.deepseek.com/v1",
+          llm_model: "deepseek-flash",
+          hint: "DeepSeek 官方 API。密钥在 platform.deepseek.com 申请。",
+        },
+        aliyun: {
+          label: "阿里云百炼（含 embedding）",
+          llm_base: "https://ws-bzw864scfibokwzf.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+          llm_model: "qwen-plus",
+          embed_model: "qwen3.7-text-embedding-flash",
+          hint: "阿里云一套 key 同时给对话模型和向量模型用。",
+        },
+        custom: {
+          label: "自定义（OpenAI 兼容）",
+          llm_base: "",
+          llm_model: "",
+          hint: "任何 OpenAI 兼容端点都可以，末尾记得带 /v1。",
+        },
+      };
+
+      // -- 小工具 -----------------------------------------------------------
+
+      function serviceUrl() {
+        try {
+          return window.localStorage.getItem(URL_KEY) || DEFAULT_SERVICE_URL;
+        } catch {
+          return DEFAULT_SERVICE_URL;
+        }
+      }
+
+      function saveServiceUrl(url) {
+        try {
+          window.localStorage.setItem(URL_KEY, url);
+        } catch {
+          /* 隐私模式写不了，忽略 */
+        }
+      }
+
+      async function call(path, init) {
+        const res = await fetch(serviceUrl() + path, {
+          ...(init || {}),
+          headers: { "Content-Type": "application/json; charset=utf-8", ...(init && init.headers) },
+        });
+        const text = await res.text();
+        let data = null;
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch {
+          throw new Error("服务返回的不是 JSON：" + text.slice(0, 120));
+        }
+        if (!res.ok) {
+          throw new Error((data && (data.error || data.degraded)) || "HTTP " + res.status);
+        }
+        return data;
+      }
+
+      // -- 样式（对齐 DSH 的设置页观感） -------------------------------------
+
+      const S = {
+        wrap: { display: "flex", flexDirection: "column", gap: 16, maxWidth: 720 },
+        desc: { fontSize: 13, lineHeight: 1.6, color: "var(--dsw-color-text-secondary, #6b7280)" },
+        card: {
+          border: "1px solid var(--dsw-color-border-subtle, rgba(0,0,0,.08))",
+          borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 14,
+          background: "var(--dsw-color-bg-subtle, #fafafa)",
+        },
+        field: { display: "flex", flexDirection: "column", gap: 6 },
+        label: { fontSize: 13, fontWeight: 500, color: "var(--dsw-color-text-primary, #111827)" },
+        input: {
+          width: "100%", boxSizing: "border-box", padding: "9px 12px", fontSize: 13,
+          borderRadius: 8, border: "1px solid var(--dsw-color-border, rgba(0,0,0,.14))",
+          background: "var(--dsw-color-bg, #fff)", color: "var(--dsw-color-text-primary, #111827)",
+          outline: "none", fontFamily: "inherit",
+        },
+        select: {
+          width: "100%", boxSizing: "border-box", padding: "9px 12px", fontSize: 13,
+          borderRadius: 8, border: "1px solid var(--dsw-color-border, rgba(0,0,0,.14))",
+          background: "var(--dsw-color-bg, #fff)", color: "var(--dsw-color-text-primary, #111827)",
+        },
+        hint: { fontSize: 12, lineHeight: 1.6, color: "var(--dsw-color-text-warning, #b45309)" },
+        muted: { fontSize: 12, color: "var(--dsw-color-text-secondary, #6b7280)" },
+        row: { display: "flex", gap: 10, alignItems: "center" },
+        footer: { display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 4 },
+        btn: (primary) => ({
+          padding: "8px 18px", fontSize: 13, borderRadius: 8, cursor: "pointer",
+          border: primary ? "1px solid transparent" : "1px solid var(--dsw-color-border, rgba(0,0,0,.14))",
+          background: primary ? "var(--dsw-color-accent, #111827)" : "var(--dsw-color-bg, #fff)",
+          color: primary ? "var(--dsw-color-accent-text, #fff)" : "var(--dsw-color-text-primary, #111827)",
+          fontFamily: "inherit",
+        }),
+        disclosure: {
+          display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
+          fontSize: 13, color: "var(--dsw-color-text-secondary, #6b7280)",
+          background: "none", border: "none", padding: 0, fontFamily: "inherit",
+        },
+        notice: (kind) => ({
+          fontSize: 12, lineHeight: 1.6, padding: "8px 12px", borderRadius: 8,
+          background: kind === "ok" ? "rgba(16,185,129,.10)" : "rgba(239,68,68,.10)",
+          color: kind === "ok" ? "#047857" : "#b91c1c",
+        }),
+        badge: (on) => ({
+          display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12,
+          color: on ? "#047857" : "#b45309",
+        }),
+        dot: (on) => ({
+          width: 7, height: 7, borderRadius: "50%",
+          background: on ? "#10b981" : "#f59e0b", display: "inline-block",
+        }),
+      };
+
+      // -- 组件 -------------------------------------------------------------
+
+      function Field(props) {
+        return h("div", { style: S.field },
+          h("label", { style: S.label }, props.label,
+            props.optional ? h("span", { style: { ...S.muted, marginLeft: 6 } }, "（可选）") : null),
+          props.children,
+          props.hint ? h("div", { style: S.hint }, props.hint) : null,
+        );
+      }
+
+      function SettingsSection() {
+        const [loading, setLoading] = React.useState(true);
+        const [error, setError] = React.useState("");
+        const [current, setCurrent] = React.useState(null);
+        const [status, setStatus] = React.useState(null);
+        const [configPath, setConfigPath] = React.useState("");
+        const [advanced, setAdvanced] = React.useState(false);
+        const [saving, setSaving] = React.useState(false);
+        const [notice, setNotice] = React.useState(null);
+        const [endpoint, setEndpoint] = React.useState(serviceUrl());
+        const [draft, setDraft] = React.useState({
+          provider: "deepseek",
+          llm_key: "",
+          llm_base: PRESETS.deepseek.llm_base,
+          llm_model: PRESETS.deepseek.llm_model,
+          embed_base: "",
+          embed_model: "",
+          embed_key: "",
+          extract: true,
+          surprisal_threshold: 0.35,
+        });
+
+        const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
+
+        const load = React.useCallback(async () => {
+          setLoading(true);
+          setError("");
+          try {
+            const data = await call("/config");
+            setCurrent(data.current);
+            setStatus(data.status);
+            setConfigPath(data.path || "");
+            setNotice(null);
+            setDraft((d) => ({
+              ...d,
+              llm_base: data.current.llm_base || "",
+              llm_model: data.current.llm_model || "",
+              llm_key: "",
+              embed_base: data.current.embed_base || "",
+              embed_model: data.current.embed_model || "",
+              embed_key: "",
+              extract: !!data.current.extract,
+              surprisal_threshold: data.current.surprisal_threshold,
+            }));
+          } catch (err) {
+            setError(
+              "连不上记忆服务（" + serviceUrl() + "）。先确认它在跑：`systemctl status dsh-remembers` 或 `python server.py`。",
+            );
+          } finally {
+            setLoading(false);
+          }
+        }, []);
+
+        React.useEffect(() => { load(); }, [load]);
+
+        const chooseProvider = (key) => {
+          const p = PRESETS[key];
+          if (p === undefined) return;
+          set({ provider: key, llm_base: p.llm_base, llm_model: p.llm_model });
+        };
+
+        const save = async () => {
+          setSaving(true);
+          setNotice(null);
+          try {
+            saveServiceUrl(endpoint);
+            const body = {
+              llm_base: draft.llm_base,
+              llm_model: draft.llm_model,
+              embed_base: draft.embed_base,
+              embed_model: draft.embed_model,
+              extract: !!draft.extract,
+              surprisal_threshold: Number(draft.surprisal_threshold),
+            };
+            // 留空 = 保持原密钥；服务端也会忽略掩码回传
+            if (draft.llm_key.trim()) body.llm_key = draft.llm_key.trim();
+            if (draft.embed_key.trim()) body.embed_key = draft.embed_key.trim();
+            const res = await call("/config", { method: "POST", body: JSON.stringify(body) });
+            setStatus(res.status);
+            setNotice({ kind: "ok", text: "已保存，立即生效（不用重启）" });
+            await load();
+          } catch (err) {
+            setNotice({ kind: "error", text: "保存失败：" + (err && err.message ? err.message : String(err)) });
+          } finally {
+            setSaving(false);
+          }
+        };
+
+        const cancel = () => {
+          setDraft((d) => ({
+            ...d,
+            llm_key: "",
+            embed_key: "",
+            llm_base: current ? current.llm_base : d.llm_base,
+            llm_model: current ? current.llm_model : d.llm_model,
+            extract: current ? !!current.extract : d.extract,
+            surprisal_threshold: current ? current.surprisal_threshold : d.surprisal_threshold,
+          }));
+          setNotice(null);
+        };
+
+        if (loading) {
+          return h("div", { style: S.wrap }, h("div", { style: S.muted }, "正在读取配置…"));
+        }
+
+        const llmReady = status ? status.llm_enabled : false;
+        const embedReady = status ? status.embedding_enabled : false;
+        const extractOn = status ? status.extract_enabled : false;
+        const preset = PRESETS[draft.provider] || PRESETS.custom;
+
+        return h("div", { style: S.wrap },
+
+          // 状态行
+          h("div", { style: S.row },
+            h("span", { style: S.badge(llmReady) }, h("span", { style: S.dot(llmReady) }), "对话模型"),
+            h("span", { style: S.badge(embedReady) }, h("span", { style: S.dot(embedReady) }), "向量模型"),
+            h("span", { style: S.badge(extractOn) }, h("span", { style: S.dot(extractOn) }), "自动抽取"),
+            status && status.llm_model ? h("span", { style: S.muted }, status.llm_model) : null,
+          ),
+
+          h("div", { style: S.desc },
+            "记忆服务要用一个对话模型来抽取事实、一个向量模型来算语义相似度。",
+            "填一次就能一直用，密钥只存在服务端。",
+          ),
+
+          error ? h("div", { style: S.notice("error") }, error) : null,
+
+          h("div", { style: S.card },
+
+            h(Field, { label: "服务地址" },
+              h("input", {
+                style: S.input,
+                value: endpoint,
+                spellCheck: false,
+                onChange: (ev) => setEndpoint(ev.target.value),
+              }),
+              h("div", { style: S.muted },
+                "记忆服务默认跑在 127.0.0.1:8080；它没起来时这块会一直转圈。"),
+            ),
+
+            h(Field, { label: "提供商" },
+              h("select", {
+                style: S.select,
+                value: draft.provider,
+                onChange: (ev) => chooseProvider(ev.target.value),
+              }, Object.keys(PRESETS).map((k) => h("option", { key: k, value: k }, PRESETS[k].label))),
+            ),
+
+            h(Field, {
+              label: "API 密钥",
+              hint: current && current.llm_key_set
+                ? "当前： " + current.llm_key_masked + "　留空则保持原值"
+                : "还没配置。填好后点保存。",
+            },
+              h("input", {
+                style: S.input,
+                type: "password",
+                value: draft.llm_key,
+                placeholder: current && current.llm_key_set ? "留空保持原密钥" : "sk-...",
+                spellCheck: false,
+                autoComplete: "off",
+                onChange: (ev) => set({ llm_key: ev.target.value }),
+              }),
+            ),
+
+            !llmReady && !error
+              ? h("div", { style: S.hint }, preset.hint)
+              : null,
+
+            // 「自定义设置」折叠
+            h("div", null,
+              h("button", {
+                type: "button",
+                style: S.disclosure,
+                onClick: () => setAdvanced((v) => !v),
+              }, h("span", null, advanced ? "▾" : "▸"), "自定义设置"),
+
+              advanced
+                ? h("div", { style: { display: "flex", flexDirection: "column", gap: 14, marginTop: 14 } },
+
+                    h(Field, { label: "对话模型 Base URL", optional: true },
+                      h("input", {
+                        style: S.input, value: draft.llm_base, spellCheck: false,
+                        onChange: (ev) => set({ llm_base: ev.target.value }),
+                      }),
+                    ),
+
+                    h(Field, { label: "对话模型名", optional: true },
+                      h("input", {
+                        style: S.input, value: draft.llm_model, spellCheck: false,
+                        onChange: (ev) => set({ llm_model: ev.target.value }),
+                      }),
+                    ),
+
+                    h(Field, {
+                      label: "向量模型 Base URL", optional: true,
+                      hint: "和对话模型不是同一家时才需要单独填；阿里云那套两边可以共用同一个 key。",
+                    },
+                      h("input", {
+                        style: S.input, value: draft.embed_base, spellCheck: false,
+                        placeholder: "留空 = 和对话模型同源",
+                        onChange: (ev) => set({ embed_base: ev.target.value }),
+                      }),
+                    ),
+
+                    h(Field, { label: "向量模型名", optional: true },
+                      h("input", {
+                        style: S.input, value: draft.embed_model, spellCheck: false,
+                        placeholder: "qwen3.7-text-embedding-flash",
+                        onChange: (ev) => set({ embed_model: ev.target.value }),
+                      }),
+                    ),
+
+                    h(Field, {
+                      label: "向量模型 API 密钥", optional: true,
+                      hint: current && current.embed_key_set
+                        ? "当前： " + current.embed_key_masked + "　留空则保持原值"
+                        : "留空 = 和对话模型用同一个密钥",
+                    },
+                      h("input", {
+                        style: S.input, type: "password", value: draft.embed_key,
+                        autoComplete: "off", spellCheck: false,
+                        placeholder: current && current.embed_key_set ? "留空保持原密钥" : "留空 = 同上",
+                        onChange: (ev) => set({ embed_key: ev.target.value }),
+                      }),
+                    ),
+
+                    h(Field, {
+                      label: "惊讶度阈值",
+                      hint: "低于这个值的一轮对话不进长期记忆。0.35 起步；觉得她记得太碎就调高，太健忘就调低。",
+                    },
+                      h("input", {
+                        style: S.input, type: "number", step: "0.05", min: "0", max: "1",
+                        value: draft.surprisal_threshold,
+                        onChange: (ev) => set({ surprisal_threshold: ev.target.value }),
+                      }),
+                    ),
+
+                    h("label", { style: { ...S.row, cursor: "pointer", fontSize: 13 } },
+                      h("input", {
+                        type: "checkbox", checked: !!draft.extract,
+                        onChange: (ev) => set({ extract: ev.target.checked }),
+                      }),
+                      "自动抽取结构记忆（每轮多两次模型调用，会花钱）",
+                    ),
+                  )
+                : null,
+            ),
+          ),
+
+          notice ? h("div", { style: S.notice(notice.kind) }, notice.text) : null,
+
+          h("div", { style: S.footer },
+            h("button", { type: "button", style: S.btn(false), onClick: cancel, disabled: saving }, "取消"),
+            h("button", { type: "button", style: S.btn(true), onClick: save, disabled: saving },
+              saving ? "保存中…" : "保存"),
+          ),
+
+          configPath
+            ? h("div", { style: S.muted }, "配置文件：" + configPath + "（权限 600，密钥只在这里）")
+            : null,
+        );
+      }
+
+      // -- 注册 -------------------------------------------------------------
+
+      function apply(ctx) {
+        try {
+          const slots = ctx.get("slots");
+          if (slots === undefined) {
+            console.warn("dsh-remembers: slots 服务不可用，设置页未注册");
+            return;
+          }
+          slots.inject("settings.section", () => slots.register(
+            {
+              name: "settings.section",
+              id: "dsh-remembers",
+              order: 32,
+              label: () => "记忆服务",
+            },
+            SettingsSection,
+          ));
+        } catch (err) {
+          console.error("dsh-remembers: apply() 失败", err);
+        }
+      }
+
+      exports.apply = apply;
+      exports.inject = ["slots"];
+      return module.exports;
+    } catch (err) {
+      try {
+        console.error("dsh-remembers: 浏览器半边注册失败", err);
+      } catch {
+        /* logging is best-effort */
+      }
+      return module.exports;
+    }
+  },
+});

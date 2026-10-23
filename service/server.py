@@ -34,8 +34,57 @@ from surprisal import SurprisalGate
 
 DATA_DIR = os.environ.get("CMEM_DATA_DIR", "/data")
 DB_PATH = os.path.join(DATA_DIR, "memories.db")
+CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 AUTH_TOKEN = os.environ.get("CMEM_AUTH_TOKEN", "")
 MAX_BODY = 1 << 20  # 1 MiB
+
+
+def _mask(secret: str) -> str:
+    """返回给前端时只露头尾，避免 key 明文出现在页面/日志里。"""
+    if not secret:
+        return ""
+    if len(secret) <= 10:
+        return "***"
+    return f"{secret[:6]}…{secret[-4:]}"
+
+
+def _load_config() -> dict:
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:  # noqa: BLE001
+        print(f"[cmem] config.json unreadable, ignoring: {type(exc).__name__}: {exc}", flush=True)
+        return {}
+
+
+def _save_config(cfg: dict) -> None:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    tmp = CONFIG_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, CONFIG_PATH)   # 原子替换：写一半断电不会留下坏文件
+    try:
+        os.chmod(CONFIG_PATH, 0o600)  # 里面是 key
+    except OSError:
+        pass
+
+
+def _pick(cfg: dict, key: str, env_name: str, default: str = "") -> str:
+    """config.json 优先于环境变量：界面上改过的值应该盖掉启动时的 env。"""
+    value = cfg.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return os.environ.get(env_name, default)
+
+
+def _pick_flag(cfg: dict, key: str, env_name: str, default: str = "0") -> bool:
+    value = cfg.get(key)
+    if isinstance(value, bool):
+        return value
+    return os.environ.get(env_name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 _lock = threading.Lock()
 store: MemoryStore
@@ -49,36 +98,59 @@ def _flag(name: str, default: str = "0") -> bool:
     return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _init() -> None:
-    global store, embedder, llm, extractor, gate
-    os.makedirs(DATA_DIR, exist_ok=True)
-    store = MemoryStore(DB_PATH, schema_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql"))
-    embedder = Embedder(
-        base_url=os.environ.get("CMEM_EMBED_BASE", ""),
-        api_key=os.environ.get("CMEM_EMBED_KEY", ""),
-        model=os.environ.get("CMEM_EMBED_MODEL", ""),
-        timeout=float(os.environ.get("CMEM_EMBED_TIMEOUT", "20")),
-        batch_size=int(os.environ.get("CMEM_EMBED_BATCH", "16")),
+def _build_llm(cfg: dict) -> LLM:
+    return LLM(
+        base_url=_pick(cfg, "llm_base", "CMEM_LLM_BASE"),
+        api_key=_pick(cfg, "llm_key", "CMEM_LLM_KEY"),
+        model=_pick(cfg, "llm_model", "CMEM_LLM_MODEL"),
+        timeout=float(_pick(cfg, "llm_timeout", "CMEM_LLM_TIMEOUT", "60")),
     )
-    # 写入门控用到的 LLM：抽取事实 + 逐条判定（mem0 那套）
-    llm = LLM(
-        base_url=os.environ.get("CMEM_LLM_BASE", ""),
-        api_key=os.environ.get("CMEM_LLM_KEY", ""),
-        model=os.environ.get("CMEM_LLM_MODEL", ""),
-        timeout=float(os.environ.get("CMEM_LLM_TIMEOUT", "60")),
+
+
+def _build_embedder(cfg: dict) -> Embedder:
+    return Embedder(
+        base_url=_pick(cfg, "embed_base", "CMEM_EMBED_BASE"),
+        api_key=_pick(cfg, "embed_key", "CMEM_EMBED_KEY"),
+        model=_pick(cfg, "embed_model", "CMEM_EMBED_MODEL"),
+        timeout=float(_pick(cfg, "embed_timeout", "CMEM_EMBED_TIMEOUT", "20")),
+        batch_size=int(_pick(cfg, "embed_batch", "CMEM_EMBED_BATCH", "16")),
     )
+
+
+def _rebuild(cfg: dict) -> dict:
+    """按配置重建 LLM / Embedder / Extractor / Gate。
+
+    设置页保存后调这里热生效，不用重启进程。
+    """
+    global llm, embedder, extractor, gate
+    llm = _build_llm(cfg)
+    embedder = _build_embedder(cfg)
     extractor = Extractor(llm, store, ExtractConfig(
-        enabled=_flag("CMEM_EXTRACT"),
-        max_facts=int(os.environ.get("CMEM_EXTRACT_MAX_FACTS", "6")),
-        neighbor_k=int(os.environ.get("CMEM_EXTRACT_NEIGHBORS", "5")),
+        enabled=_pick_flag(cfg, "extract", "CMEM_EXTRACT"),
+        max_facts=int(_pick(cfg, "extract_max_facts", "CMEM_EXTRACT_MAX_FACTS", "6")),
+        neighbor_k=int(_pick(cfg, "extract_neighbors", "CMEM_EXTRACT_NEIGHBORS", "5")),
     ), embedder=embedder)
     gate = SurprisalGate(
         embedder=embedder,
-        threshold=float(os.environ.get("CMEM_SURPRISAL_THRESHOLD", "0.35")),
+        threshold=float(_pick(cfg, "surprisal_threshold", "CMEM_SURPRISAL_THRESHOLD", "0.35")),
     )
+    return {
+        "llm": llm.health(),
+        "embedding": embedder.health(),
+        "extract_enabled": extractor.enabled,
+        "surprisal_threshold": gate.threshold,
+    }
+
+
+def _init() -> None:
+    global store
+    os.makedirs(DATA_DIR, exist_ok=True)
+    store = MemoryStore(DB_PATH, schema_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql"))
+    cfg = _load_config()
+    status = _rebuild(cfg)
     print(
-        f"[cmem] db={DB_PATH} "
-        f"embedding={'on:' + embedder.model if embedder.enabled else 'off (BM25 only)'} "
+        f"[cmem] db={DB_PATH} config={CONFIG_PATH if os.path.exists(CONFIG_PATH) else '(env only)'} "
+        f"embedding={'on:' + embedder.model if embedder.enabled else 'off'} "
         f"extract={'on:' + llm.model if extractor.enabled else 'off'} "
         f"surprisal_threshold={gate.threshold}",
         flush=True,
@@ -168,6 +240,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._json(200, {"ok": True, "items": self._recent_log(limit)}))
         elif path == "/export":
             self._guard(self._export)
+        elif path == "/config":
+            self._guard(self._get_config)
         else:
             self._json(404, {"ok": False, "error": "not found"})
 
@@ -188,6 +262,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(self._surprisal)
         elif path == "/reindex":
             self._guard(self._reindex)
+        elif path == "/config":
+            self._guard(self._set_config)
         elif path == "/extract":
             self._guard(self._extract)
         else:
@@ -333,6 +409,72 @@ class Handler(BaseHTTPRequestHandler):
                 if fp["sha256"] != manifest["content_sha256"]:
                     check = "content_sha256 不一致：记忆内容与导出时不同"
         self._json(200, {"ok": True, **res, "bad_lines": bad, "manifest_check": check})
+
+    def _get_config(self) -> None:
+        """给设置页读的配置。密钥一律脱敏，只告诉前端「设了没有」。"""
+        cfg = _load_config()
+        llm_key = _pick(cfg, "llm_key", "CMEM_LLM_KEY")
+        embed_key = _pick(cfg, "embed_key", "CMEM_EMBED_KEY")
+        self._json(200, {
+            "ok": True,
+            "path": CONFIG_PATH,
+            "current": {
+                "llm_base": _pick(cfg, "llm_base", "CMEM_LLM_BASE"),
+                "llm_model": _pick(cfg, "llm_model", "CMEM_LLM_MODEL"),
+                "llm_key_masked": _mask(llm_key),
+                "llm_key_set": bool(llm_key),
+                "llm_key_env": bool(os.environ.get("CMEM_LLM_KEY")),
+                "embed_base": _pick(cfg, "embed_base", "CMEM_EMBED_BASE"),
+                "embed_model": _pick(cfg, "embed_model", "CMEM_EMBED_MODEL"),
+                "embed_key_masked": _mask(embed_key),
+                "embed_key_set": bool(embed_key),
+                "embed_key_env": bool(os.environ.get("CMEM_EMBED_KEY")),
+                "extract": _pick_flag(cfg, "extract", "CMEM_EXTRACT"),
+                "surprisal_threshold": float(_pick(cfg, "surprisal_threshold", "CMEM_SURPRISAL_THRESHOLD", "0.35")),
+            },
+            "status": {
+                "llm_enabled": llm.enabled,
+                "llm_model": llm.model or None,
+                "llm_calls": llm.calls,
+                "llm_failures": llm.failures,
+                "llm_last_error": llm.last_error,
+                "embedding_enabled": embedder.enabled,
+                "embedding_model": embedder.model or None,
+                "extract_enabled": extractor.enabled,
+            },
+        })
+
+    def _set_config(self) -> None:
+        """保存配置并热生效（不重启进程）。
+
+        前端把脱敏后的 key 原样传回来时（含 … 或 ***）不覆盖真实值——
+        否则用户只改模型名也会把密钥洗成掩码。
+        """
+        body = self._body()
+        cfg = _load_config()
+
+        for key in ("llm_base", "llm_model", "llm_key", "embed_base", "embed_model", "embed_key"):
+            if key not in body:
+                continue
+            value = str(body[key] or "").strip()
+            if key.endswith("_key") and (not value or "…" in value or value == "***"):
+                if not value:
+                    cfg[key] = ""      # 明确清空
+                continue           # 掩码回传：保持原值
+            cfg[key] = value
+
+        if "extract" in body:
+            cfg["extract"] = bool(body["extract"])
+        if "surprisal_threshold" in body:
+            try:
+                cfg["surprisal_threshold"] = max(0.0, min(1.0, float(body["surprisal_threshold"])))
+            except (TypeError, ValueError):
+                pass
+
+        _save_config(cfg)
+        with _lock:
+            status = _rebuild(cfg)
+        self._json(200, {"ok": True, "path": CONFIG_PATH, "status": status})
 
     def _surprisal(self) -> None:
         """惊讶度门控：这一轮值不值得写进 L0。"""
