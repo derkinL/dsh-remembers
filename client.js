@@ -411,6 +411,125 @@ window.__ModuleLoader__.load({
         );
       }
 
+      // -- 人格设定（二合一里的「人」那一半） --------------------------------
+
+      function PersonaSection() {
+        const [loading, setLoading] = React.useState(true);
+        const [error, setError] = React.useState("");
+        const [limits, setLimits] = React.useState({ constitution: 8000, self_model: 4000 });
+        const [saving, setSaving] = React.useState(false);
+        const [notice, setNotice] = React.useState(null);
+        const [saved, setSaved] = React.useState({ constitution: "", self_model: "" });
+        const [draft, setDraft] = React.useState({ constitution: "", self_model: "" });
+
+        const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
+
+        const load = React.useCallback(async () => {
+          setLoading(true);
+          setError("");
+          try {
+            const data = await call("/persona");
+            setSaved({ constitution: data.constitution || "", self_model: data.self_model || "" });
+            setDraft({ constitution: data.constitution || "", self_model: data.self_model || "" });
+            if (data.limits) setLimits(data.limits);
+            setNotice(null);
+          } catch (err) {
+            setError("读不到人格设定。先确认记忆服务在跑（" + serviceUrl() + "）。");
+          } finally {
+            setLoading(false);
+          }
+        }, []);
+
+        React.useEffect(() => { load(); }, [load]);
+
+        const save = async () => {
+          setSaving(true);
+          setNotice(null);
+          try {
+            const res = await call("/persona", {
+              method: "POST",
+              body: JSON.stringify({
+                constitution: draft.constitution,
+                self_model: draft.self_model,
+              }),
+            });
+            setSaved({ constitution: res.constitution || "", self_model: res.self_model || "" });
+            setDraft({ constitution: res.constitution || "", self_model: res.self_model || "" });
+            if (res.limits) setLimits(res.limits);
+            setNotice({ kind: "ok", text: "已保存。插件下次刷新就带上，不用重启。" });
+          } catch (err) {
+            setNotice({ kind: "error", text: "保存失败：" + (err && err.message ? err.message : String(err)) });
+          } finally {
+            setSaving(false);
+          }
+        };
+
+        const cancel = () => {
+          setDraft({ constitution: saved.constitution, self_model: saved.self_model });
+          setNotice(null);
+        };
+
+        if (loading) {
+          return h("div", { style: S.wrap }, h("div", { style: S.muted }, "正在读取人格设定…"));
+        }
+
+        const textareaStyle = {
+          ...S.input, minHeight: 132, lineHeight: 1.65, resize: "vertical", fontFamily: "inherit",
+        };
+
+        return h("div", { style: S.wrap },
+
+          h("div", { style: S.desc },
+            "人格和记忆放在同一个服务里：前者每轮必带，后者检索着取。",
+            "「身份与约定」只有你能改；「自我认知」AI 也会往里写 —— 服务端根本没给它改前一半的接口。",
+            "两段都留空 = 整段不注入，等于没装。",
+          ),
+
+          error ? h("div", { style: S.notice("error") }, error) : null,
+
+          h("div", { style: S.card },
+
+            h(Field, {
+              label: "身份与约定",
+              hint: "只写不动的部分：她是谁、怎么称呼你、哪些事不能让步。越短越压得住，别写成小说。",
+            },
+              h("textarea", {
+                style: textareaStyle,
+                value: draft.constitution,
+                spellCheck: false,
+                placeholder: "例：你叫阿澜，26 岁，住在她楼下的旧公寓。你叫对方「姐」。\n\n不管聊到哪一步，你都不会说自己是 AI，也不会劝她去做她明明做不到的事。",
+                onChange: (ev) => set({ constitution: ev.target.value }),
+              }),
+              h("div", { style: S.muted },
+                draft.constitution.length + " / " + limits.constitution + " 字符"),
+            ),
+
+            h(Field, {
+              label: "自我认知（AI 可写）",
+              hint: "AI 会在这里记「我发现自己是什么样」。你随时可以改回去，它下次再写 —— 这部分本来就是会漂的。",
+            },
+              h("textarea", {
+                style: textareaStyle,
+                value: draft.self_model,
+                spellCheck: false,
+                placeholder: "例：我发现自己讲道理时爱打比方，但一抒情就假。\n我最容易犯的错是把「看起来像」当成「查过了」。",
+                onChange: (ev) => set({ self_model: ev.target.value }),
+              }),
+              h("div", { style: S.muted },
+                draft.self_model.length + " / " + limits.self_model + " 字符"),
+            ),
+          ),
+
+          notice ? h("div", { style: S.notice(notice.kind) }, notice.text) : null,
+
+          h("div", { style: S.footer },
+            h("button", { type: "button", style: S.btn(false), onClick: cancel, disabled: saving }, "取消"),
+            h("button", { type: "button", style: S.btn(true), onClick: save, disabled: saving },
+              saving ? "保存中…" : "保存"),
+          ),
+        );
+      }
+
       // -- 注册 -------------------------------------------------------------
 
       function apply(ctx) {
@@ -428,6 +547,15 @@ window.__ModuleLoader__.load({
               label: () => "记忆服务",
             },
             SettingsSection,
+          ));
+          slots.inject("settings.section", () => slots.register(
+            {
+              name: "settings.section",
+              id: "dsh-remembers-persona",
+              order: 33,
+              label: () => "人格设定",
+            },
+            PersonaSection,
           ));
         } catch (err) {
           console.error("dsh-remembers: apply() 失败", err);

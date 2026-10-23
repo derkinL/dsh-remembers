@@ -1,15 +1,22 @@
 /**
- * dsh-remembers —— 给情感陪伴场景做的记忆插件。
+ * dsh-remembers —— 给情感陪伴场景做的「人格 + 记忆」二合一插件。
  *
- * 做三件事（都很薄，重活在 companion-memory 服务里）：
- *   1. 启动时注入 L4 人格与关系约定（agent.inject）
- *   2. 每步检索并注入相关记忆（agent/pre-step 追加消息）
- *   3. 每轮把原话写进 L0（不抽摘要，保证「说过的话不丢」）
+ * 做四件事（都很薄，重活在 companion-memory 服务里）：
+ *   1. 人格设定走 systemPrompt 独立段（宪法区 + 自我认知区，每轮必带）
+ *   2. 启动时注入 L4 关系约定（agent.inject）
+ *   3. 每步检索并注入相关记忆（agent/pre-step 追加消息）
+ *   4. 每轮把原话写进 L0（不抽摘要，保证「说过的话不丢」）
+ *
+ * 人格为什么要走 system prompt，而记忆不走：
+ *   - 人格是「一直成立的前提」，每轮都该在，且权重最高的位置才稳得住。
+ *   - 记忆是「想起什么算什么」，按需追加，空的时候就不该出现任何块。
+ *   代价是 complete:true 的预设会把 system prompt 整段换成自己的，那时人格段
+ *   会静默消失——所以 L4 走 agent.inject 的那条路仍然保留，人格段是加厚的，
+ *   不是替换掉兜底的。
  *
  * 刻意不做的事：
- *   - 不用 system prompt 注入。persona 声明 complete:true 的预设会把它整段丢掉，
- *     而且不会报错——静默失忆比报错更难查。
  *   - 检索结果为空时不注入任何东西。空就是真的没印象，模型不该看到空块还以为有记忆。
+ *   - 人格段为空时也完全不注册内容，等于没装——不打扰任何现有部署。
  */
 
 import { createHash } from "node:crypto";
@@ -25,6 +32,9 @@ export const inject = ["agents", "sessions"];
 const PLUGIN_SOURCE = "dsh-remembers";
 const PLUGIN_KIND = `plugin:${PLUGIN_SOURCE}`;
 
+/** 人格段在 systemPrompt 注册表里的名字。带前缀，避免和别人的 persona 段撞名。 */
+const PERSONA_SECTION = "remembers:persona";
+
 export function apply(ctx, input = {}) {
   const config = resolveConfig(input);
   const logger = ctx.logger;
@@ -35,6 +45,67 @@ export function apply(ctx, input = {}) {
 
   const log = (stage, data) => logger?.debug?.(`[dsh-remembers] ${stage} ${JSON.stringify(data)}`);
   log("loaded", { version: PLUGIN_VERSION, endpoint: config.endpoint, captureRaw: config.captureRaw });
+
+  // systemPrompt / tools 是软依赖：拿不到就退回「只有 L4 + 记忆」的老行为。
+  // 不写进 export const inject 的原因：某个宿主没有这两个服务时，硬注入会让
+  // 整个插件永远停在等待状态 —— 那比少一个人格段严重得多。
+  //
+  // 优先读 ctx.xxx 属性而不是 ctx.get("xxx")：cordis 的 ctx 代理会把服务方法
+  // 绑到正确的 this 上，而 get() 返回的是裸实例，直接调 .section() 有丢 this 的风险。
+  const soft = (key) => (ctx[key] !== undefined
+    ? ctx[key]
+    : (typeof ctx.get === "function" ? ctx.get(key) : undefined));
+  const systemPrompt = soft("systemPrompt");
+  const tools = soft("tools");
+  /** 绑定过 this 的服务方法；服务不在或没有这个方法时返回 null。 */
+  const methodOf = (service, name) => (
+    service && typeof service[name] === "function" ? service[name].bind(service) : null
+  );
+  const registerSection = methodOf(systemPrompt, "section");
+  const registerTool = methodOf(tools, "register");
+
+  // -------------------------------------------------------------------------
+  // 0. 人格设定：宪法区（只有设置页能写）+ 自我认知区（AI 能写）
+  // -------------------------------------------------------------------------
+  // 缓存一份纯文本。systemPrompt 的 section provider 是同步的，每轮现发一个
+  // HTTP 请求会把提示词组装拖死。所以「异步刷新 + 同步读缓存」：
+  //   刷新时机 = 启动 / 每 personaRefreshMs / agent 创建时（节流后）
+  //   失败时保留上一份好的：宁可人格旧一点，也不能让这轮没有人格。
+  const persona = {
+    text: "",
+    at: 0,         // 最近一次成功刷新（ms）
+    triedAt: 0,    // 最近一次尝试（含失败），用于节流
+    error: null,
+  };
+
+  async function refreshPersona(force = false) {
+    if (!config.personaEnabled || !client.enabled) return persona.text;
+    const now = Date.now();
+    if (!force && now - persona.triedAt < config.personaRefreshMs) return persona.text;
+    persona.triedAt = now;
+    try {
+      const data = await client.persona();
+      if (!data) return persona.text;
+      const next = renderPersona(data, config.personaMaxChars);
+      if (next !== persona.text) {
+        log("persona_refreshed", {
+          chars: next.length,
+          constitution: Boolean(String(data.constitution || "").trim()),
+          selfModel: Boolean(String(data.self_model || "").trim()),
+        });
+      }
+      persona.text = next;
+      persona.at = now;
+      persona.error = null;
+    } catch (error) {
+      persona.error = String(error?.message ?? error);
+      log("persona_error", { error: persona.error });
+    }
+    return persona.text;
+  }
+
+  // 人格段是否真的接管了 L4 的「自我」条目。空人格段 = 不接管 = 老行为。
+  const personaOwnsProfile = () => config.personaEnabled && persona.text.trim() !== "";
 
   // per-session 状态
   const states = new Map();
@@ -72,16 +143,26 @@ export function apply(ctx, input = {}) {
     if (state.profileDelivered) return false;
     if (agent.status !== "idle") return false;
 
+    // 人格段必须在这里是新的：设置页改完人格后，用户开一个新会话就该看到，
+    // 不能等下一个刷新周期（默认 60s）。新会话不是高频事件，force 得起。
+    await refreshPersona(true);
+
     const items = await client.profile(config.profileSubject || null);
-    if (!items || items.length === 0) {
+    // 人格段已经把「我是谁」写进 system prompt 了。这些 L4 再注入一遍就是
+    // 双份 token，还容易两套说法打架。所以只留非 self 主体的条目（她的家人、
+    // 宠物这类画像仍走这里），人格相关的交给段去管。
+    const kept = personaOwnsProfile()
+      ? (items || []).filter((item) => !(item.tier === "L4" && (item.subject || "self") === "self"))
+      : (items || []);
+    if (kept.length === 0) {
       state.profileDelivered = true;
       return false;
     }
-    const block = renderProfile(items);
+    const block = renderProfile(kept);
     agent.inject(message(block, "instructions"));
     state.profileDelivered = true;
     state.injectedHashes.add(hash(block));
-    log("profile_injected", { session: state.id, items: items.length });
+    log("profile_injected", { session: state.id, items: kept.length });
     return true;
   }
 
@@ -219,12 +300,140 @@ export function apply(ctx, input = {}) {
     }
   });
 
-  ctx.effect(() => () => { states.clear(); }, "companionMemory.clearStates()");
+  // -------------------------------------------------------------------------
+  // 4. 人格段：注册 + 定时刷新 + 自我认知写入工具
+  // -------------------------------------------------------------------------
+  let refreshTimer = null;
+  if (config.personaEnabled && client.enabled) {
+    void refreshPersona(true);      // 启动就拉一次，别等第一个会话
+    refreshTimer = setInterval(() => { void refreshPersona(); }, config.personaRefreshMs);
+    // 别让一个定时器把进程按住（脚本、测试、headless 场景都会因此退不出去）
+    if (typeof refreshTimer.unref === "function") refreshTimer.unref();
+  }
+
+  if (config.personaEnabled && registerSection) {
+    ctx.effect(
+      () => registerSection({
+        name: PERSONA_SECTION,
+        order: config.personaOrder,
+        // provider 同步返回缓存：空串 = 这一段不存在，不是空块
+        text: () => persona.text,
+      }),
+      "dsh-remembers.personaSection()",
+    );
+  } else if (config.personaEnabled) {
+    log("persona_section_skipped", {
+      reason: registerSection ? "?" : "拿不到 systemPrompt.section()",
+    });
+  }
+
+  void registerPersonaTool();
+
+  /**
+   * 自我认知写入工具。只打 /persona/self —— 宪法区在服务端根本没有那个参数，
+   * 所以哪怕这个工具被模型用歪了，也只能改掉半张卡。
+   */
+  async function registerPersonaTool() {
+    if (!config.personaEnabled || !config.personaAllowWrite) return;
+    if (!registerTool) {
+      log("persona_tool_skipped", { reason: "拿不到 tools.register()" });
+      return;
+    }
+    let defineTool;
+    try {
+      ({ defineTool } = await import("@deepseek-ai/dsh-tools"));
+    } catch (error) {
+      log("persona_tool_skipped", { reason: "dsh-tools 不可用", error: String(error?.message ?? error) });
+      return;
+    }
+    try {
+      registerTool(defineTool({
+        name: "persona_update",
+        description:
+          "整段改写你「对自己的认知」（不是身份设定那段，那段你改不了）。"
+          + "当你发现自己身上一条稳定的特质、偏好、口头习惯，而那段里还没写；"
+          + "或者实际经历和那段写的不一致时，用它把那段换成新的。"
+          + "保持简洁、只写稳定的东西，不要把流水账堆进去。",
+        parameters: {
+          content: {
+            type: "string",
+            required: true,
+            description: "自我认知段的完整新内容（Markdown）。整段替换，所以先看当前内容再写。",
+          },
+        },
+        output: {
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: { ok: { type: "boolean" }, chars: { type: "integer" } },
+          },
+          render: (_args, value) => [{
+            type: "text",
+            text: value.ok ? `自我认知已更新（${value.chars} 字符）` : "自我认知更新失败",
+          }],
+        },
+        isConcurrencySafe: () => false,
+        async execute(args) {
+          const content = String(args?.content ?? "").trim();
+          if (!content) throw new Error("persona_update: content 不能为空");
+          const res = await client.setSelfModel(content);
+          if (!res?.ok) throw new Error("persona_update: 服务端拒绝或连不上");
+          persona.triedAt = 0;                 // 下一轮组装前一定重新拉一次
+          await refreshPersona(true);
+          return { ok: true, chars: Number(res?.chars?.self_model ?? content.length) };
+        },
+      }));
+      log("persona_tool_registered", { name: "persona_update" });
+    } catch (error) {
+      log("persona_tool_skipped", { reason: "注册失败", error: String(error?.message ?? error) });
+    }
+  }
+
+  ctx.effect(() => () => {
+    if (refreshTimer) {
+      clearInterval(refreshTimer);
+      refreshTimer = null;
+    }
+    states.clear();
+  }, "companionMemory.clearStates()");
 }
 
 // ---------------------------------------------------------------------------
 // 渲染
 // ---------------------------------------------------------------------------
+
+/**
+ * 把服务端的两半拼成一段 system prompt 文本。
+ *
+ * 两半都空时返回空串：section provider 返回空串，这段就等于不存在，
+ * 不会在提示词里留一个空格块，也不会让任何现有部署多付 token。
+ *
+ * 冲突裁决写死在文本里。自我认知是会漂的那一半，必须让它知道谁说了算，
+ * 否则「我发现自己其实可以不听硬边界」这种句子迟早会冒出来。
+ */
+function renderPersona(data, maxChars) {
+  const constitution = String(data?.constitution ?? "").trim();
+  const selfModel = String(data?.self_model ?? "").trim();
+  if (!constitution && !selfModel) return "";
+
+  const lines = ['<dsh-remembers source="persona">'];
+  if (constitution) {
+    lines.push("以下是你固定的身份与约定。按它来：不要反驳，不要重新确认，也不要说「我记得你告诉过我」。");
+    lines.push("");
+    lines.push(constitution);
+  }
+  if (selfModel) {
+    if (constitution) lines.push("");
+    lines.push("以下是你对自己的认知，会随相处慢慢变化，也可能过时。它只描述你自己，改不了上面的身份与边界；两者冲突时，以上面的为准。");
+    lines.push("");
+    lines.push(selfModel);
+  }
+  lines.push("</dsh-remembers>");
+
+  const text = lines.join("\n");
+  if (text.length <= maxChars) return text;
+  return text.slice(0, Math.max(0, maxChars - 24)) + "\n…（人格段超长已截断）";
+}
 
 const TIER_LABEL = {
   L4: "关系约定",
@@ -234,8 +443,7 @@ const TIER_LABEL = {
   L0: "原话",
 };
 
-function renderProfile(items) {
-  const lines = items.map((item) => {
+function renderProfile(items) {  const lines = items.map((item) => {
     const label = TIER_LABEL[item.tier] || item.tier;
     return `[${label}] ${oneLine(item.summary || item.text)}`;
   });

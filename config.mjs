@@ -20,6 +20,11 @@ const ENV = {
   profileSubject: ["CMEM_PROFILE_SUBJECT"],
   timeoutMs: ["CMEM_TIMEOUT_MS"],
   logRequests: ["CMEM_LOG"],
+  personaEnabled: ["CMEM_PERSONA"],
+  personaOrder: ["CMEM_PERSONA_ORDER"],
+  personaMaxChars: ["CMEM_PERSONA_MAX_CHARS"],
+  personaRefreshMs: ["CMEM_PERSONA_REFRESH_MS"],
+  personaAllowWrite: ["CMEM_PERSONA_ALLOW_WRITE"],
 };
 
 function pick(env, names) {
@@ -65,5 +70,15 @@ export function resolveConfig(input = {}, env = process.env) {
     skipSubagentSessions: toBool(value("skipSubagentSessions"), true),
     timeoutMs: toInt(value("timeoutMs"), 2500, 200, 30000),
     logRequests: toBool(value("logRequests"), false),
+
+    // 人格设定：走 systemPrompt 独立段，每轮必带
+    personaEnabled: toBool(value("personaEnabled"), true),
+    // 排序：0 是官方 persona 段的位置，5 让本插件排在它之后、工具指引之前
+    personaOrder: toInt(value("personaOrder"), 5, -10000, 10000),
+    personaMaxChars: toInt(value("personaMaxChars"), 4000, 200, 16000),
+    // 刷新节流：人格段落只在服务端改过才有意义，60s 足够，别每轮打一次
+    personaRefreshMs: toInt(value("personaRefreshMs"), 60000, 1000, 600000),
+    // 给不给 AI 写「自我认知区」的权限。宪法区无论如何都写不到（服务端没有那个入口）
+    personaAllowWrite: toBool(value("personaAllowWrite"), true),
   };
 }

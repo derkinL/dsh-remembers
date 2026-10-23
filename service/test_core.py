@@ -1,4 +1,4 @@
-"""本地自测：不依赖 Docker / 外部 API，验证分词、BM25、衰减、融合、诚实出口。"""
+﻿"""本地自测：不依赖 Docker / 外部 API，验证分词、BM25、衰减、融合、诚实出口。"""
 
 from __future__ import annotations
 
@@ -76,9 +76,54 @@ def show(title, hits):
               f"rec={c['recency']:.2f}  {h.text[:34]}")
 
 
+def test_persona(store) -> None:
+    """人格两半：能存能取；AI 那半碰不到宪法；超长被拒。
+
+    这是「二合一」最该守住的三条 —— 分区要是漏在服务端，界面上的只读框
+    就只是装饰。
+    """
+    print("\n--- 人格设定：宪法区 / 自我认知区 ---")
+
+    assert store.get_persona()["constitution"] == "", "新库的人格应该是空的"
+    assert store.get_persona()["self_model"] == "", "新库的自我认知应该是空的"
+
+    store.set_persona(constitution="你叫阿澜，26 岁。你叫对方「姐」。")
+    got = store.get_persona()
+    assert got["constitution"].startswith("你叫阿澜"), "宪法应写进去"
+    assert got["self_model"] == "", "没传的那半不该被顺手清空"
+    print(f"  宪法区 {len(got['constitution'])} 字符 ...ok")
+
+    # AI 侧入口：只能写自我认知
+    store.set_self_model("我发现自己讲道理爱打比方，一抒情就假。")
+    got = store.get_persona()
+    assert "讲道理爱打比方" in got["self_model"], "自我认知应写进去"
+    assert got["constitution"].startswith("你叫阿澜"), "set_self_model 不许碰宪法区"
+    print(f"  自我认知区 {len(got['self_model'])} 字符，宪法未被改动 ...ok")
+
+    # 超长拒绝，且失败时不能把旧内容写坏
+    try:
+        store.set_self_model("长" * (mc.MemoryStore.SELF_MODEL_MAX + 1))
+        raise AssertionError("超长应当被拒绝")
+    except ValueError:
+        pass
+    assert "讲道理爱打比方" in store.get_persona()["self_model"], "被拒的写入不该破坏原内容"
+    print(f"  超长被拒且原内容完好（上限 {mc.MemoryStore.SELF_MODEL_MAX}）...ok")
+
+    # 只传一半：另一半连同它的时间戳都不该动
+    before = store.get_persona()
+    store.set_persona(self_model="改了一句自我认知。")
+    after = store.get_persona()
+    assert after["constitution"] == before["constitution"], "只改自我认知时宪法应原样"
+    assert after["updated_at"] == before["updated_at"], "宪法没改，它的时间戳也不该动"
+    assert after["self_updated_at"] >= before["self_updated_at"], "自我认知的时间戳应更新"
+    print("  单边写入不影响另一半的时间戳 ...ok")
+
+
 def main():
     store = build()
     print("stats:", store.stats())
+
+    test_persona(store)
 
     # 1) 纯关键词命中
     show("query=加班 (关键词)", store.search("加班", top_k=3, now=NOW))

@@ -12,6 +12,9 @@
   POST /forget/{id}                 删除一条
   GET  /log?limit=50                最近检索日志（调阈值用）
   POST /consolidate                 整理：按 text 完全重复合并（先给个保守版）
+  GET  /persona                     人格设定：宪法区 + 自我认知区
+  POST /persona                     设置页保存（两半都能写）
+  POST /persona/self                插件/AI 写入（只能写自我认知区，宪法区没有参数）
 """
 
 from __future__ import annotations
@@ -238,6 +241,8 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/log":
             limit = int((query.get("limit") or ["50"])[0])
             self._guard(lambda: self._json(200, {"ok": True, "items": self._recent_log(limit)}))
+        elif path == "/persona":
+            self._guard(self._get_persona)
         elif path == "/export":
             self._guard(self._export)
         elif path == "/config":
@@ -264,6 +269,10 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(self._reindex)
         elif path == "/config":
             self._guard(self._set_config)
+        elif path == "/persona":
+            self._guard(self._set_persona)
+        elif path == "/persona/self":
+            self._guard(self._set_self_model)
         elif path == "/extract":
             self._guard(self._extract)
         else:
@@ -409,6 +418,57 @@ class Handler(BaseHTTPRequestHandler):
                 if fp["sha256"] != manifest["content_sha256"]:
                     check = "content_sha256 不一致：记忆内容与导出时不同"
         self._json(200, {"ok": True, **res, "bad_lines": bad, "manifest_check": check})
+
+    # -- 人格设定（二合一里的「人」那一半） ---------------------------------
+
+    def _persona_payload(self, data: dict) -> dict:
+        return {
+            "ok": True,
+            **data,
+            "chars": {
+                "constitution": len(data["constitution"]),
+                "self_model": len(data["self_model"]),
+            },
+            "limits": {
+                "constitution": MemoryStore.CONSTITUTION_MAX,
+                "self_model": MemoryStore.SELF_MODEL_MAX,
+            },
+        }
+
+    def _get_persona(self) -> None:
+        self._json(200, self._persona_payload(store.get_persona()))
+
+    def _set_persona(self) -> None:
+        """设置页保存。两半都能写；没传的字段保持原值。"""
+        body = self._body()
+        constitution = body.get("constitution")
+        self_model = body.get("self_model")
+        if constitution is None and self_model is None:
+            raise ValueError("constitution or self_model is required")
+        with _lock:
+            data = store.set_persona(
+                constitution=None if constitution is None else str(constitution),
+                self_model=None if self_model is None else str(self_model),
+            )
+        self._json(200, self._persona_payload(data))
+
+    def _set_self_model(self) -> None:
+        """AI 写作入口：只能写自我认知区。
+
+        宪法区在这里改不了 —— 不是指望调用方自觉，是这个端点压根没有那个
+        参数。插件侧的 persona_update 工具打到这儿，坏掉的插件也只能改掉
+        半张卡。
+        """
+        body = self._body()
+        raw = body.get("text")
+        if raw is None:
+            raw = body.get("content")
+        text = str(raw or "")
+        if not text.strip():
+            raise ValueError("text is required")
+        with _lock:
+            data = store.set_self_model(text)
+        self._json(200, self._persona_payload(data))
 
     def _get_config(self) -> None:
         """给设置页读的配置。密钥一律脱敏，只告诉前端「设了没有」。"""

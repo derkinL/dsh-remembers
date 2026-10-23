@@ -33,6 +33,29 @@ CREATE INDEX IF NOT EXISTS idx_memory_ts      ON memory(ts);
 CREATE INDEX IF NOT EXISTS idx_memory_tier_ts ON memory(tier, ts);
 
 -- ---------------------------------------------------------------------------
+-- 人格设定（二合一里的「人」那一半）
+--
+-- 为什么单独一张表、而不是塞进 memory 的 L4：
+--   L4 是「记忆里的既成事实」，靠 MCP memory_ingest 手工灌，没有编辑入口，
+--   还会被 export/import 当成记忆流搬来搬去。人格设定是「配置」：要能编辑、
+--   要能分区、要能限制谁有权写哪一半 —— 用它自己的表最省事。
+--
+-- 两个字段就是那堵墙：
+--   constitution 宪法区：身份、硬边界、称呼。只有设置页能改（服务端校验），
+--                AI 那侧的 /persona/self 接口碰不到它。
+--   self_model   自我认知区：AI 记录「我发现自己是什么样」。可演化，有长度上限。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS persona (
+  id               INTEGER PRIMARY KEY CHECK (id = 1),
+  constitution     TEXT NOT NULL DEFAULT '',
+  self_model       TEXT NOT NULL DEFAULT '',
+  updated_at       REAL NOT NULL DEFAULT 0,
+  self_updated_at  REAL NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO persona(id, constitution, self_model, updated_at, self_updated_at)
+  VALUES (1, '', '', 0, 0);
+
+-- ---------------------------------------------------------------------------
 -- BM25 倒排
 --   doc_term 存 tf；term_stat 存 df（每写一条记忆增量维护，不做全量重扫）
 -- ---------------------------------------------------------------------------

@@ -3,3 +3,10 @@
 - insert:
     - id: dsh-remembers
       name: 'dsh-remembers'
+      # 人格段和记忆共用一个服务，默认就按下面的值跑。
+      # 要调就取消注释——不写这几行等于用默认值，不是关掉人格。
+      # config:
+      #   personaOrder: 5          # 0 是官方 persona 段的位置，5 排在它之后
+      #   personaMaxChars: 4000    # 注进提示词的上限，超了截断
+      #   personaRefreshMs: 60000  # 缓存刷新周期；新会话仍会强制刷一次
+      #   personaAllowWrite: true  # 给不给 AI 写「自我认知」那半（宪法那半永远不给）

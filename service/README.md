@@ -83,11 +83,32 @@ score = 0.55 · bm25/(bm25+3) + 0.25 · max(0, cos) + 0.20 · 2^(-age/半衰期)
 | GET | `/health` | 健康 + embedding 状态 + 统计 |
 | GET | `/stats` | 条数 / 平均长度 / 词表 / 已向量化 |
 | GET | `/profile?subject=` | L4 人格块，每轮必带 |
+| GET | `/persona` | 人格设定：宪法区 + 自我认知区 + 各自长度与上限 |
+| POST | `/persona` | 设置页保存，两半都能写（没传的字段保持原值） |
+| POST | `/persona/self` | **AI 侧入口，只能写自我认知区** —— 没有 `constitution` 参数 |
 | POST | `/ingest` | 写一条，`embed:false` 可跳过向量 |
 | POST | `/search` | 混合检索，`query` + `focus` |
 | POST | `/forget/{id}` | 删除 |
 | POST | `/consolidate` | 保守去重（同 tier+subject 完全同文只留最新） |
 | GET | `/log?limit=` | 检索日志，调阈值用 |
+
+### 人格为什么单开一张表
+
+`L4` 是记忆里的既成事实，靠 MCP 灌、会被 export/import 当记忆搬走，也没有编辑入口。人格是配置：要能编辑、要分区、要能限制谁有权写哪一半。
+
+两个字段就是那堵墙：
+
+```sql
+CREATE TABLE persona (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  constitution    TEXT NOT NULL DEFAULT '',   -- 只剩设置页能写
+  self_model      TEXT NOT NULL DEFAULT '',   -- AI 也能写
+  updated_at      REAL NOT NULL DEFAULT 0,
+  self_updated_at REAL NOT NULL DEFAULT 0
+);
+```
+
+`set_persona()` 两半都改（只给设置页），`set_self_model()` 只改后半（给插件）。超长写入在进库之前就抛 `ValueError`，失败不会把旧内容写坏。
 
 ## 调阈值
 

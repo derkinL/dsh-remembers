@@ -598,6 +598,60 @@ class MemoryStore:
             )
         return out
 
+    # -- 人格设定：宪法区 / 自我认知区 -----------------------------------------
+    #
+    # 这层和记忆是两种东西：记忆回答「发生过什么」，人格回答「我是谁」。
+    # 前者检索着取，后者每轮必带 —— 而且 AI 只能写其中一半。
+    #
+    # 分区不是界面上的礼貌，是服务端这里的墙：
+    #   set_persona()    两半都能改，只给设置页用；
+    #   set_self_model() 只能改自我认知，插件侧的工具调的就是它。
+    # 宪法区绕不过去，除非有人直接动数据库文件。
+
+    CONSTITUTION_MAX = 8000
+    SELF_MODEL_MAX = 4000
+
+    def get_persona(self) -> dict[str, Any]:
+        row = self.conn.execute(
+            "SELECT constitution, self_model, updated_at, self_updated_at FROM persona WHERE id=1",
+        ).fetchone()
+        if row is None:   # schema 里插了 id=1，这里只做防御
+            return {"constitution": "", "self_model": "", "updated_at": 0.0, "self_updated_at": 0.0}
+        return {
+            "constitution": row["constitution"] or "",
+            "self_model": row["self_model"] or "",
+            "updated_at": float(row["updated_at"] or 0.0),
+            "self_updated_at": float(row["self_updated_at"] or 0.0),
+        }
+
+    def set_persona(self, constitution: str | None = None,
+                    self_model: str | None = None) -> dict[str, Any]:
+        """设置页入口：两半都能改。传 None = 这一半不动。"""
+        current = self.get_persona()
+        next_constitution = current["constitution"] if constitution is None else str(constitution)
+        next_self = current["self_model"] if self_model is None else str(self_model)
+        if len(next_constitution) > self.CONSTITUTION_MAX:
+            raise ValueError(f"宪法区超过上限 {self.CONSTITUTION_MAX} 字符（现在 {len(next_constitution)}）")
+        if len(next_self) > self.SELF_MODEL_MAX:
+            raise ValueError(f"自我认知区超过上限 {self.SELF_MODEL_MAX} 字符（现在 {len(next_self)}）")
+
+        now = time.time()
+        self.conn.execute(
+            "UPDATE persona SET constitution=?, self_model=?, updated_at=?, self_updated_at=? WHERE id=1",
+            (
+                next_constitution,
+                next_self,
+                now if constitution is not None else current["updated_at"],
+                now if self_model is not None else current["self_updated_at"],
+            ),
+        )
+        self.conn.commit()
+        return self.get_persona()
+
+    def set_self_model(self, text: str) -> dict[str, Any]:
+        """AI 入口：只能写自我认知区。想改宪法请走设置页。"""
+        return self.set_persona(self_model=str(text))
+
     # -- 导出 / 导入：记忆转移 -------------------------------------------------
     #
     # 为什么不是「直接拷贝 memories.db」：

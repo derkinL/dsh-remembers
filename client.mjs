@@ -102,4 +102,26 @@ export class MemoryClient {
     });
     return res?.id ?? null;
   }
+
+  /**
+   * 人格设定：宪法区 + 自我认知区。
+   * 两半都空 = 还没设过，插件那侧会整段不注入。服务不可用返回 null。
+   */
+  async persona() {
+    const res = await this.#request("GET", "/persona");
+    return res?.ok ? res : null;
+  }
+
+  /** 设置页保存：两半都能写。没传的字段服务端保持原值。 */
+  async setPersona({ constitution, selfModel } = {}) {
+    const body = {};
+    if (constitution !== undefined) body.constitution = constitution;
+    if (selfModel !== undefined) body.self_model = selfModel;
+    return this.#request("POST", "/persona", body);
+  }
+
+  /** 只写自我认知区。宪法区没有对应参数，服务端层面就改不了。 */
+  async setSelfModel(text) {
+    return this.#request("POST", "/persona/self", { text });
+  }
 }
