@@ -79,7 +79,7 @@ mkdir -p "$DEST"
 # 只拷运行需要的文件。**绝不拷 node_modules**——那是仓库里留给本地测试的替身，
 # 拷过去会顶掉宿主真正的 @deepseek-ai/dsh-llm。
 # 注意用 if 而不是 `[ -f ] && cp`：后者在 set -e 下遇到缺失文件会直接终止脚本。
-for f in index.mjs client.mjs config.mjs cordis.patch.yml package.json README.md; do
+for f in index.mjs client.js client.mjs config.mjs cordis.patch.yml package.json README.md; do
   if [ -f "$PLUGIN_SRC/$f" ]; then
     cp "$PLUGIN_SRC/$f" "$DEST/$f"
   else
