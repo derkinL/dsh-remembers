@@ -51,13 +51,23 @@ info "检查 DSH profile：$PROFILE_DIR"
 # ---------------------------------------------------------------------------
 # 2. 服务
 # ---------------------------------------------------------------------------
+# 端口不是写死的 8080：Docker 那条路是 8080，裸跑时经常为了避让改成 8081。
+# 优先级：环境变量 CMEM_PORT > service/.env > 8080。
+PORT="${CMEM_PORT:-}"
+if [ -z "$PORT" ] && [ -f "$SERVICE_DIR/.env" ]; then
+  PORT=$(grep -E '^CMEM_PORT=' "$SERVICE_DIR/.env" | cut -d= -f2- | tr -d '[:space:]' || true)
+fi
+PORT="${PORT:-8080}"
+ENDPOINT="http://127.0.0.1:${PORT}"
+
 if [ "$SKIP_SERVICE" = "0" ]; then
-  info "检查记忆服务"
-  if curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1; then
+  info "检查记忆服务（$ENDPOINT）"
+  if curl -fsS "${ENDPOINT}/health" >/dev/null 2>&1; then
     info "服务已在运行"
   else
-    warn "127.0.0.1:8080 没有响应。先起服务：
-  cd $SERVICE_DIR && ./deploy.sh
+    warn "$ENDPOINT 没有响应。先起服务：
+  Docker:  cd $SERVICE_DIR && ./deploy.sh
+  裸跑:    sudo $SERVICE_DIR/deploy-native.sh
   起好后重跑：./install.sh --no-service"
     exit 1
   fi
@@ -133,7 +143,18 @@ else
   TOKEN=""
 fi
 
-info "插件默认连 http://127.0.0.1:8080"
+if [ "$PORT" = "8080" ]; then
+  info "插件默认连 $ENDPOINT（不用额外配置）"
+else
+  warn "服务在 $PORT 端口，但插件默认连 8080 —— 装完必须让插件知道真实地址，二选一："
+  warn "  ① DSH 的运行环境里 export CMEM_URL=$ENDPOINT"
+  warn "  ② 写进 profile 的 cordis.patch.yml："
+  warn "     - insert:
+        - id: dsh-remembers
+          name: 'dsh-remembers'
+          config:
+            endpoint: $ENDPOINT"
+fi
 if [ -n "$TOKEN" ]; then
   warn "服务设了鉴权 token。插件要能拿到同一个，建议写进 DSH 的环境变量：
   export CMEM_AUTH_TOKEN=$TOKEN"
@@ -152,7 +173,7 @@ cat <<EOF
 
 验证记忆真的在工作（问它一句，然后看服务端有没有收到检索）：
 
-  curl -s http://127.0.0.1:8080/log?limit=5
+  curl -s "${ENDPOINT}/log?limit=5"
 
 期望看到 outcome=ok 或 no_match 的记录。全是空的 = 插件没把消息送上去。
 ────────────────────────────────────────
