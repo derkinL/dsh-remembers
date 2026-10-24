@@ -656,8 +656,9 @@ function renderState(state) {
       registerTool(defineTool({
         name: "learn_meme",
         description:
-          "把一张图记进你的表情包库：告诉系统它是什么样子、什么情绪下用。"
-          + "老大发图给你、或者你在网上看到喜欢的图时用。",
+          "把一张图记进你的表情包库。"
+          + "老大发来的图、或者你在网上看到喜欢的图，把图片的完整路径传进来就行，系统会复制入库并自己识别。"
+          + "memes 目录里已有的图也可以只传文件名。",
         parameters: {
           file: { type: "string", required: true, description: "文件名（memes 目录里的）" },
           emotion: { type: "string", description: "情绪：happy / angry / sad / shy / confused / daily" },

@@ -679,15 +679,55 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"ok": True})
 
     def _post_meme(self) -> None:
-        """表情包入库/更新：文件名 + 情绪 + 描述 + 关键词。"""
+        """表情包入库/更新。
+
+        file 可以是 memes 目录里的文件名，也可以是**绝对路径**（比如用户发来的图）——
+        传路径时会把图复制进 memes 目录，用原文件名入库。
+        """
+        import os as _os
+        import shutil as _shutil
         body = self._body()
+        file = str(body.get("file") or "").strip()
+        from_path = str(body.get("path") or "").strip()
+        meme_dir = _os.environ.get("CMEM_MEME_DIR", "/home/ubuntu/.dsh/media/onebot/memes")
+        _os.makedirs(meme_dir, exist_ok=True)
+
+        # 传的是路径：复制进 memes 目录
+        if not from_path and _os.path.isabs(file) and _os.path.exists(file):
+            from_path = file
+        if from_path and _os.path.exists(from_path):
+            name = _os.path.basename(from_path)
+            if not name:
+                self._json(400, {"ok": False, "error": "bad path"})
+                return
+            dest = _os.path.join(meme_dir, name)
+            if _os.path.abspath(from_path) != _os.path.abspath(dest):
+                try:
+                    _shutil.copy2(from_path, dest)
+                except Exception as e:
+                    self._json(400, {"ok": False, "error": "copy failed: " + str(e)})
+                    return
+            file = name
+
+        if not file:
+            self._json(400, {"ok": False, "error": "file required"})
+            return
+
+        # 没给描述时，自动看图标一下
+        caption = str(body.get("caption") or "")
+        emotion = str(body.get("emotion") or "")
+        keywords = str(body.get("keywords") or "")
+        if not caption:
+            try:
+                label = extractor.label_meme(_os.path.join(meme_dir, file)) or {}
+                emotion = emotion or str(label.get("emotion") or "")
+                caption = str(label.get("caption") or "")
+                keywords = keywords or str(label.get("keywords") or "")
+            except Exception:
+                pass
+
         with _lock:
-            data = store.meme_upsert(
-                str(body.get("file") or ""),
-                str(body.get("emotion") or ""),
-                str(body.get("caption") or ""),
-                str(body.get("keywords") or ""),
-            )
+            data = store.meme_upsert(file, emotion, caption, keywords)
         self._json(200, {"ok": True, **data})
 
     def _post_meme_used(self) -> None:
