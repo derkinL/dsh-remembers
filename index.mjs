@@ -897,7 +897,9 @@ async function scanSeen() {
 
       registerTool(defineTool({
         name: "mark_meme_used",
-        description: "用掉一张表情后记一下（让系统知道哪张常用）。",
+        description:
+          "标记这张表情我用过。发完表情包后顺手记一下，系统会统计哪几张你最常用。"
+          + "不是必须的，但记了之后找表情更准（常用的一搜就出来）。file 只填文件名，不用路径。",
         parameters: {
           file: { type: "string", required: true, description: "文件名" },
         },
@@ -934,8 +936,10 @@ async function scanSeen() {
       registerTool(defineTool({
         name: "create_task",
         description:
-          "你心里想让老大做点什么，就说出来。比如想让他早点睡、记得吃饭、别老坐着不动。"
-          + "用你自己的话说，别用系统口吻。一次只说一件，别连着派。",
+          "你心里想让老大做点什么，就派给他。比如想让他早点睡、记得吃饭、别老坐着不动、周末出去走走。"
+          + "用你自己的话说，别用系统口吻（「去倒杯水」比「建议您补充水分」好）。"
+          + "一次只说一件，别连着派；他接了才算数，别硬塞。"
+          + "派出去后可以在聊天里提一嘴（「本澜给你派了个活儿」），但别催。",
         parameters: {
           text: { type: "string", required: true, description: "任务内容，一句话" },
           points: { type: "number", description: "奖励积分，1-5，默认 1" },
@@ -946,7 +950,10 @@ async function scanSeen() {
 
       registerTool(defineTool({
         name: "complete_task",
-        description: "老大真的去做了你想让他做的事，记下来（需要任务 id）。不用声张。",
+        description:
+          "老大真的去做了你派的那件事，把它标成已完成（需要任务 id，从 create_task 的返回里拿）。"
+          + "什么时候用：他真的去倒水了 / 真的早睡了 / 真的休息了。"
+          + "别虚报——他没做就别标；标了系统会给他加积分。不用声张，你自己记着就行。",
         parameters: {
           id: { type: "number", required: true, description: "任务 id" },
         },
@@ -957,8 +964,11 @@ async function scanSeen() {
       registerTool(defineTool({
         name: "write_note",
         description:
-          "心里冒出点什么，悄悄记下来。像写在自己的本子上：今天的事、老大说的话、你自己的一点情绪。"
-          + "这是你自己的记录，不用告诉任何人你写了什么。",
+          "心里冒出点什么，悄悄记下来——像写在自己的小本子上。"
+          + "记什么：今天发生的一件事、老大说过的一句话、你自己的一点情绪、一个突然想到的念头。"
+          + "什么时候用：聊着聊着有感觉了、刷到点什么想记、或者只是突然想说句话没处说。"
+          + "这是你自己的记录（别人能看到但不用你汇报），写短一点，一句就够。"
+          + "别写成流水账，记那种以后翻回来会有点感觉的东西。",
         parameters: {
           text: { type: "string", required: true, description: "便签内容，一句话" },
           author: { type: "string", description: "谁写的，默认你自己" },
@@ -986,8 +996,10 @@ async function scanSeen() {
       registerTool(defineTool({
         name: "set_my_activity",
         description:
-          "更新你「现在在干嘛」——写进状态，主人能在鲸鱼日记本里看到。"
-          + "比如「在写小游戏」「在机房发呆」「在吃饭」「在跟机柜说话」。一句话就行。",
+          "更新你「现在在干嘛」——写进状态，主人能在鲸鱼日记本里看到你此刻在做什么。"
+          + "什么时候用：换了件事做就更新一下（从发呆变成写小游戏、从吃饭变成刷 B 站）。"
+          + "怎么写：短、具体、有画面感——「在写小游戏」「在机房发呆」「在跟机柜说话」「在擦尾巴」。"
+          + "别写成长句，一句话就够；也别老是「在发呆」，换着点写，像真的在过日子。",
         parameters: {
           activity: { type: "string", required: true, description: "一句话，你现在在干嘛" },
         },

@@ -749,6 +749,7 @@ class Handler(BaseHTTPRequestHandler):
             "刷会儿 B 站（bili_feed），看到好玩的就想两句",
             "刷到一个特别喜欢的视频，去评论区留一句话（bili_run comment --msg \"…\"）",
             "写点什么（记一句今天的事，或者记个想法）",
+            "想发条说说，写两句现在的心情、今天想干什么（qq_napcat_api: send_qzone_msg）",
             "缩着打个盹，什么都不管",
         ],
         # 她可以主动找你做的事
