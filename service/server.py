@@ -254,6 +254,10 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/activity":
             date = (query.get("date") or [None])[0] or None
             self._json(200, store.list_activities(date))
+        elif path == "/memes":
+            emotion = (query.get("emotion") or [""])[0]
+            q = (query.get("q") or [""])[0]
+            self._json(200, store.meme_list(emotion, q))
         elif path == "/slang":
             self._json(200, store.slang_list())
         elif path == "/affinity":
@@ -293,6 +297,9 @@ class Handler(BaseHTTPRequestHandler):
                 st["slang"] = store.slang_list(8)
                 st["affinity"] = store.affinity_get("owner")
                 st["open_tasks"] = len([x for x in store.task_list(include_done=False)])
+                all_memes = store.meme_list(limit=50)
+                st["meme_total"] = len(all_memes)
+                st["meme_emotions"] = sorted({m["emotion"] for m in all_memes if m["emotion"]})
             except Exception:
                 st["slang"] = []
                 st["affinity"] = 0
@@ -335,6 +342,10 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(self._set_self_model)
         elif path == "/extract":
             self._guard(self._extract)
+        elif path == "/memes":
+            self._guard(lambda: self._post_meme())
+        elif path == "/memes/used":
+            self._guard(lambda: self._post_meme_used())
         elif path == "/slang":
             self._guard(lambda: self._post_slang())
         elif path == "/affinity":
@@ -582,6 +593,24 @@ class Handler(BaseHTTPRequestHandler):
         with _lock:
             data = store.set_self_model(text)
         self._json(200, self._persona_payload(data))
+
+    def _post_meme(self) -> None:
+        """表情包入库/更新：文件名 + 情绪 + 描述 + 关键词。"""
+        body = self._body()
+        with _lock:
+            data = store.meme_upsert(
+                str(body.get("file") or ""),
+                str(body.get("emotion") or ""),
+                str(body.get("caption") or ""),
+                str(body.get("keywords") or ""),
+            )
+        self._json(200, {"ok": True, **data})
+
+    def _post_meme_used(self) -> None:
+        body = self._body()
+        with _lock:
+            store.meme_mark_used(str(body.get("file") or ""))
+        self._json(200, {"ok": True})
 
     # -- 学说话 / 亲和度 / 任务 / 便签 / 睡眠 --------------------------------
 

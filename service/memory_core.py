@@ -1007,6 +1007,47 @@ class MemoryStore:
             for r in rows
         ]
 
+
+    # -- 表情包索引：按情绪/关键词找图 ----------------------------------------
+
+    def meme_upsert(self, file: str, emotion: str = "", caption: str = "", keywords: str = "") -> dict:
+        now = time.time()
+        self.conn.execute(
+            "INSERT INTO meme(file, emotion, caption, keywords, created, updated) VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(file) DO UPDATE SET emotion=excluded.emotion, caption=excluded.caption, "
+            "keywords=excluded.keywords, updated=excluded.updated",
+            (str(file), str(emotion), str(caption), str(keywords), now, now),
+        )
+        self.conn.commit()
+        return {"file": file, "emotion": emotion, "caption": caption}
+
+    def meme_list(self, emotion: str = "", q: str = "", limit: int = 20) -> list[dict]:
+        sql = "SELECT * FROM meme"
+        where = []
+        params = []
+        if emotion:
+            where.append("(emotion = ? OR emotion LIKE ?)")
+            params.extend([emotion, "%" + emotion + "%"])
+        if q:
+            where.append("(caption LIKE ? OR keywords LIKE ? OR file LIKE ?)")
+            kw = "%" + q + "%"
+            params.extend([kw, kw, kw])
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY used_count ASC, RANDOM() LIMIT ?"
+        params.append(max(1, min(int(limit), 50)))
+        rows = self.conn.execute(sql, tuple(params)).fetchall()
+        return [
+            {"id": int(r["id"]), "file": r["file"], "emotion": r["emotion"],
+             "caption": r["caption"], "keywords": r["keywords"], "used_count": int(r["used_count"])}
+            for r in rows
+        ]
+
+    def meme_mark_used(self, file: str) -> None:
+        self.conn.execute("UPDATE meme SET used_count = used_count + 1, updated = ? WHERE file = ?",
+                          (time.time(), str(file)))
+        self.conn.commit()
+
     def bump_intimacy(self, delta: float = 1.0) -> float:
         cur = self.get_state()
         return self.set_state(intimacy=cur["intimacy"] + delta)["intimacy"]

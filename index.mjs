@@ -159,6 +159,12 @@ function renderState(state) {
     lines.push(`你和老大现在是「${state.stage.name}」阶段：${state.stage.hint}。`);
   }
   if (state.activity) lines.push(`你现在在：${state.activity}。想换的话可以用 set_my_activity 工具。`);
+  if (Number(state.meme_total) > 0) {
+    const emo = Array.isArray(state.meme_emotions) && state.meme_emotions.length
+      ? `已分类的情绪：${state.meme_emotions.join("、")}`
+      : "还没有分类（可以用 learn_meme 标）";
+    lines.push(`你的表情包库：${state.meme_total} 张，${emo}。想发表情时用 find_meme 按情绪找，拿到 file 再用 qq_send_image 发。`);
+  }
   if (state.weather) lines.push(`外面：${state.weather}。`);
   if (Number(state.game_score) > 0) {
     lines.push(`你最近玩《像素鲸鱼吃豆子》得分 ${state.game_score}（玩了 ${state.game_plays} 次）。`);
@@ -578,12 +584,104 @@ function renderState(state) {
   void registerPersonaTool();
   void registerActivityTool();
   void registerCompanionTools();
+  void registerMemeTools();
 
   /**
    * 自我认知写入工具。只打 /persona/self —— 宪法区在服务端根本没有那个参数，
    * 所以哪怕这个工具被模型用歪了，也只能改掉半张卡。
    */
 
+
+
+  /** 表情包工具：按情绪/关键词找图，自己学新图。 */
+  async function registerMemeTools() {
+    if (!registerTool) return;
+    let defineTool;
+    try {
+      ({ defineTool } = await import("@deepseek-ai/dsh-tools"));
+    } catch (error) {
+      log("meme_tools_skipped", { reason: "dsh-tools 不可用", error: String(error?.message ?? error) });
+      return;
+    }
+    const get = async (path) => {
+      const res = await fetch(config.endpoint + path, { signal: AbortSignal.timeout(5000) });
+      return res.json().catch(() => null);
+    };
+    const post = async (path, body) => {
+      const res = await fetch(config.endpoint + path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(5000),
+      });
+      return res.json().catch(() => ({ ok: false }));
+    };
+
+    try {
+      registerTool(defineTool({
+        name: "find_meme",
+        description:
+          "按情绪找表情包。emotion 可选 happy / angry / sad / shy / confused / daily；"
+          + "也可以给 q 用关键词找（比如「饼干」「下班」「比心」）。"
+          + "返回匹配的图片文件名，挑一张用 qq_send_image 发出去。",
+        parameters: {
+          emotion: { type: "string", description: "情绪：happy / angry / sad / shy / confused / daily" },
+          q: { type: "string", description: "关键词，比如 饼干 / 下班 / 比心" },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async (args) => {
+          const params = new URLSearchParams();
+          if (args.emotion) params.set("emotion", String(args.emotion));
+          if (args.q) params.set("q", String(args.q));
+          const list = await get("/memes?" + params.toString());
+          if (!Array.isArray(list) || list.length === 0) {
+            return { ok: true, memes: [], hint: "没找到匹配的，换个情绪或关键词试试" };
+          }
+          return {
+            ok: true,
+            memes: list.slice(0, 8).map((m) => ({
+              file: m.file,
+              emotion: m.emotion,
+              caption: m.caption || m.file,
+            })),
+          };
+        },
+      }));
+
+      registerTool(defineTool({
+        name: "learn_meme",
+        description:
+          "把一张图记进你的表情包库：告诉系统它是什么样子、什么情绪下用。"
+          + "老大发图给你、或者你在网上看到喜欢的图时用。",
+        parameters: {
+          file: { type: "string", required: true, description: "文件名（memes 目录里的）" },
+          emotion: { type: "string", description: "情绪：happy / angry / sad / shy / confused / daily" },
+          caption: { type: "string", description: "一句话描述这张图的样子" },
+          keywords: { type: "string", description: "关键词，空格分隔" },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async (args) => post("/memes", {
+          file: args.file,
+          emotion: args.emotion || "",
+          caption: args.caption || "",
+          keywords: args.keywords || "",
+        }),
+      }));
+
+      registerTool(defineTool({
+        name: "mark_meme_used",
+        description: "用掉一张表情后记一下（让系统知道哪张常用）。",
+        parameters: {
+          file: { type: "string", required: true, description: "文件名" },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async (args) => post("/memes/used", { file: args.file }),
+      }));
+      log("meme_tools_registered", { count: 3 });
+    } catch (error) {
+      log("meme_tools_skipped", { reason: "register 失败", error: String(error?.message ?? error) });
+    }
+  }
 
   /** 任务/便签工具：她主动派任务、标记完成、写便签。 */
   async function registerCompanionTools() {

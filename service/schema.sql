@@ -202,3 +202,17 @@ CREATE TABLE IF NOT EXISTS sleep_log (
   text       TEXT NOT NULL DEFAULT '',
   created    REAL NOT NULL DEFAULT 0
 );
+
+-- ---------------------------------------------------------------------------
+-- 表情包索引：每张图有情绪分类 + 描述 + 关键词（AI 按情绪找图）
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS meme (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  file         TEXT NOT NULL UNIQUE,
+  emotion      TEXT NOT NULL DEFAULT '',
+  caption      TEXT NOT NULL DEFAULT '',
+  keywords     TEXT NOT NULL DEFAULT '',
+  used_count   INTEGER NOT NULL DEFAULT 0,
+  created      REAL NOT NULL DEFAULT 0,
+  updated      REAL NOT NULL DEFAULT 0
+);
