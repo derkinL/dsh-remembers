@@ -989,7 +989,9 @@ class MemoryStore:
         ]
 
     def sleep_add(self, date: str, text: str) -> dict:
+        """每天一条：同一天再写就覆盖旧的那条。"""
         now = time.time()
+        self.conn.execute("DELETE FROM sleep_log WHERE date=?", (str(date),))
         self.conn.execute(
             "INSERT INTO sleep_log(date, text, created) VALUES (?,?,?)",
             (str(date), str(text), now),
