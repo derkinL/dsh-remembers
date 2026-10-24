@@ -251,6 +251,11 @@ class Handler(BaseHTTPRequestHandler):
             }))
         elif path == "/stats":
             self._guard(lambda: self._json(200, {"ok": True, "stats": store.stats()}))
+        elif path == "/activity":
+            date = (query.get("date") or [None])[0] or None
+            self._json(200, store.list_activities(date))
+        elif path == "/diary":
+            self._json(200, store.diary_list())
         elif path == "/profile":
             subject = (query.get("subject") or [None])[0]
             self._guard(lambda: self._json(200, {
@@ -260,6 +265,20 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/log":
             limit = int((query.get("limit") or ["50"])[0])
             self._guard(lambda: self._json(200, {"ok": True, "items": self._recent_log(limit)}))
+        elif path == "/state":
+            st = store.get_state()
+            hour = None
+            try:
+                raw_hour = (query.get("hour") or [None])[0]
+                if raw_hour not in (None, ""):
+                    hour = int(raw_hour) % 24
+            except Exception:
+                hour = None
+            st["activity"] = store.current_activity(hour)
+            st["weather"] = store.current_weather()
+            st["stage"] = store.current_stage()
+            st["view_hour"] = hour
+            self._json(200, st)
         elif path == "/persona":
             self._guard(self._get_persona)
         elif path == "/export":
@@ -288,12 +307,20 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(self._reindex)
         elif path == "/config":
             self._guard(self._set_config)
+        elif path == "/state":
+            self._guard(self._set_state)
         elif path == "/persona":
             self._guard(self._set_persona)
         elif path == "/persona/self":
             self._guard(self._set_self_model)
         elif path == "/extract":
             self._guard(self._extract)
+        elif path == "/activity":
+            self._guard(lambda: self._log_activity())
+        elif path == "/diary":
+            self._guard(lambda: self._write_diary())
+        elif path == "/evolve":
+            self._guard(self._evolve)
         elif path == "/episode":
             self._guard(self._episode)
         else:
@@ -473,6 +500,35 @@ class Handler(BaseHTTPRequestHandler):
             )
         self._json(200, self._persona_payload(data))
 
+    def _set_state(self) -> None:
+        """运行时状态写入：心情 / 亲密度 / 日记 / 勿扰时段。"""
+        body = self._body()
+        kwargs = {}
+        if "mood" in body:
+            kwargs["mood"] = str(body.get("mood") or "normal")
+        if "bump" in body:
+            cur = store.get_state()
+            kwargs["intimacy"] = cur["intimacy"] + float(body.get("bump") or 0)
+        elif "intimacy" in body:
+            kwargs["intimacy"] = float(body.get("intimacy") or 0)
+        if "diary" in body:
+            kwargs["diary"] = str(body.get("diary") or "")
+        if "diary_date" in body:
+            kwargs["diary_date"] = str(body.get("diary_date") or "")
+        if "activity" in body:
+            kwargs["activity"] = str(body.get("activity") or "")
+        if "game_score" in body:
+            kwargs["game_score"] = int(body.get("game_score") or 0)
+        if "game_plays" in body:
+            kwargs["game_plays"] = int(body.get("game_plays") or 0)
+        if "dnd_start" in body:
+            kwargs["dnd_start"] = int(body.get("dnd_start") or 23)
+        if "dnd_end" in body:
+            kwargs["dnd_end"] = int(body.get("dnd_end") or 8)
+        with _lock:
+            data = store.set_state(**kwargs)
+        self._json(200, data)
+
     def _set_self_model(self) -> None:
         """AI 写作入口：只能写自我认知区。
 
@@ -490,6 +546,64 @@ class Handler(BaseHTTPRequestHandler):
         with _lock:
             data = store.set_self_model(text)
         self._json(200, self._persona_payload(data))
+
+    def _log_activity(self) -> None:
+        """记一条活动日志（她真的做过什么）。"""
+        body = self._body()
+        with _lock:
+            store.log_activity(str(body.get("kind") or "other"), str(body.get("detail") or ""))
+        self._json(200, {"ok": True})
+
+    def _write_diary(self) -> None:
+        """写今天的日记：根据最近对话让 LLM 用第一人称写一段（100 字内）。"""
+        body = self._body()
+        user_text = str(body.get("user_text") or "")
+        assistant_text = str(body.get("assistant_text") or "")
+        if not user_text:
+            # 没有显式对话时，用今天的记忆当素材
+            import datetime as _dt
+            today = _dt.date.today()
+            start = _dt.datetime.combine(today, _dt.time.min).timestamp()
+            try:
+                rows = store.conn.execute(
+                    "SELECT text FROM memory WHERE ts >= ? ORDER BY id DESC LIMIT 12",
+                    (start,),
+                ).fetchall()
+                user_text = "\n".join(str(r["text"]) for r in rows)
+            except Exception:
+                user_text = ""
+        text = extractor.write_diary(
+            user_text,
+            assistant_text,
+            str(body.get("date") or time.strftime("%Y-%m-%d")),
+        )
+        if not text:
+            self._json(503, {"ok": False, "error": "llm unavailable"})
+            return
+        date = str(body.get("date") or time.strftime("%Y-%m-%d"))
+        mood = str(body.get("mood") or "")
+        with _lock:
+            data = store.diary_add(date, text, mood)
+        self._json(200, {"ok": True, **data})
+
+    def _evolve(self) -> None:
+        """人设演化：从这段对话生一句「我发现自己……」，追加到自我认知区。"""
+        body = self._body()
+        line = extractor.evolve(
+            str(body.get("user_text") or ""),
+            str(body.get("assistant_text") or ""),
+        )
+        if not line:
+            self._json(503, {"ok": False, "error": "llm unavailable"})
+            return
+        cur = store.get_persona()["self_model"] or ""
+        lines = [l for l in cur.split("\n") if l.strip()]
+        lines.append(line)
+        while len("\n".join(lines)) > 4000 and len(lines) > 1:
+            lines.pop(0)
+        new = "\n".join(lines)
+        store.set_self_model(new)
+        self._json(200, {"ok": True, "line": line, "chars": len(new)})
 
     def _episode(self) -> None:
         """把一段对话压成一条 L3 事件记录（episode）。

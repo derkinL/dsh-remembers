@@ -44,6 +44,86 @@ export function apply(ctx, input = {}) {
   );
 
   const log = (stage, data) => logger?.debug?.(`[dsh-remembers] ${stage} ${JSON.stringify(data)}`);
+
+/** 拉运行时状态（心情/亲密度/勿扰），服务不可用时返回 null，绝不阻塞对话。 */
+async function fetchState() {
+  try {
+    const res = await fetch(config.endpoint + "/state", { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return null;
+    return await res.json();
+  }
+  catch {
+    return null;
+  }
+}
+
+/** 记一条活动日志（fire-and-forget）。 */
+async function logActivity(kind, detail) {
+  try {
+    await fetch(config.endpoint + "/activity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind, detail: String(detail || "").slice(0, 120) }),
+      signal: AbortSignal.timeout(3000),
+    });
+  }
+  catch {
+    /* 日志失败不影响对话 */
+  }
+}
+
+/** 人设演化：让服务端从这段对话生一句「我发现自己……」（fire-and-forget）。 */
+async function requestEvolve(userText, assistantText) {
+  try {
+    await fetch(config.endpoint + "/evolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_text: userText, assistant_text: assistantText }),
+      signal: AbortSignal.timeout(30000),
+    });
+  }
+  catch {
+    /* 演化失败不影响对话 */
+  }
+}
+
+/** 每轮互动 +1 亲密度（fire-and-forget）。 */
+async function bumpIntimacy() {
+  try {
+    await fetch(config.endpoint + "/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bump: 1 }),
+      signal: AbortSignal.timeout(3000),
+    });
+  }
+  catch {
+    /* 状态服务不可用不影响对话 */
+  }
+}
+
+/** 把状态渲染成提示词段（每轮必带）。 */
+function renderState(state) {
+  if (!state) return "";
+  const moodMap = { happy: "开心", tired: "累", annoyed: "烦", bored: "无聊", normal: "平常" };
+  const moodText = moodMap[state.mood] || "平常";
+  const intimacy = Math.round(Number(state.intimacy) || 0);
+  const lines = [
+    '<dsh-remembers source="state">',
+    `你现在的状态：心情${moodText}；和老大亲密度 ${intimacy}/100；勿扰时段 ${state.dnd_start} 点到 ${state.dnd_end} 点。`,
+  ];
+  if (state.stage && state.stage.name) {
+    lines.push(`你和老大现在是「${state.stage.name}」阶段：${state.stage.hint}。`);
+  }
+  if (state.activity) lines.push(`你现在在：${state.activity}。想换的话可以用 set_my_activity 工具。`);
+  if (state.weather) lines.push(`外面：${state.weather}。`);
+  if (Number(state.game_score) > 0) {
+    lines.push(`你最近玩《像素鲸鱼吃豆子》得分 ${state.game_score}（玩了 ${state.game_plays} 次）。`);
+  }
+  if (state.diary) lines.push(`你今天的日记：${state.diary}`);
+  lines.push("</dsh-remembers>");
+  return lines.join("\n");
+}
   log("loaded", { version: PLUGIN_VERSION, endpoint: config.endpoint, captureRaw: config.captureRaw });
 
   // systemPrompt / tools 是软依赖：拿不到就退回「只有 L4 + 记忆」的老行为。
@@ -99,9 +179,9 @@ export function apply(ctx, input = {}) {
     if (!force && now - persona.triedAt < config.personaRefreshMs) return persona.text;
     persona.triedAt = now;
     try {
-      const data = await client.persona();
+      const [data, st] = await Promise.all([client.persona(), fetchState()]);
       if (!data) return persona.text;
-      const next = renderPersona(data, config.personaMaxChars);
+      const next = (renderPersona(data, config.personaMaxChars) + "\n" + renderState(st)).trim();
       if (next !== persona.text) {
         log("persona_refreshed", {
           chars: next.length,
@@ -133,6 +213,7 @@ export function apply(ctx, input = {}) {
         id,
         injectedHashes: new Set(),   // 去重：同一块不重复注入
         profileDelivered: false,
+        turns: 0,                    // 已结束的轮数（每 50 轮重注入画像）
         turnUser: "",
         turnAssistant: "",
         recentUser: [],           // 最近几条用户输入，给惊讶度门控做参照
@@ -205,9 +286,30 @@ export function apply(ctx, input = {}) {
   // 2. 每步召回
   // -------------------------------------------------------------------------
   ctx.on("agent/pre-step", async ({ agent, signal }, next) => {
+    console.log("[dsh-remembers-debug] pre-step session=" + String(agent?.session?.id));
     const decision = await next();
     if (decision.kind !== "enter" || signal?.aborted) return decision;
     if (skipped(agent?.session)) return decision;
+
+    // 画像注入（每 50 轮刷新）：L4 里程碑 + L2 画像
+    try {
+      const st = stateFor(agent.session);
+      if (!st.profileDelivered) {
+        const items = await client.profile(config.profileSubject || null);
+        const kept = personaOwnsProfile()
+          ? (items || []).filter((item) => !(item.tier === "L4" && (item.subject || "self") === "self"))
+          : (items || []);
+        if (kept.length > 0) {
+          const block = renderProfile(kept);
+          st.profileDelivered = true;
+          st.injectedHashes.add(hash(block));
+          log("profile_injected", { session: st.id, items: kept.length, turn: st.turns });
+          return { kind: "enter", messages: [...decision.messages, message(block, "profile")] };
+        }
+      }
+    } catch (error) {
+      log("profile_error", { error: String(error?.message ?? error) });
+    }
 
     try {
       const { query, focus } = buildQuery(decision.messages);
@@ -241,6 +343,25 @@ export function apply(ctx, input = {}) {
   // 3. 捕获原话 → L0
   // -------------------------------------------------------------------------
   ctx.on("session/event", (session, event) => {
+    console.log("[dsh-remembers-debug] session/event session=" + String(session?.id) + " type=" + String(event?.type ?? event?.kind));
+    // QQ 会话的 turn 结束走 session/event 的 type="turn/end"，不是独立钩子。
+    // 必须在 early return 之前处理：turn/end 事件没有 message。
+    if (event?.type === "turn/end") {
+      try {
+        flushTurn(session);
+        bumpIntimacy();
+      }
+      catch (error) {
+        console.log("[dsh-remembers-debug] flushTurn error: " + String(error?.message ?? error));
+      }
+      return;
+    }
+    if (event?.type === "user/message" || event?.type === "assistant/message") {
+      try {
+        console.log("[dsh-remembers-debug] msgdata=" + JSON.stringify(event.data).slice(0, 600));
+      }
+      catch { /* ignore */ }
+    }
     if (!config.captureRaw || skipped(session)) return;
     const state = stateFor(session);
     const message = eventMessage(event);
@@ -256,13 +377,28 @@ export function apply(ctx, input = {}) {
     }
   });
 
-  ctx.on("turn/end", (session) => {
+  function flushTurn(session) {
+    console.log("[dsh-remembers-debug] turn/end session=" + String(session?.id) + " skipped=" + skipped(session));
     if (skipped(session)) return;
     const state = stateFor(session);
+    state.turns = (state.turns || 0) + 1;
+    if (state.turns % 100 === 0) {
+      // QQ 会话基本不换窗口：靠轮数触发画像刷新（每 100 轮）
+      state.profileDelivered = false;
+    }
     const user = state.turnUser.trim();
     const assistant = state.turnAssistant.trim();
     state.turnUser = "";
     state.turnAssistant = "";
+    console.log("[dsh-remembers-debug] flush cfg extract=" + config.extract + " captureRaw=" + config.captureRaw + " userLen=" + user.length + " asstLen=" + assistant.length);
+    // 每 30 轮让她演化一次自我认知
+    if (state.turns % 30 === 0 && user && assistant) {
+      void requestEvolve(user, assistant);
+    }
+    // 记一条聊天活动
+    if (user) {
+      void logActivity("chat", user.slice(0, 80));
+    }
 
     // 这一轮之前的几条用户输入，作为惊讶度门控的参照
     const context = state.recentUser.slice(-6).join("\n");
@@ -321,7 +457,8 @@ export function apply(ctx, input = {}) {
     // 这个决定「要不要把这一段压成一条前情」。上下文被 compaction 压扁之后，
     // 只有它留下的东西还能告诉未来的她「这段时间我们是怎么过来的」。
     trackEpisode(state, user, assistant);
-  });
+  }
+
 
   // -------------------------------------------------------------------------
   // episode：攒够一段就压成 L3 事件
@@ -394,11 +531,54 @@ export function apply(ctx, input = {}) {
   }
 
   void registerPersonaTool();
+  void registerActivityTool();
 
   /**
    * 自我认知写入工具。只打 /persona/self —— 宪法区在服务端根本没有那个参数，
    * 所以哪怕这个工具被模型用歪了，也只能改掉半张卡。
    */
+
+  /** 活动状态工具：她自己更新「现在在干嘛」。 */
+  async function registerActivityTool() {
+    if (!registerTool) return;
+    let defineTool;
+    try {
+      ({ defineTool } = await import("@deepseek-ai/dsh-tools"));
+    } catch (error) {
+      log("activity_tool_skipped", { reason: "dsh-tools 不可用", error: String(error?.message ?? error) });
+      return;
+    }
+    try {
+      registerTool(defineTool({
+        name: "set_my_activity",
+        description:
+          "更新你「现在在干嘛」——写进状态，主人能在鲸鱼日记本里看到。"
+          + "比如「在写小游戏」「在机房发呆」「在吃饭」「在跟机柜说话」。一句话就行。",
+        parameters: {
+          activity: { type: "string", required: true, description: "一句话，你现在在干嘛" },
+        },
+        output: { schema: { type: "json" }, render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }] },
+        execute: async (args) => {
+          const activity = String(args.activity || "").slice(0, 60);
+          if (!activity) return { ok: false, error: "activity is required" };
+          try {
+            await fetch(config.endpoint + "/state", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ activity }),
+              signal: AbortSignal.timeout(5000),
+            });
+            return { ok: true, activity };
+          } catch (error) {
+            return { ok: false, error: String(error?.message ?? error) };
+          }
+        },
+      }));
+    } catch (error) {
+      log("activity_tool_skipped", { reason: "register 失败", error: String(error?.message ?? error) });
+    }
+  }
+
   async function registerPersonaTool() {
     if (!config.personaEnabled || !config.personaAllowWrite) return;
     if (!registerTool) {
@@ -588,18 +768,32 @@ function isSynthetic(message) {
   if (kind === "tool") return true;
   if (kind === "user") return false;
   if (kind === undefined) return false;
+  // plugin:dsh-onebot 这类通道插件送进来的就是真实对话（用户和她的消息），
+  // 不是别的插件注入的上下文，必须捕获。
+  if (typeof kind === "string" && (kind.startsWith("plugin:") || kind === "model")) return false;
+  // channel: / host: 之类也按注入处理，但模型与通道插件的消息都是真实对话
   // 其它插件/宿主注入的上下文一律不捕获
   return typeof kind === "string";
 }
 
 function extractText(message) {
   const content = message?.content;
-  if (typeof content === "string") return content.trim();
-  if (!Array.isArray(content)) return "";
-  return content
-    .filter((part) => part?.type === "text" && typeof part.text === "string")
-    .map((part) => part.text)
-    .join("\n")
+  let text = "";
+  if (typeof content === "string") {
+    text = content.trim();
+  }
+  else if (Array.isArray(content)) {
+    text = content
+      .filter((part) => part?.type === "text" && typeof part.text === "string")
+      .map((part) => part.text)
+      .join("\n")
+      .trim();
+  }
+  if (!text) return "";
+  // 清掉通道注入的 XML 包裹（<user_message qq="...">正文</user_message>）
+  return text
+    .replace(/<\/?user_message[^>]*>/g, "")
+    .replace(/<\/?assistant_message[^>]*>/g, "")
     .trim();
 }
 

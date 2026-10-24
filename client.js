@@ -413,6 +413,161 @@ window.__ModuleLoader__.load({
 
       // -- 人格设定（二合一里的「人」那一半） --------------------------------
 
+      // ---------------------------------------------------------------------
+      // 鲸鱼日记本：她现在在干嘛 / 心情 / 记得什么
+      // ---------------------------------------------------------------------
+      function DiarySection() {
+        const [st, setSt] = React.useState(null);
+        const [viewHour, setViewHour] = React.useState(null);
+        const [diaries, setDiaries] = React.useState([]);
+        const [activities, setActivities] = React.useState([]);
+        const [diaryDate, setDiaryDate] = React.useState("");
+        const [persona, setPersona] = React.useState(null);
+        const [memories, setMemories] = React.useState([]);
+        const [loading, setLoading] = React.useState(true);
+        const [error, setError] = React.useState(null);
+
+        const load = async () => {
+          setLoading(true);
+          setError(null);
+          try {
+            const s = await call("/state" + (viewHour === null ? "" : "?hour=" + viewHour));
+            const p = await call("/persona");
+            let m = [];
+            try {
+              m = await call("/profile");
+            } catch {
+              m = [];
+            }
+            let ds = [];
+            try {
+              ds = await call("/diary");
+            } catch {
+              ds = [];
+            }
+            setDiaries(Array.isArray(ds) ? ds : []);
+            let acts = [];
+            try {
+              acts = await call("/activity");
+            } catch {
+              acts = [];
+            }
+            setActivities(Array.isArray(acts) ? acts : []);
+            setSt(s);
+            setPersona(p);
+            setMemories(Array.isArray(m) ? m : []);
+          } catch (err) {
+            setError(err && err.message ? err.message : String(err));
+          } finally {
+            setLoading(false);
+          }
+        };
+
+        React.useEffect(() => {
+          void load();
+        }, [viewHour]);
+
+        if (loading && !st) {
+          return h("div", { style: S.wrap }, h("div", { style: S.muted }, "正在读鲸鱼日记本…"));
+        }
+
+        const MOOD = { happy: "开心", tired: "累", annoyed: "烦", bored: "无聊", normal: "平常" };
+        const mood = st ? (MOOD[st.mood] || "平常") : "?";
+        const intimacy = st ? Math.round(Number(st.intimacy) || 0) : 0;
+        const stage = st && st.stage ? st.stage.name : "?";
+        const stageHint = st && st.stage ? st.stage.hint : "";
+        const activity = st && st.activity ? st.activity : "发呆";
+        const weather = st && st.weather ? st.weather : "不知道";
+        const gameScore = st ? Number(st.game_score) || 0 : 0;
+        const gamePlays = st ? Number(st.game_plays) || 0 : 0;
+
+        return h("div", { style: S.wrap },
+
+          h("div", { style: S.desc },
+            "她现在在干嘛、心情怎么样、还记得什么——实时从记忆服务读。",
+          ),
+
+          h("div", { style: S.row },
+            h("button", { style: S.btn(false), onClick: () => void load() }, "刷新"),
+            h("span", { style: S.muted }, "看看她几点：" ),
+            h("select", {
+              style: { ...S.select, width: 120 },
+              value: viewHour === null ? "" : String(viewHour),
+              onChange: (ev) => {
+                const v = ev.target.value;
+                setViewHour(v === "" ? null : Number(v));
+              },
+            },
+              h("option", { value: "" }, "现在"),
+              Array.from({ length: 24 }).map((_, hr) =>
+                h("option", { key: hr, value: String(hr) }, (hr < 10 ? "0" + hr : hr) + ":00")),
+            ),
+            st ? h("span", { style: S.muted }, "最后互动：" + (st.last_interaction ? new Date(st.last_interaction * 1000).toLocaleString() : "还没聊过")) : null,
+          ),
+
+          error ? h("div", { style: S.notice("error") }, "读取失败：" + error) : null,
+
+          h("div", { style: S.card },
+            h("div", { style: S.label }, "她现在"),
+            h("div", { style: { display: "flex", gap: 18, flexWrap: "wrap", fontSize: 13 } },
+              h("span", null, "心情：" + mood),
+              h("span", null, "亲密度：" + intimacy + "/100"),
+              h("span", null, "阶段：" + stage),
+            ),
+            h("div", { style: S.muted }, "在干嘛：" + activity),
+            h("div", { style: S.muted }, "外面：" + weather),
+            h("div", { style: S.muted }, "小游戏：《像素鲸鱼吃豆子》" + gameScore + " 分（玩了 " + gamePlays + " 次）"),
+            stageHint ? h("div", { style: S.muted }, "这个阶段的样子：" + stageHint) : null,
+          ),
+
+          h("div", { style: S.card },
+            h("div", { style: S.label }, "她对自己的认知"),
+            h("div", { style: S.desc },
+              persona && persona.self_model ? persona.self_model : "还没有——聊够 30 轮她会开始写。"),
+          ),
+
+          h("div", { style: S.card },
+            h("div", { style: S.label }, "今天的时间线（她真的做了什么）"),
+            activities.length === 0
+              ? h("div", { style: S.muted }, "还没有记录——聊一句或等她主动找你。")
+              : h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+                  activities.slice(0, 30).map((a, i) => h("div", { key: i, style: S.muted },
+                    new Date(a.ts * 1000).toLocaleTimeString() + " · " + (a.kind === "chat" ? "聊天" : a.kind === "game" ? "玩游戏" : a.kind === "proactive" ? "主动找你" : a.kind) + " · " + String(a.detail || "").slice(0, 60)))),
+          ),
+
+          h("div", { style: S.card },
+            h("div", { style: S.row },
+              h("div", { style: S.label }, "日记本（按天，每天一篇）"),
+              diaries.length > 0
+                ? h("select", {
+                    style: { ...S.select, width: 160, marginLeft: "auto" },
+                    value: diaryDate,
+                    onChange: (ev) => setDiaryDate(ev.target.value),
+                  },
+                    h("option", { value: "" }, "全部"),
+                    diaries.map((d) => h("option", { key: d.date, value: d.date }, d.date)))
+                : null,
+            ),
+            diaries.length === 0
+              ? h("div", { style: S.muted }, "还没有日记——每天 23:00 她会写一篇。")
+              : h("div", { style: { display: "flex", flexDirection: "column", gap: 12, marginTop: 8 } },
+                  diaries.filter((d) => !diaryDate || d.date === diaryDate).map((d, i) => h("div", { key: i },
+                    h("div", { style: { fontSize: 12, color: "var(--dsw-color-text-secondary, #6b7280)", marginBottom: 4 } }, d.date),
+                    h("div", { style: S.desc }, d.text)))),
+          ),
+
+          h("div", { style: S.card },
+            h("div", { style: S.label }, "她记得的事（最近 12 条）"),
+            memories.length === 0
+              ? h("div", { style: S.muted }, "还没有记忆——先聊几句。")
+              : h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+                  memories.slice(0, 12).map((m, i) => h("div", { key: i, style: S.muted },
+                    "[" + (m.tier || "?") + "] " + String(m.text || m.summary || "").slice(0, 90)))),
+          ),
+
+        );
+      }
+
       function PersonaSection() {
         const [loading, setLoading] = React.useState(true);
         const [error, setError] = React.useState("");
@@ -556,6 +711,15 @@ window.__ModuleLoader__.load({
               label: () => "人格设定",
             },
             PersonaSection,
+          ));
+          slots.inject("settings.section", () => slots.register(
+            {
+              name: "settings.section",
+              id: "dsh-remembers-diary",
+              order: 34,
+              label: () => "鲸鱼日记本",
+            },
+            DiarySection,
           ));
         } catch (err) {
           console.error("dsh-remembers: apply() 失败", err);

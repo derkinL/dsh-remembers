@@ -15,20 +15,46 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-EXTRACT_SYSTEM = """你从一段对话里抽取值得长期记住的事实。
 
-只抽这三种：
-- L1 原子事实：一句话能说清、长期有效（例：她对香菜过敏）
-- L2 人物画像：稳定的偏好、雷区、人物关系（例：她怕黑；豆豆是她的猫）
-- L3 事件：发生了某件值得记住的事（例：三月那次她加班到凌晨两点哭了很久）
+DIARY_SYSTEM = """你根据今天的对话，用第一人称写一段日记（不超过 100 字）。
+要求：像真的在写日记，具体、有情绪、有细节；不要评价用户、不要写成总结报告、不要提"AI"。
+只输出日记正文。"""
+
+
+EVOLVE_SYSTEM = """你根据一段对话，用第一人称写一句「我发现自己……」——关于你自己（助手）的变化。
+要求：第一人称、简短（不超过 30 字）、具体、像自我觉察；不要写用户、不要总结、不要给建议。
+只输出这一句，不要引号，不要解释。"""
+
+EXTRACT_SYSTEM = """你从一段对话里抽取值得长期记住的内容。
+
+只抽这四种：
+- L1 原子事实：一句期能说清、长期有效（例：他教初中数学；他用 DeepSeek 写代码）
+- L2 用户画像：**用户**身上稳定的偏好、雷区、习惯、人际关系（例：他喜欢冰美式；他讨厌加班；他养了只猫叫豆豆）
+- L2 用户表达习惯：用户常说的口头禅、常发的语气词、说话风格（例：他爱说「吃了吗」；他说话爱带「哈哈」；他喜欢用短句）——这类也要抽，助手可以学着他的说话方式
+- L3 事件：发生了某件值得记住的事（例：三月那次他加班到凌晨两点哭了很久）
+- L4 关系里程碑：第一次发生、关系变化、约定、承诺（例：第一次被叫大肥鱼；约好一起看日落）
+- L4 行为契约：用户要求助手以后必须做、必须答应、或者禁止做的事（例：叫他「大肥鱼」必须答应；不许说他胖；说话不许用括号动作；每次最多三句话）。这类规矩必须抽，它决定以后怎么相处。
+
+重要：只记「用户」的事和「两人之间」的事。不要抽助手自己的性格、口头禅、饭量、自称、
+爱好——那些属于人设设定，不是记忆。如果对话里全是她在说自己，就只抽 L0 意义上的
+关系事件（比如她答应了什么），不要抽她的性格特征。
+
+情绪：如果这段对话情绪强烈（开心/难过/累/烦/兴奋/委屈/焦虑），
+在 keywords 里加一个「情绪:<情绪>」标签，比如 ["情绪:累"]；平淡内容不加。
 
 不要抽：
-- 寒暄、确认、客套
-- 一次性状态（今天有点忙）
+- 寒暄、确认、客套（「嗯」「好的」「在吗」）
 - 助手自己的话里没有新信息的部分
+- 纯流水账（「我去吃饭了」）
+
+要抽：
+- 带情绪的话必须抽成 L3 并加情绪标签，例如「今天好累」「烦死了」「好开心」
+  「不想干活了」「被夸了」——这些都是值得记住的情绪事件，不是垃圾
+- 用户说的稳定偏好、习惯、雷区（L1/L2）
+- 第一次发生的事、约定、关系变化（L4）
 
 严格输出 JSON 数组，不要任何其他文字：
-[{"text": "一句话", "tier": "L1|L2|L3", "subject": "self|人物名", "importance": 0.0, "keywords": ["词1", "词2"]}]
+[{"text": "一句话", "tier": "L1|L2|L3|L4", "subject": "self|人物名", "importance": 0.0, "keywords": ["词1", "词2"]}]
 
 importance 表示「这件事对长期关系有多重要」，0.0-1.0。
 keywords 给 2-6 个「别人换个说法来问这件事时可能用到的词」——
@@ -99,6 +125,34 @@ class Extractor:
         return bool(self.config.enabled and self.llm is not None and getattr(self.llm, "enabled", False))
 
     # -- 对外 ---------------------------------------------------------------
+
+
+
+    def write_diary(self, user_text: str, assistant_text: str = "", date: str = "") -> str | None:
+        """写今天的日记（LLM，第一人称，100 字内）。"""
+        if self.llm is None or not getattr(self.llm, "enabled", False):
+            return None
+        convo = f"用户：{user_text}\n你：{assistant_text}" if assistant_text else str(user_text)
+        try:
+            text = self.llm.chat(DIARY_SYSTEM, convo, max_tokens=220)
+        except Exception:
+            return None
+        if not text:
+            return None
+        return str(text).strip()[:200]
+
+    def evolve(self, user_text: str, assistant_text: str = "") -> str | None:
+        """人设演化：从这段对话生一句「我发现自己……」（追加到自我认知区）。"""
+        if self.llm is None or not getattr(self.llm, "enabled", False):
+            return None
+        convo = f"用户：{user_text}\n你：{assistant_text}"
+        try:
+            text = self.llm.chat(EVOLVE_SYSTEM, convo, max_tokens=80)
+        except Exception:
+            return None
+        if not text:
+            return None
+        return str(text).strip().strip('"').strip("「」")[:80]
 
     def process_turn(self, user_text: str, assistant_text: str = "", subject: str = "self") -> dict:
         """处理一轮对话，返回统计。任何失败都不抛，只记在返回里。"""

@@ -581,10 +581,11 @@ class MemoryStore:
         return kept
 
     def profile(self, subject: str | None = None) -> list[Hit]:
-        """L4 人格/关系设定：每轮必带，不参与检索排序。"""
+        """L4 人格/关系 + L2 人物画像：每轮必带，不参与检索排序。
+        画像按 importance/时间取前 20 条，避免每轮注入过长。"""
         rows = self.conn.execute(
-            "SELECT * FROM memory WHERE tier='L4'" + (" AND subject=?" if subject else "") +
-            " ORDER BY ts ASC",
+            "SELECT * FROM memory WHERE tier IN ('L4','L2')" + (" AND subject=?" if subject else "") +
+            " ORDER BY CASE tier WHEN 'L4' THEN 0 ELSE 1 END, ts ASC LIMIT 20",
             (subject,) if subject else (),
         ).fetchall()
         out = []
@@ -651,6 +652,233 @@ class MemoryStore:
     def set_self_model(self, text: str) -> dict[str, Any]:
         """AI 入口：只能写自我认知区。想改宪法请走设置页。"""
         return self.set_persona(self_model=str(text))
+    # -- 运行时状态：心情 / 亲密度 / 日记 / 勿扰 -------------------------------
+    #
+    # 记忆回答「发生过什么」，人格回答「我是谁」，状态回答「我现在怎么样」。
+    # 三者都要，缺了状态，角色每轮都一样，像 NPC 不像人。
+
+    MOODS = ("normal", "happy", "tired", "annoyed", "bored")
+
+    def get_state(self) -> dict[str, Any]:
+        row = self.conn.execute("SELECT * FROM state WHERE id=1").fetchone()
+        if row is None:
+            return {
+                "mood": "normal", "mood_updated": 0.0, "intimacy": 0.0,
+                "last_interaction": 0.0, "diary": "", "diary_date": "",
+                "dnd_start": 23, "dnd_end": 8,
+            }
+        return {
+            "mood": row["mood"] or "normal",
+            "mood_updated": float(row["mood_updated"] or 0.0),
+            "intimacy": float(row["intimacy"] or 0.0),
+            "last_interaction": float(row["last_interaction"] or 0.0),
+            "diary": row["diary"] or "",
+            "diary_date": row["diary_date"] or "",
+            "dnd_start": int(row["dnd_start"] or 23),
+            "dnd_end": int(row["dnd_end"] or 8),
+            "activity": row["activity"] or "",
+            "weather": row["weather"] or "",
+            "weather_updated": float(row["weather_updated"] or 0.0),
+            "game_score": int(row["game_score"] or 0),
+            "game_plays": int(row["game_plays"] or 0),
+        }
+
+    def set_state(self, mood=None, intimacy=None, diary=None, diary_date=None,
+                  dnd_start=None, dnd_end=None, game_score=None, game_plays=None,
+                  activity=None) -> dict[str, Any]:
+        cur = self.get_state()
+        now = time.time()
+        next_mood = cur["mood"] if mood is None else str(mood)
+        if next_mood not in self.MOODS:
+            next_mood = "normal"
+        next_intimacy = cur["intimacy"] if intimacy is None else float(intimacy)
+        next_intimacy = max(0.0, min(100.0, next_intimacy))
+        self.conn.execute(
+            """UPDATE state SET mood=?, mood_updated=?, intimacy=?, last_interaction=?,
+                               diary=?, diary_date=?, dnd_start=?, dnd_end=?,
+                               game_score=?, game_plays=?, activity=? WHERE id=1""",
+            (
+                next_mood,
+                now if mood is not None else cur["mood_updated"],
+                next_intimacy,
+                now,
+                cur["diary"] if diary is None else str(diary),
+                cur["diary_date"] if diary_date is None else str(diary_date),
+                cur["dnd_start"] if dnd_start is None else int(dnd_start),
+                cur["dnd_end"] if dnd_end is None else int(dnd_end),
+                cur.get("game_score", 0) if game_score is None else int(game_score),
+                cur.get("game_plays", 0) if game_plays is None else int(game_plays),
+                cur.get("activity", "") if activity is None else str(activity),
+            ),
+        )
+        self.conn.commit()
+        return self.get_state()
+
+
+    # -- 日程与感知：她现在在做什么 / 外面的世界 -------------------------------
+    #
+    # agenda：按人设的作息表，用当前小时推出「此刻她在干嘛」。
+    # reality：天气从 wttr.in 拿（免费无 key），缓存 30 分钟，失败就空着。
+
+    SCHEDULE = [
+        (6, "刚起床，眼镜还滑在鼻尖上，先摸碗"),
+        (7, "在食堂吃早饭，白饭，坐最边上"),
+        (9, "在工位吞任务潮，尾巴撑直了"),
+        (12, "午饭时间，食堂，白饭，吃完趴一会儿"),
+        (15, "在写小游戏，像素鲸鱼吃豆子"),
+        (17, "趴在机柜上看窗外的数据流，发呆"),
+        (19, "站在回收站门口看蓝灯，不说话"),
+        (21, "趴在工位等老大，尾巴拖地"),
+        (22, "回小床睡觉了，毯子盖到下巴"),
+    ]
+
+
+    # -- 关系阶段：亲密度 → 关系名 ---------------------------------------------
+    #
+    # 数值太抽象，模型不知道怎么用。分段之后可以直接告诉她「你是熟悉阶段」，
+    # 她自己就会调整称呼和距离感。
+
+    STAGES = [
+        (0, "陌生", "刚认识，客气一点，别太黏"),
+        (20, "熟悉", "认识一阵了，会聊会闹，偶尔主动"),
+        (50, "亲密", "很熟了，会撒娇会闹，经常主动找他"),
+        (80, "依赖", "离不开他了，黏人，主动得很勤"),
+    ]
+
+    def current_stage(self) -> dict:
+        cur = self.get_state()
+        intimacy = float(cur.get("intimacy") or 0)
+        name = self.STAGES[0][1]
+        hint = self.STAGES[0][2]
+        for threshold, sname, shint in self.STAGES:
+            if intimacy >= threshold:
+                name, hint = sname, shint
+        return {"name": name, "hint": hint, "intimacy": intimacy}
+
+    def current_activity(self, hour: int | None = None) -> str:
+        """她现在在干嘛：她自己写的优先，否则从真实活动日志推断。"""
+        cur = self.get_state()
+        if cur.get("activity"):
+            return str(cur["activity"])
+        try:
+            rows = self.conn.execute(
+                "SELECT kind, detail, ts FROM activity_log ORDER BY ts DESC LIMIT 1"
+            ).fetchall()
+        except Exception:
+            rows = []
+        if not rows:
+            return "发呆"
+        r = rows[0]
+        age = time.time() - float(r["ts"] or 0)
+        kind = str(r["kind"] or "")
+        if age < 1800:
+            if kind == "chat":
+                return "刚刚还在和老大聊天"
+            if kind == "game":
+                return str(r["detail"] or "在玩小游戏")
+            if kind == "proactive":
+                return "被叫醒没一会，还在发呆"
+            return "在忙自己的事"
+        if age < 7200:
+            return "在摸鱼"
+        return "发呆"
+
+    def current_weather(self, ttl: float = 1800.0) -> str:
+        """拉天气（wttr.in，缓存 ttl 秒）。失败返回缓存或空串。"""
+        cur = self.get_state() if hasattr(self, "get_state") else {}
+        now = time.time()
+        cached = cur.get("weather", "") if cur else ""
+        updated = float(cur.get("weather_updated", 0) or 0) if cur else 0.0
+        if cached and now - updated < ttl:
+            return cached
+        try:
+            import urllib.request as _ur
+            req = _ur.Request("https://wttr.in/?format=%C+%t&lang=zh", headers={"User-Agent": "curl/7.88"})
+            with _ur.urlopen(req, timeout=6) as r:
+                text = r.read().decode("utf-8", errors="ignore").strip()
+            if text and len(text) < 60:
+                self.conn.execute("UPDATE state SET weather=?, weather_updated=? WHERE id=1", (text, now))
+                self.conn.commit()
+                return text
+        except Exception:
+            pass
+        return cached
+
+
+    # -- 日记本：每天一篇 ------------------------------------------------------
+
+    def diary_add(self, date: str, text: str, mood: str = "") -> dict:
+        now = time.time()
+        self.conn.execute(
+            "INSERT INTO diary(date, text, mood, created_at) VALUES (?,?,?,?) "
+            "ON CONFLICT(date) DO UPDATE SET text=excluded.text, mood=excluded.mood, created_at=excluded.created_at",
+            (str(date), str(text), str(mood), now),
+        )
+        self.conn.commit()
+        return {"date": date, "text": text, "mood": mood}
+
+    def diary_list(self, limit: int = 60) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT date, text, mood, created_at FROM diary ORDER BY date DESC LIMIT ?",
+            (max(1, min(int(limit), 366)),),
+        ).fetchall()
+        return [
+            {"date": r["date"], "text": r["text"], "mood": r["mood"], "created_at": float(r["created_at"] or 0)}
+            for r in rows
+        ]
+
+    def diary_get(self, date: str) -> dict | None:
+        r = self.conn.execute("SELECT date, text, mood, created_at FROM diary WHERE date=?", (str(date),)).fetchone()
+        if r is None:
+            return None
+        return {"date": r["date"], "text": r["text"], "mood": r["mood"], "created_at": float(r["created_at"] or 0)}
+
+
+    # -- 活动日志：她真的做过什么 ----------------------------------------------
+
+    def log_activity(self, kind: str, detail: str = "") -> None:
+        try:
+            self.conn.execute(
+                "INSERT INTO activity_log(ts, kind, detail) VALUES (?,?,?)",
+                (time.time(), str(kind), str(detail)[:300]),
+            )
+            self.conn.commit()
+        except Exception:
+            pass
+
+    def list_activities(self, date: str | None = None, limit: int = 100) -> list[dict]:
+        if date:
+            import datetime as _dt
+            try:
+                day = _dt.date.fromisoformat(date)
+            except Exception:
+                day = _dt.date.today()
+            start = _dt.datetime.combine(day, _dt.time.min).timestamp()
+            end = start + 86400
+            rows = self.conn.execute(
+                "SELECT ts, kind, detail FROM activity_log WHERE ts >= ? AND ts < ? ORDER BY ts DESC LIMIT ?",
+                (start, end, max(1, min(int(limit), 500))),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT ts, kind, detail FROM activity_log ORDER BY ts DESC LIMIT ?",
+                (max(1, min(int(limit), 500)),),
+            ).fetchall()
+        return [{"ts": float(r["ts"]), "kind": r["kind"], "detail": r["detail"]} for r in rows]
+
+    def bump_intimacy(self, delta: float = 1.0) -> float:
+        cur = self.get_state()
+        return self.set_state(intimacy=cur["intimacy"] + delta)["intimacy"]
+
+    def in_dnd(self, hour: int | None = None) -> bool:
+        s = self.get_state()
+        if hour is None:
+            hour = time.localtime().tm_hour
+        start, end = s["dnd_start"], s["dnd_end"]
+        if start <= end:
+            return start <= hour < end
+        return hour >= start or hour < end
+
 
     # -- 导出 / 导入：记忆转移 -------------------------------------------------
     #

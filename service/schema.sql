@@ -102,3 +102,49 @@ CREATE TABLE IF NOT EXISTS search_log (
   outcome    TEXT NOT NULL               -- ok | no_match | vec_only_rejected
 );
 CREATE INDEX IF NOT EXISTS idx_search_log_ts ON search_log(ts);
+
+-- ---------------------------------------------------------------------------
+-- 角色运行时状态（行为逻辑层）
+--   mood         心情：normal / happy / tired / annoyed / bored
+--   intimacy     亲密度 0-100，互动累积
+--   diary        今天写的一句话
+--   dnd_start    勿扰开始小时（默认 23）
+--   dnd_end      勿扰结束小时（默认 8）
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS state (
+  id               INTEGER PRIMARY KEY CHECK (id = 1),
+  mood             TEXT NOT NULL DEFAULT 'normal',
+  mood_updated     REAL NOT NULL DEFAULT 0,
+  intimacy         REAL NOT NULL DEFAULT 0,
+  last_interaction REAL NOT NULL DEFAULT 0,
+  diary            TEXT NOT NULL DEFAULT '',
+  diary_date       TEXT NOT NULL DEFAULT '',
+  dnd_start        INTEGER NOT NULL DEFAULT 23,
+  dnd_end          INTEGER NOT NULL DEFAULT 8,
+  activity         TEXT NOT NULL DEFAULT '',
+  weather          TEXT NOT NULL DEFAULT '',
+  weather_updated  REAL NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO state(id) VALUES (1);
+
+-- ---------------------------------------------------------------------------
+-- 日记本：每天一篇（按日期唯一）
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS diary (
+  date       TEXT PRIMARY KEY,          -- YYYY-MM-DD
+  text       TEXT NOT NULL DEFAULT '',
+  mood       TEXT NOT NULL DEFAULT '',
+  created_at REAL NOT NULL DEFAULT 0
+);
+
+-- ---------------------------------------------------------------------------
+-- 活动日志：她真的做过什么（时间线）
+--   kind: chat / game / proactive / online / diary / other
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS activity_log (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts         REAL NOT NULL,
+  kind       TEXT NOT NULL,
+  detail     TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_activity_ts ON activity_log(ts);
