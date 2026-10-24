@@ -890,7 +890,10 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- B 站 CLI 工具白名单 ----------------------------------------------------
 
-    BILI_TOOLS_FILE = "/home/ubuntu/dsh-agentchat/_deploy/dsh-remembers/service/data/bili_tools.json"
+    # 按实例分（主套 data/，第二套 data2/）——之前硬编码主套，两套共用一份白名单
+    BILI_TOOLS_FILE = __import__("os").path.join(
+        __import__("os").environ.get("CMEM_DATA_DIR", DATA_DIR), "bili_tools.json"
+    )
 
     BILI_TOOL_DEFAULTS = {
         "feed": "刷选题：按她的口味挑视频",
