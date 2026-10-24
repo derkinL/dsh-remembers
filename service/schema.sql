@@ -216,3 +216,13 @@ CREATE TABLE IF NOT EXISTS meme (
   created      REAL NOT NULL DEFAULT 0,
   updated      REAL NOT NULL DEFAULT 0
 );
+
+-- ---------------------------------------------------------------------------
+-- 用户发过的图（按内容 hash 去重计数）：发得越多越说明喜欢
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS meme_seen (
+  hash       TEXT PRIMARY KEY,
+  path       TEXT NOT NULL DEFAULT '',
+  count      INTEGER NOT NULL DEFAULT 1,
+  last_seen  REAL NOT NULL DEFAULT 0
+);

@@ -162,6 +162,12 @@ function renderState(state) {
   lines.push("【工具速查】发图：find_meme(emotion) 挑 caption 贴切的 → qq_send_image(sources=[图片完整路径])；"
     + "学图：learn_meme(file, emotion, caption)；派任务：create_task(text, points)；写便签：write_note(text)；"
     + "改状态：set_my_activity(activity)。");
+  if (Array.isArray(state.seen_liked) && state.seen_liked.length > 0) {
+    const items = state.seen_liked.slice(0, 3)
+      .map((s) => String(s.path || "").split("/").pop() + "（" + s.count + " 次）")
+      .join("、");
+    lines.push(`老大最近反复发这几张图：${items}。他老发说明他喜欢——你要是也对胃口，就收进自己库里（learn_meme(file=完整路径)），以后可以拿来接他的话。觉得不好看就不收，自己判断。`);
+  }
   if (Number(state.meme_total) > 0) {
     const emo = Array.isArray(state.meme_emotions) && state.meme_emotions.length
       ? `已分类的情绪：${state.meme_emotions.join("、")}`
@@ -452,6 +458,7 @@ function renderState(state) {
       void logActivity("chat", user.slice(0, 80));
       void recordSlang(user);
       void bumpAffinity();
+      void scanSeen();
     }
 
     // 这一轮之前的几条用户输入，作为惊讶度门控的参照
@@ -596,7 +603,22 @@ function renderState(state) {
 
 
 
-  /** 表情包工具：按情绪/关键词找图，自己学新图。 */
+  /** 扫用户发来的图并计数（fire-and-forget）。 */
+async function scanSeen() {
+  try {
+    await fetch(config.endpoint + "/memes/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(8000),
+    });
+  }
+  catch {
+    /* 忽略 */
+  }
+}
+
+/** 表情包工具：按情绪/关键词找图，自己学新图。 */
   async function registerMemeTools() {
     if (!registerTool) return;
     let defineTool;

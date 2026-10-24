@@ -1048,6 +1048,56 @@ class MemoryStore:
                           (time.time(), str(file)))
         self.conn.commit()
 
+
+    # -- 用户发过的图：按内容 hash 计数 ----------------------------------------
+
+    def scan_seen(self) -> int:
+        """扫 mediaDir 下用户发来的图，按内容 hash 计数。返回新图数量。"""
+        import hashlib
+        import os as _os
+        meme_dir = _os.environ.get("CMEM_MEME_DIR", "/home/ubuntu/.dsh/media/onebot/memes")
+        media_dir = _os.path.dirname(meme_dir)
+        if not _os.path.isdir(media_dir):
+            return 0
+        exts = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+        added = 0
+        for name in _os.listdir(media_dir):
+            if not name.startswith("media_") or not name.lower().endswith(exts):
+                continue
+            path = _os.path.join(media_dir, name)
+            try:
+                with open(path, "rb") as f:
+                    h = hashlib.md5(f.read()).hexdigest()
+            except Exception:
+                continue
+            row = self.conn.execute("SELECT count FROM meme_seen WHERE hash=?", (h,)).fetchone()
+            now = time.time()
+            if row is None:
+                self.conn.execute(
+                    "INSERT INTO meme_seen(hash, path, count, last_seen) VALUES (?,?,?,?)",
+                    (h, path, 1, now),
+                )
+                added += 1
+            else:
+                self.conn.execute(
+                    "UPDATE meme_seen SET count = count + 1, path=?, last_seen=? WHERE hash=?",
+                    (path, now, h),
+                )
+        self.conn.commit()
+        return added
+
+    def seen_liked(self, min_count: int = 2, limit: int = 5) -> list[dict]:
+        """用户发过 >= min_count 次的图（他喜欢的）。"""
+        rows = self.conn.execute(
+            "SELECT hash, path, count, last_seen FROM meme_seen WHERE count >= ? ORDER BY count DESC, last_seen DESC LIMIT ?",
+            (int(min_count), max(1, min(int(limit), 20))),
+        ).fetchall()
+        return [
+            {"hash": r["hash"], "path": r["path"], "count": int(r["count"]),
+             "last_seen": float(r["last_seen"] or 0)}
+            for r in rows
+        ]
+
     def bump_intimacy(self, delta: float = 1.0) -> float:
         cur = self.get_state()
         return self.set_state(intimacy=cur["intimacy"] + delta)["intimacy"]

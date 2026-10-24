@@ -274,6 +274,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
             self.end_headers()
             self.wfile.write(data)
+        elif path == "/memes/seen":
+            self._json(200, store.seen_liked())
         elif path == "/memes":
             emotion = (query.get("emotion") or [""])[0]
             q = (query.get("q") or [""])[0]
@@ -321,6 +323,7 @@ class Handler(BaseHTTPRequestHandler):
                 st["slang"] = store.slang_list(8)
                 st["affinity"] = store.affinity_get("owner")
                 st["open_tasks"] = len([x for x in store.task_list(include_done=False)])
+                st["seen_liked"] = store.seen_liked()
                 all_memes = store.meme_list(limit=50)
                 st["meme_total"] = len(all_memes)
                 st["meme_emotions"] = sorted({m["emotion"] for m in all_memes if m["emotion"]})
@@ -370,6 +373,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._post_meme())
         elif path == "/memes/used":
             self._guard(lambda: self._post_meme_used())
+        elif path == "/memes/scan":
+            self._guard(lambda: self._scan_seen())
         elif path == "/memes/upload":
             self._guard(lambda: self._upload_meme())
         elif path == "/memes/delete":
@@ -621,6 +626,12 @@ class Handler(BaseHTTPRequestHandler):
         with _lock:
             data = store.set_self_model(text)
         self._json(200, self._persona_payload(data))
+
+    def _scan_seen(self) -> None:
+        """扫用户发来的图并计数。"""
+        with _lock:
+            added = store.scan_seen()
+        self._json(200, {"ok": True, "added": added})
 
     def _upload_meme(self) -> None:
         """上传一张表情：写进 memes 目录，自动用视觉识别情绪和描述，入库。"""
