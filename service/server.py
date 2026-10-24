@@ -292,9 +292,11 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 st["slang"] = store.slang_list(8)
                 st["affinity"] = store.affinity_get("owner")
+                st["open_tasks"] = len([x for x in store.task_list(include_done=False)])
             except Exception:
                 st["slang"] = []
                 st["affinity"] = 0
+                st["open_tasks"] = 0
             st["view_hour"] = hour
             self._json(200, st)
         elif path == "/persona":

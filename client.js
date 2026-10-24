@@ -424,6 +424,9 @@ window.__ModuleLoader__.load({
         const [diaryDate, setDiaryDate] = React.useState("");
         const [persona, setPersona] = React.useState(null);
         const [memories, setMemories] = React.useState([]);
+        const [taskList, setTaskList] = React.useState([]);
+        const [noteList, setNoteList] = React.useState([]);
+        const [sleepList, setSleepList] = React.useState([]);
         const [loading, setLoading] = React.useState(true);
         const [error, setError] = React.useState(null);
 
@@ -452,7 +455,10 @@ window.__ModuleLoader__.load({
             } catch {
               acts = [];
             }
-            setActivities(Array.isArray(acts) ? acts : []);
+            setActivities(Array.isArray(acts) ? acts : [])
+            try { setTaskList(await call("/tasks") || []); } catch { setTaskList([]); }
+            try { setNoteList(await call("/notes") || []); } catch { setNoteList([]); }
+            try { setSleepList(await call("/sleep") || []); } catch { setSleepList([]); };
             setSt(s);
             setPersona(p);
             setMemories(Array.isArray(m) ? m : []);

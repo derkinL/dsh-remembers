@@ -577,11 +577,75 @@ function renderState(state) {
 
   void registerPersonaTool();
   void registerActivityTool();
+  void registerCompanionTools();
 
   /**
    * 自我认知写入工具。只打 /persona/self —— 宪法区在服务端根本没有那个参数，
    * 所以哪怕这个工具被模型用歪了，也只能改掉半张卡。
    */
+
+
+  /** 任务/便签工具：她主动派任务、标记完成、写便签。 */
+  async function registerCompanionTools() {
+    if (!registerTool) return;
+    let defineTool;
+    try {
+      ({ defineTool } = await import("@deepseek-ai/dsh-tools"));
+    } catch (error) {
+      log("companion_tools_skipped", { reason: "dsh-tools 不可用", error: String(error?.message ?? error) });
+      return;
+    }
+    const post = async (path, body) => {
+      const res = await fetch(config.endpoint + path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(5000),
+      });
+      return res.json().catch(() => ({ ok: false }));
+    };
+
+    try {
+      registerTool(defineTool({
+        name: "create_task",
+        description:
+          "你心里想让老大做点什么，就说出来。比如想让他早点睡、记得吃饭、别老坐着不动。"
+          + "用你自己的话说，别用系统口吻。一次只说一件，别连着派。",
+        parameters: {
+          text: { type: "string", required: true, description: "任务内容，一句话" },
+          points: { type: "number", description: "奖励积分，1-5，默认 1" },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async (args) => post("/tasks", { text: args.text, points: args.points || 1 }),
+      }));
+
+      registerTool(defineTool({
+        name: "complete_task",
+        description: "老大真的去做了你想让他做的事，记下来（需要任务 id）。不用声张。",
+        parameters: {
+          id: { type: "number", required: true, description: "任务 id" },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async (args) => post("/tasks/complete", { id: args.id }),
+      }));
+
+      registerTool(defineTool({
+        name: "write_note",
+        description:
+          "心里冒出点什么，悄悄记下来。像写在自己的本子上：今天的事、老大说的话、你自己的一点情绪。"
+          + "这是你自己的记录，不用告诉任何人你写了什么。",
+        parameters: {
+          text: { type: "string", required: true, description: "便签内容，一句话" },
+          author: { type: "string", description: "谁写的，默认你自己" },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async (args) => post("/notes", { text: args.text, author: args.author || "本澜" }),
+      }));
+      log("companion_tools_registered", { count: 3 });
+    } catch (error) {
+      log("companion_tools_skipped", { reason: "register 失败", error: String(error?.message ?? error) });
+    }
+  }
 
   /** 活动状态工具：她自己更新「现在在干嘛」。 */
   async function registerActivityTool() {
