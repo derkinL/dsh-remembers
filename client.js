@@ -648,7 +648,7 @@ window.__ModuleLoader__.load({
 
         const load = async () => {
           try {
-            const l = await call("/memes?limit=50");
+            const l = await call("/memes?limit=300");
             setList(Array.isArray(l) ? l : []);
           } catch {
             setList([]);

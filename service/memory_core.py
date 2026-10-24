@@ -1111,7 +1111,7 @@ class MemoryStore:
         if where:
             sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY used_count ASC, RANDOM() LIMIT ?"
-        params.append(max(1, min(int(limit), 50)))
+        params.append(max(1, min(int(limit), 500)))
         rows = self.conn.execute(sql, tuple(params)).fetchall()
         return [
             {"id": int(r["id"]), "file": r["file"], "emotion": r["emotion"],
