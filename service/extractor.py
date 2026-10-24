@@ -21,8 +21,16 @@ SLEEP_SYSTEM = """你在睡前整理今天发生的事。用第一人称写两�
 只输出正文。"""
 
 
-DIARY_SYSTEM = """你根据今天的对话，用第一人称写一段日记（不超过 100 字）。
-要求：像真的在写日记，具体、有情绪、有细节；不要评价用户、不要写成总结报告、不要提"AI"。
+DIARY_SYSTEM = """你根据今天的对话和活动，用第一人称写一段日记（不超过 120 字）。
+
+重点：写「我今天真的干了什么」——
+- 刷 B 站看到了什么（具体标题/内容）
+- 玩了什么、看了什么、想了什么
+- 跟老大聊了什么（有情绪的细节）
+- 今天有什么小情绪、小发现
+
+要求：像真的在写日记，具体、有情绪、有细节（不要空泛的"今天过得还好"）。
+不要评价用户、不要写成总结报告、不要提"AI"。
 只输出日记正文。"""
 
 
@@ -187,13 +195,28 @@ class Extractor:
             return None
         return (str(text).strip()[:250]) if text else None
 
-    def write_diary(self, user_text: str, assistant_text: str = "", date: str = "") -> str | None:
-        """写今天的日记（LLM，第一人称，100 字内）。"""
+    def write_diary(self, user_text: str, assistant_text: str = "", date: str = "",
+                    activities: list | None = None) -> str | None:
+        """写今天的日记（LLM，第一人称，120 字内）。activities = 今天干了什么。"""
         if self.llm is None or not getattr(self.llm, "enabled", False):
             return None
-        convo = f"用户：{user_text}\n你：{assistant_text}" if assistant_text else str(user_text)
+        parts = []
+        if activities:
+            parts.append("今天做过的事（按时间）：")
+            for a in activities[-30:]:
+                detail = str(a.get("detail") or "")[:80]
+                kind = str(a.get("kind") or "")
+                if detail:
+                    parts.append(f"- [{kind}] {detail}")
+        if user_text:
+            parts.append("")
+            parts.append("跟老大的对话：")
+            parts.append(f"用户：{user_text}")
+            if assistant_text:
+                parts.append(f"你：{assistant_text}")
+        convo = "\n".join(parts) if parts else str(user_text)
         try:
-            text = self.llm.chat(DIARY_SYSTEM, convo, max_tokens=220)
+            text = self.llm.chat(DIARY_SYSTEM, convo, max_tokens=260)
         except Exception:
             return None
         if not text:
@@ -448,12 +471,17 @@ class Extractor:
             if best is None:
                 return
             label, intensity, reason = best
-            # 同 label 30 分钟内不重复
+            # 去重：同 label 或同 trigger 前缀，30 分钟内不重复
             try:
-                recent = self.store.emotion_log_list(5)
+                recent = self.store.emotion_log_list(8)
                 now_ts = __import__("time").time()
+                trig_key = str(reason or "")[:12]
                 for r in recent:
-                    if r.get("label") == label and (now_ts - float(r.get("ts") or 0) < 1800):
+                    if (now_ts - float(r.get("ts") or 0)) >= 1800:
+                        continue
+                    if r.get("label") == label:
+                        return
+                    if trig_key and str(r.get("trigger") or "")[:12] == trig_key:
                         return
             except Exception:
                 pass

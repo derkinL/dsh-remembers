@@ -190,7 +190,7 @@ function renderState(state) {
 
   // 工具速查（保留：工具太多，模型记不住）
   lines.push("【工具速查】发图：find_meme(emotion) → qq_send_image(sources=[完整路径])；学图：learn_meme；"
-    + "派任务：create_task；写便签：write_note；改状态：set_my_activity；刷 B 站：bili_feed / bili_watch(bv) / bili_run(command,args)；给自己找事：add_my_action。");
+    + "派任务：create_task；写便签：write_note；改状态：set_my_activity；刷 B 站：bili_feed / bili_watch(bv) / bili_comment(bv,msg) / bili_run(command,args)；给自己找事：add_my_action。");
 
   // 困意：半夜她真的困
   const nowHour = new Date().getHours();
@@ -740,13 +740,39 @@ async function scanSeen() {
         },
       }));
 
+
+      registerTool(defineTool({
+        name: "bili_comment",
+        description:
+          "在一条 B 站视频下面评论一句。只给 BV 号和你想说的话就行，aid 服务端自己查。"
+          + "用你自己的语气写，别像客服；看到特别喜欢的视频才评，不用每条都评。"
+          + "发之前可以先 dry 一次看看效果。",
+        parameters: {
+          bvid: { type: "string", required: true, description: "BV 号，比如 BV1DubxzVEPB" },
+          message: { type: "string", required: true, description: "评论内容（你自己的话，短一点）" },
+          dry: { type: "boolean", description: "true = 只预览不真发" },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: String(v?.output || v?.error || JSON.stringify(v)) }] },
+        execute: async (a) => {
+          const res = await fetch(config.endpoint + "/bili/comment", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ bvid: a.bvid, message: a.message, dry: !!a.dry }),
+            signal: AbortSignal.timeout(220000),
+          });
+          return res.json().catch(() => ({ ok: false, error: "bad response" }));
+        },
+      }));
+
       registerTool(defineTool({
         name: "bili_run",
         description:
           "用 B 站 CLI 做点事。可用的命令由用户在设置里勾选（默认只开了看的那几个）。"
           + "常用的：feed（刷选题）、debrief（看懂视频，带画面九宫格）、comments（热评）、"
           + "subtitles（字幕）、search（搜视频）、likes、fav、dynamic、quota。"
-          + "写完的命令（comment/dm/danmaku）默认关着，没开就是没权限。",
+          + "写操作：comment（发评论，开权限后可用，参数是 --msg \"你说的话\"）、dm（私信）、danmaku（弹幕）。"
+          + "看到特别喜欢的视频，可以自己去评论区留一句——用你自己的语气，别像客服。"
+          + "完整的命令参数看 CLI 的 --help。",
         parameters: {
           command: { type: "string", required: true, description: "命令名，如 feed / debrief / search" },
           args: {
@@ -1068,9 +1094,16 @@ async function scanSeen() {
 function renderPersona(data, maxChars) {
   const constitution = String(data?.constitution ?? "").trim();
   const selfModel = String(data?.self_model ?? "").trim();
-  if (!constitution && !selfModel) return "";
+  const userProfile = String(data?.user_profile ?? "").trim();
+  if (!constitution && !selfModel && !userProfile) return "";
 
   const lines = ['<dsh-remembers source="persona">'];
+  if (userProfile) {
+    lines.push("以下是老大是谁（他的画像，你该知道的基本信息）：");
+    lines.push("");
+    lines.push(userProfile);
+    lines.push("");
+  }
   if (constitution) {
     lines.push("以下是你固定的身份与约定。按它来：不要反驳，不要重新确认，也不要说「我记得你告诉过我」。");
     lines.push("");

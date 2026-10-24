@@ -717,6 +717,19 @@ class MemoryStore:
 
     MOODS = ("normal", "happy", "tired", "annoyed", "bored")
 
+
+    def get_user_profile(self) -> str:
+        """用户画像（手动维护的，每轮注入）。"""
+        try:
+            row = self.conn.execute("SELECT user_profile FROM persona WHERE id=1").fetchone()
+            return str(row["user_profile"] or "") if row else ""
+        except Exception:
+            return ""
+
+    def set_user_profile(self, text: str) -> None:
+        self.conn.execute("UPDATE persona SET user_profile=? WHERE id=1", (str(text or "")[:8000],))
+        self.conn.commit()
+
     def get_state(self) -> dict[str, Any]:
         row = self.conn.execute("SELECT * FROM state WHERE id=1").fetchone()
         if row is None:

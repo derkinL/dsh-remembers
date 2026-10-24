@@ -285,6 +285,8 @@ class Handler(BaseHTTPRequestHandler):
             days = int((query.get("days") or ["0"])[0])
             limit = int((query.get("limit") or ["50"])[0])
             self._json(200, store.emotion_log_list(limit=limit, days=days))
+        elif path == "/persona/user":
+            self._json(200, {"user_profile": store.get_user_profile()})
         elif path == "/bili/cfg":
             self._json(200, self._load_bili_whale())
         elif path == "/memories":
@@ -430,6 +432,10 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._post_emotion())
         elif path == "/proactive/action":
             self._guard(lambda: self._add_proactive_action())
+        elif path == "/persona/user":
+            self._guard(lambda: self._set_user_profile())
+        elif path == "/bili/comment":
+            self._guard(lambda: self._post_bili_comment())
         elif path == "/bili/cfg":
             self._guard(lambda: self._set_bili_cfg())
         elif path == "/bili/owner":
@@ -615,6 +621,8 @@ class Handler(BaseHTTPRequestHandler):
     # -- 人格设定（二合一里的「人」那一半） ---------------------------------
 
     def _persona_payload(self, data: dict) -> dict:
+        data = dict(data or {})
+        data["user_profile"] = store.get_user_profile()
         return {
             "ok": True,
             **data,
@@ -721,12 +729,18 @@ class Handler(BaseHTTPRequestHandler):
         "silentRatio": 40,        # 静默概率（%），其余允许发消息
         "talkEnabled": True,      # 允许发消息（关掉=全部静默）
         "minChatBeforeWake": 5,   # 距上次唤醒至少聊几句才唤醒（冷却）
+        # ---- B 站刷视频（独立节奏，不跟唤醒绑）----
+        "biliBrowseEnabled": True,     # 允许她按自己的节奏刷 B 站
+        "biliMinGapMinutes": 60,       # 两次刷之间至少隔多久
+        "biliMaxGapMinutes": 240,      # 两次刷之间最多隔多久
+        "biliBrowseLimit": 3,          # 每次刷几条（存进"见闻"）
         # 她独处时能做的事（随机抽一条作为这轮的状态提示）
         "silentActions": [
             "自己上网逛逛（B 站热门、新闻、梗），看到有意思的记下来",
             "什么都不想做，就坐着发呆，或者玩玩自己的小游戏",
             "整理一下自己的小本子（便签），想想今天的事",
             "刷会儿 B 站（bili_feed），看到好玩的就想两句",
+            "刷到一个特别喜欢的视频，去评论区留一句话（bili_run comment --msg \"…\"）",
             "写点什么（记一句今天的事，或者记个想法）",
             "缩着打个盹，什么都不管",
         ],
@@ -736,7 +750,9 @@ class Handler(BaseHTTPRequestHandler):
             "想吐槽点什么（今天遇到的事、机柜、任务潮）",
             "想给老大发张照片（用 qq_send_image 从 memes 目录挑一张发）",
             "想分享刚刷到的东西（B 站视频/新闻/梗），带链接",
+            "看到一个好视频，想去评论区说两句，然后告诉老大",
             "想撒个娇（夸他一句、求夸）",
+            "看到一个好视频，想去评论区说两句（bili_comment），然后告诉老大",
         ],
     }
 
@@ -928,6 +944,36 @@ class Handler(BaseHTTPRequestHandler):
             _json.dump(raw, f, ensure_ascii=False, indent=2)
         self._json(200, self._bili_tools())
 
+    def _post_bili_comment(self) -> None:
+        """简化评论：只给 bvid + message，服务端自己查 aid 再发。"""
+        import re as _re
+        body = self._body()
+        bvid = str(body.get("bvid") or "").strip()
+        msg = str(body.get("message") or "").strip()
+        dry = bool(body.get("dry", False))
+        if not bvid or not msg:
+            self._json(400, {"ok": False, "error": "bvid and message required"})
+            return
+        # 1. 查 aid（recon 会输出 aid）
+        recon = self._run_bili(["recon", bvid], timeout=90)
+        out = (recon.get("stdout") or "") + (recon.get("stderr") or "")
+        m = _re.search(r"aid\D{0,4}(\d{3,})", out)
+        aid = m.group(1) if m else ""
+        if not aid:
+            self._json(200, {"ok": False, "error": "查不到 aid（可能被风控）", "raw": out[-300:]})
+            return
+        # 2. 发（或 dry）
+        args = ["comment", "--bvid", bvid, "--oid", aid, "--message", msg]
+        args.append("--dry" if dry else "--go")
+        res = self._run_bili(args, timeout=120)
+        self._json(200, {
+            "ok": res.get("ok", False),
+            "aid": aid,
+            "dry": dry,
+            "output": (res.get("stdout") or "")[-1500:],
+            "stderr": (res.get("stderr") or "")[-300:],
+        })
+
     def _bili_run(self) -> None:
         body = self._body()
         cmd = str(body.get("command") or "").strip()
@@ -1018,6 +1064,12 @@ class Handler(BaseHTTPRequestHandler):
             return {"ok": True, "code": code, "saved": False}
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    def _set_user_profile(self) -> None:
+        body = self._body()
+        text = str(body.get("text") or "").strip()
+        store.set_user_profile(text)
+        self._json(200, {"ok": True, "chars": len(text)})
 
     def _set_bili_cfg(self) -> None:
         """设置 bili-whale 的任意配置字段（path 数组 + value）。"""
@@ -1417,10 +1469,19 @@ class Handler(BaseHTTPRequestHandler):
                 user_text = "\n".join(str(r["text"]) for r in rows)
             except Exception:
                 user_text = ""
+        # 今天干了什么（活动日志）
+        acts = []
+        try:
+            import datetime as _dt
+            today_start = _dt.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+            acts = [a for a in store.list_activities(200) if float(a.get("ts") or 0) >= today_start]
+        except Exception:
+            acts = []
         text = extractor.write_diary(
             user_text,
-            assistant_text,
-            str(body.get("date") or time.strftime("%Y-%m-%d")),
+            assistant_text="",
+            date=str(body.get("date") or time.strftime("%Y-%m-%d")),
+            activities=acts,
         )
         if not text:
             self._json(503, {"ok": False, "error": "llm unavailable"})
@@ -1432,12 +1493,24 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"ok": True, **data})
 
     def _evolve(self) -> None:
-        """人设演化：从这段对话生一句「我发现自己……」，追加到自我认知区。"""
+        """人设演化：从这段对话生一句「我发现自己……」，追加到自我认知区。
+        没传对话时，自动取当天的 L0 原话当素材（cron 每天调一次用）。"""
         body = self._body()
-        line = extractor.evolve(
-            str(body.get("user_text") or ""),
-            str(body.get("assistant_text") or ""),
-        )
+        user_text = str(body.get("user_text") or "")
+        assistant_text = str(body.get("assistant_text") or "")
+        if not user_text:
+            # 自动取当天素材
+            import datetime as _dt
+            today_start = _dt.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+            try:
+                rows = store.conn.execute(
+                    "SELECT text FROM memory WHERE tier='L0' AND ts >= ? ORDER BY ts DESC LIMIT 6",
+                    (today_start,),
+                ).fetchall()
+                user_text = "\n".join(str(r["text"])[:300] for r in rows)
+            except Exception:
+                user_text = ""
+        line = extractor.evolve(user_text, assistant_text)
         if not line:
             self._json(503, {"ok": False, "error": "llm unavailable"})
             return

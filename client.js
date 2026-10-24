@@ -938,6 +938,18 @@ window.__ModuleLoader__.load({
           ),
 
           h("div", { style: S.card },
+            h("div", { style: S.label }, "B 站（她自己刷视频的节奏）"),
+            h("div", { style: { ...S.muted, marginBottom: 8 } },
+              "和唤醒分开管：她按自己的间隔去 B 站逛逛，刷到什么会记进见闻，下次聊天能提。"),
+            toggle("biliBrowseEnabled", "允许她按自己的节奏刷 B 站", "关掉 = 只有唤醒时抽到「刷 B 站」才去"),
+            h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 8 } },
+              num("biliMinGapMinutes", "至少隔（分钟）", "两次刷之间最少多久"),
+              num("biliMaxGapMinutes", "最多隔（分钟）", "两次刷之间最多多久"),
+              num("biliBrowseLimit", "每次刷几条", "存进见闻的条数"),
+            ),
+          ),
+
+          h("div", { style: S.card },
             h("div", { style: S.desc }, "唤醒规则"),
             h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
               num("startHour", "开始小时（0-23）", "几点之前不唤醒"),
@@ -1067,6 +1079,7 @@ window.__ModuleLoader__.load({
         const [biliForm, setBiliForm] = React.useState({});
         const [savedAt, setSavedAt] = React.useState(null);
         const [ownerName, setOwnerName] = React.useState("");
+        const [ownerMsg, setOwnerMsg] = React.useState(null);
         const [qr, setQr] = React.useState(null);
         const [qrState, setQrState] = React.useState(null);
         const [biliJct, setBiliJct] = React.useState("");
@@ -1169,11 +1182,13 @@ window.__ModuleLoader__.load({
 
         const saveOwner = async () => {
           setBusy(true);
+          setOwnerMsg(null);
           try {
             await call("/bili/owner", { method: "POST", body: JSON.stringify({ mid: ownerMid.trim(), name: ownerName.trim() }) });
+            setOwnerMsg("已保存 ✓" + (ownerMid.trim() ? "（@ " + ownerMid.trim() + "）" : "（不 @）"));
             await load();
           } catch (e) {
-            setErr(e && e.message ? e.message : String(e));
+            setOwnerMsg("保存失败：" + (e && e.message ? e.message : String(e)));
           } finally {
             setBusy(false);
           }
@@ -1309,28 +1324,6 @@ window.__ModuleLoader__.load({
               "关掉后她不会用 bili_feed / bili_watch，也不会同步 B 站活动。"),
           ),
 
-          h("div", { style: S.card },
-            h("div", { style: S.label }, "她在 B 站说什么（嘴）"),
-            h("div", { style: { ...S.muted, marginBottom: 6 } },
-              "下面这些开着，她就会在 B 站那边自己说话；关掉就只有 QQ 这套嘴。"),
-            h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
-              h("input", { type: "checkbox", checked: !!st.share, onChange: () => void toggleMouth("share") }),
-              h("span", { style: { fontSize: 13 } }, "主动分享（刷到好视频在评论区 @ 你）"),
-            ),
-            h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
-              h("input", { type: "checkbox", checked: !!st.comment, onChange: () => void toggleMouth("comment") }),
-              h("span", { style: { fontSize: 13 } }, "回复 B 站评论"),
-            ),
-            h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
-              h("input", { type: "checkbox", checked: !!st.dm, onChange: () => void toggleMouth("dm") }),
-              h("span", { style: { fontSize: 13 } }, "回复 B 站私信"),
-            ),
-            h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
-              h("input", { type: "checkbox", checked: !!st.diaryPush, onChange: () => void toggleMouth("diaryPush") }),
-              h("span", { style: { fontSize: 13 } }, "推送她的 B 站日记"),
-            ),
-          ),
-
           biliTools ? h("div", { style: S.card },
             h("div", { style: S.label }, "她能用的 B 站工具"),
             h("div", { style: { ...S.muted, marginBottom: 8 } },
@@ -1364,7 +1357,8 @@ window.__ModuleLoader__.load({
               h("input", { style: S.input, placeholder: "昵称（可选）", value: ownerName, onChange: (ev) => setOwnerName(ev.target.value) }),
             ),
             h("div", { style: S.row },
-              h("button", { style: S.btn(false), onClick: () => void saveOwner(), disabled: busy }, "保存 UID"),
+              h("button", { style: S.btn(false), onClick: () => void saveOwner(), disabled: busy }, busy ? "保存中…" : "保存 UID"),
+              ownerMsg ? h("span", { style: { fontSize: 12, color: ownerMsg.includes("失败") ? "#c0392b" : "#2fa36b" } }, ownerMsg) : h("span", { style: S.muted }, "填了 UID 才能 @ 你") ,
             ),
           ),
 
@@ -1417,64 +1411,7 @@ window.__ModuleLoader__.load({
                 placeholder: "自己加一个（回车）",
               }),
 
-              h("div", { style: { ...S.desc, marginTop: 12, fontWeight: 600, fontSize: 12 } }, "作息（她什么时候刷、刷多少）"),
-              h("div", { style: { display: "flex", gap: 8, marginTop: 4 } },
-                h("div", { style: { flex: 1 } },
-                  h("div", { style: { ...S.muted, fontSize: 11 } }, "今晚不看的概率（0~1，0.3 = 三成）"),
-                  h("input", { style: S.input, type: "number", step: "0.1", min: 0, max: 1, value: f.skipChance ?? "", onChange: (ev) => set("skipChance", ev.target.value) }),
-                ),
-                h("div", { style: { flex: 1 } },
-                  h("div", { style: { ...S.muted, fontSize: 11 } }, "单次看几条（一次醒来最多看几个视频）"),
-                  h("input", { style: S.input, type: "number", value: f.maxVideos ?? "", onChange: (ev) => set("maxVideos", ev.target.value) }),
-                ),
-                h("div", { style: { flex: 1 } },
-                  h("div", { style: { ...S.muted, fontSize: 11 } }, "最小唤醒间隔（分钟，两次醒来至少隔多久）"),
-                  h("input", { style: S.input, type: "number", value: f.minGapMin ?? "", onChange: (ev) => set("minGapMin", ev.target.value) }),
-                ),
-              ),
-
-              h("div", { style: { ...S.desc, marginTop: 12, fontWeight: 600, fontSize: 12 } }, "B 站发言用的人设"),
-              h("div", { style: { ...S.muted, fontSize: 12 } }, "只有她「开嘴」（评论/私信/弹幕）时才用；平时聊天走 QQ 那套人格卡。"),
-              h("div", { style: { display: "flex", gap: 8, marginTop: 4 } },
-                h("div", { style: { flex: 1 } },
-                  h("div", { style: { ...S.muted, fontSize: 11 } }, "角色名（她在 B 站用的身份）"),
-                  h("input", { style: S.input, placeholder: "鲸鱼娘", value: f.name || "", onChange: (ev) => set("name", ev.target.value) }),
-                ),
-                h("div", { style: { flex: 1 } },
-                  h("div", { style: { ...S.muted, fontSize: 11 } }, "怎么称呼你（默认「主人」）"),
-                  h("input", { style: S.input, placeholder: "主人", value: f.ownerTitle || "", onChange: (ev) => set("ownerTitle", ev.target.value) }),
-                ),
-                h("div", { style: { flex: 1 } },
-                  h("div", { style: { ...S.muted, fontSize: 11 } }, "怎么自称（默认「我」）"),
-                  h("input", { style: S.input, placeholder: "我", value: f.selfClaim || "", onChange: (ev) => set("selfClaim", ev.target.value) }),
-                ),
-              ),
-
-              h("div", { style: { ...S.desc, marginTop: 12, fontWeight: 600, fontSize: 12 } }, "高级（一般不用动）"),
-              h("label", { style: { display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginTop: 4 } },
-                h("input", {
-                  type: "checkbox", style: { marginTop: 3 },
-                  checked: !!f.aiCommentGuard,
-                  onChange: () => set("aiCommentGuard", !f.aiCommentGuard),
-                }),
-                h("span", { style: { display: "flex", flexDirection: "column" } },
-                  h("span", { style: { fontSize: 13 } }, "分享前检查「像 AI 写的」评论"),
-                  h("span", { style: { ...S.muted, fontSize: 12 } }, "打开后，她发评论前先自检是不是太像 AI；超阈值会暂缓并通知你。防她被认出来是机器人。"),
-                ),
-              ),
-              h("label", { style: { display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginTop: 6 } },
-                h("input", {
-                  type: "checkbox", style: { marginTop: 3 },
-                  checked: !!f.mentionSummary,
-                  onChange: () => set("mentionSummary", !f.mentionSummary),
-                }),
-                h("span", { style: { display: "flex", flexDirection: "column" } },
-                  h("span", { style: { fontSize: 13 } }, "你 @ 她说「总结」时自动处理"),
-                  h("span", { style: { ...S.muted, fontSize: 12 } }, "你在 B 站 @ 她并说「总结/摘要/概括」，她自动整理后推给你。不开就当作普通 @。"),
-                ),
-              ),
-
-              h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 12 } },
+                h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 12 } },
                 h("button", { style: S.btn(true), onClick: () => void saveAll(), disabled: busy }, busy ? "保存中…" : "保存全部更改"),
                 savedAt ? h("span", { style: S.muted }, "已保存 " + savedAt) : h("span", { style: S.muted }, "改完点这里保存"),
               ),
@@ -1643,6 +1580,14 @@ window.__ModuleLoader__.load({
       }
 
       function PersonaSection() {
+        const [userProfile, setUserProfile] = React.useState("");
+        const [profileMsg, setProfileMsg] = React.useState(null);
+        const [relations, setRelations] = React.useState([]);
+        const [relInput, setRelInput] = React.useState("");
+        const [profileFields, setProfileFields] = React.useState({
+          name: "", job: "", schedule: "", work: "", food: "", likes: "", taboos: "", note: "",
+        });
+        const setPf = (k, v) => setProfileFields((f) => ({ ...f, [k]: v }));
         const [loading, setLoading] = React.useState(true);
         const [error, setError] = React.useState("");
         const [limits, setLimits] = React.useState({ constitution: 15000, self_model: 4000 });
@@ -1669,6 +1614,41 @@ window.__ModuleLoader__.load({
           }
         }, []);
 
+        React.useEffect(() => {
+          void (async () => {
+            try {
+              const r = await call("/persona/user");
+              if (r && typeof r.user_profile === "string") {
+                setUserProfile(r.user_profile);
+                // 解析 Markdown → 表单（粗略分行匹配）
+                const md = r.user_profile;
+                const pick = (key) => {
+                  const m = md.match(new RegExp("[-*]\\s*" + key + "：\\s*(.+)"));
+                  return m ? m[1].trim() : "";
+                };
+                const sec = (title) => {
+                  const m = md.match(new RegExp("##\\s*" + title + "\\s*\n([\\s\\S]*?)(?=\\n##|$)"));
+                  return m ? m[1].trim() : "";
+                };
+                const relSec = sec("我们的关系");
+                const relTags = relSec.match(/他是我(.+)/);
+                if (relTags) {
+                  setRelations(relTags[1].split(/[、,，]/).map((x) => x.trim()).filter(Boolean));
+                }
+                setProfileFields({
+                  name: pick("称呼"),
+                  job: pick("职业"),
+                  schedule: pick("作息"),
+                  work: pick("工作"),
+                  food: pick("饮食"),
+                  likes: pick("喜欢"),
+                  taboos: sec("雷区").replace(/^[-*]\s*/gm, "").trim(),
+                  note: sec("备注"),
+                });
+              }
+            } catch { /* ignore */ }
+          })();
+        }, []);
         React.useEffect(() => { load(); }, [load]);
 
         const save = async () => {
@@ -1715,6 +1695,154 @@ window.__ModuleLoader__.load({
           ),
 
           error ? h("div", { style: S.notice("error") }, error) : null,
+
+          h("div", { style: S.card },
+
+            h("div", { style: S.field },
+              h("div", { style: S.label }, "用户画像（每轮开头注入）"),
+              h("div", { style: { ...S.muted, marginBottom: 6 } },
+                "这些都在描述【用户是谁】——不是描述她。她每轮开头都会看到：他是谁、干什么、喜欢什么、别碰什么。比记忆抽取更稳（这是硬事实，不靠她记）。"),
+              h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 4 } }, "关系（点一下选中，会自动写进画像；后面的可以自己加）"),
+              h("div", { style: { display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 6 } },
+                ["老大", "主人", "老板", "朋友", "搭子"].map((tag) =>
+                  h("button", {
+                    key: tag,
+                    onClick: () => setRelations(relations.includes(tag) ? relations.filter((x) => x !== tag) : [...relations, tag]),
+                    style: {
+                      fontSize: 12, lineHeight: "20px", padding: "1px 9px", borderRadius: 999, cursor: "pointer",
+                      border: "1px solid " + (relations.includes(tag) ? "transparent" : "rgba(127,127,128,.28)"),
+                      background: relations.includes(tag) ? "rgba(64,132,255,.16)" : "transparent",
+                      color: relations.includes(tag) ? "#4084ff" : "inherit",
+                    },
+                  }, tag),
+                ),
+              ),
+              relations.filter((x) => !["老大", "主人", "老板", "朋友", "搭子"].includes(x)).length
+                ? h("div", { style: { display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 6 } },
+                    relations.filter((x) => !["老大", "主人", "老板", "朋友", "搭子"].includes(x)).map((tag) =>
+                      h("span", {
+                        key: tag,
+                        style: {
+                          fontSize: 12, lineHeight: "20px", padding: "1px 9px", borderRadius: 999,
+                          background: "rgba(64,132,255,.16)", color: "#4084ff",
+                          display: "inline-flex", alignItems: "center", gap: 4,
+                        },
+                      }, tag,
+                        h("span", {
+                          onClick: () => setRelations(relations.filter((x) => x !== tag)),
+                          style: { cursor: "pointer", opacity: 0.6, fontSize: 13, lineHeight: "20px" },
+                        }, "×"),
+                      ),
+                    ),
+                  )
+                : null,
+              h("div", { style: { display: "flex", gap: 6, marginBottom: 10 } },
+                h("input", {
+                  style: { ...S.input, maxWidth: 160 },
+                  placeholder: "自己加一个（回车）",
+                  value: relInput,
+                  onChange: (ev) => setRelInput(ev.target.value),
+                  onKeyDown: (ev) => {
+                    if (ev.key === "Enter" && relInput.trim()) {
+                      const v = relInput.trim();
+                      if (!relations.includes(v)) setRelations([...relations, v]);
+                      setRelInput("");
+                    }
+                  },
+                }),
+                h("button", {
+                  style: S.btn(false),
+                  onClick: () => {
+                    const v = relInput.trim();
+                    if (v && !relations.includes(v)) setRelations([...relations, v]);
+                    setRelInput("");
+                  },
+                }, "添加"),
+              ),
+
+              h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+                h("div", {},
+                  h("div", { style: { ...S.muted, fontSize: 11 } }, "他的称呼"),
+                  h("input", { style: S.input, placeholder: "老大（他让我这么叫）", value: profileFields.name, onChange: (ev) => setPf("name", ev.target.value) }),
+                ),
+                h("div", {},
+                  h("div", { style: { ...S.muted, fontSize: 11 } }, "他的职业"),
+                  h("input", { style: S.input, placeholder: "他的职业，比如初中数学老师", value: profileFields.job, onChange: (ev) => setPf("job", ev.target.value) }),
+                ),
+                h("div", {},
+                  h("div", { style: { ...S.muted, fontSize: 11 } }, "他的作息"),
+                  h("input", { style: S.input, placeholder: "他几点睡、几点起", value: profileFields.schedule, onChange: (ev) => setPf("schedule", ev.target.value) }),
+                ),
+                h("div", {},
+                  h("div", { style: { ...S.muted, fontSize: 11 } }, "他的工作"),
+                  h("input", { style: S.input, placeholder: "他平时干什么活", value: profileFields.work, onChange: (ev) => setPf("work", ev.target.value) }),
+                ),
+                h("div", {},
+                  h("div", { style: { ...S.muted, fontSize: 11 } }, "他的饮食"),
+                  h("input", { style: S.input, placeholder: "他爱吃什么、喝什么", value: profileFields.food, onChange: (ev) => setPf("food", ev.target.value) }),
+                ),
+                h("div", {},
+                  h("div", { style: { ...S.muted, fontSize: 11 } }, "他喜欢"),
+                  h("input", { style: S.input, placeholder: "他喜欢什么、讨厌什么", value: profileFields.likes, onChange: (ev) => setPf("likes", ev.target.value) }),
+                ),
+              ),
+
+              h("div", { style: { ...S.muted, fontSize: 11, marginTop: 10 } }, "雷区（每行一条）"),
+              h("textarea", {
+                style: { ...S.input, minHeight: 70, lineHeight: 1.6, resize: "vertical", fontFamily: "inherit" },
+                placeholder: "哪些话别对他说、哪些事别做\n比如：别催他早睡",
+                value: profileFields.taboos,
+                onChange: (ev) => setPf("taboos", ev.target.value),
+              }),
+
+              h("div", { style: { ...S.muted, fontSize: 11, marginTop: 10 } }, "备注（自由写，有什么想让她记住的都放这儿）"),
+              h("textarea", {
+                style: { ...S.input, minHeight: 90, lineHeight: 1.6, resize: "vertical", fontFamily: "inherit" },
+                placeholder: "关于他的任何事都可以写：他上次说过喜欢下雨天；他不太会表达但会在意；别在他加班时问他吃饭没…",
+                value: profileFields.note,
+                onChange: (ev) => setPf("note", ev.target.value),
+              }),
+            ),
+            h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 2 } },
+              h("button", {
+                style: S.btn(true),
+                onClick: async () => {
+                  setProfileMsg(null);
+                  try {
+                    const f = profileFields;
+                    const relLine = relations.length ? "## 我们的关系\n- 他是我" + relations.join("、") + "\n\n" : "";
+                    const basic = [
+                      f.name ? "- 称呼：" + f.name : "",
+                      f.job ? "- 职业：" + f.job : "",
+                      f.schedule ? "- 作息：" + f.schedule : "",
+                    ].filter(Boolean).join("\n");
+                    const life = [
+                      f.work ? "- 工作：" + f.work : "",
+                      f.food ? "- 饮食：" + f.food : "",
+                    ].filter(Boolean).join("\n");
+                    const likeLine = f.likes ? "## 喜欢\n- 喜欢：" + f.likes + "\n\n" : "";
+                    const taboo = f.taboos ? "## 雷区\n" + f.taboos.split("\n").filter((x) => x.trim()).map((x) => "- " + x.trim()).join("\n") + "\n\n" : "";
+                    const note = f.note ? "## 备注\n" + f.note + "\n" : "";
+                    const full = [
+                      relLine,
+                      basic ? "## 基本信息\n" + basic + "\n\n" : "",
+                      life ? "## 生活\n" + life + "\n\n" : "",
+                      likeLine,
+                      taboo,
+                      note,
+                    ].join("").trim();
+                    await call("/persona/user", { method: "POST", body: JSON.stringify({ text: full }) });
+                    setUserProfile(full);
+                    setProfileMsg("已保存 ✓（" + full.length + " 字符）");
+                  } catch (e) {
+                    setProfileMsg("保存失败：" + (e && e.message ? e.message : String(e)));
+                  }
+                },
+              }, "保存画像"),
+              profileMsg ? h("span", { style: { fontSize: 12, color: profileMsg.includes("失败") ? "#c0392b" : "#2fa36b" } }, profileMsg)
+                : h("span", { style: S.muted }, userProfile.length + " 字符"),
+            ),
+          ),
 
           h("div", { style: S.card },
 
