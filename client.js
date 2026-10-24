@@ -721,7 +721,8 @@ window.__ModuleLoader__.load({
               },
             },
               h("img", {
-                src: serviceUrl() + "/memes/file/" + encodeURIComponent(m.file) + "?t=" + Date.now(),
+                src: serviceUrl() + "/memes/file/" + encodeURIComponent(m.file),
+                loading: "lazy",
                 onError: (ev) => {
                   ev.target.style.display = "none";
                   if (ev.target.nextSibling) ev.target.nextSibling.style.display = "block";
