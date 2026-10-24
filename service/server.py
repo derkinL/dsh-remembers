@@ -160,6 +160,15 @@ def _init() -> None:
         flush=True,
     )
 
+    # 内置调度（唤醒 + B 站；环境变量 CMEM_SCHEDULER=0 可关）
+    global scheduler
+    try:
+        from scheduler import Scheduler
+        scheduler = Scheduler(store, DATA_DIR)
+        scheduler.start()
+    except Exception as _e:
+        print(f"[cmem] scheduler disabled: {_e}", flush=True)
+
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "companion-memory/1.0"
