@@ -134,6 +134,30 @@ class Extractor:
 
 
 
+
+    def label_meme(self, path: str) -> dict:
+        """用视觉模型看一张图，返回 {emotion, caption, keywords}。"""
+        if self.llm is None or not getattr(self.llm, "enabled", False):
+            return {}
+        import base64 as _b64
+        import json as _json
+        import os as _os
+        try:
+            with open(path, "rb") as f:
+                b64 = _b64.b64encode(f.read()).decode()
+        except Exception:
+            return {}
+        ext = _os.path.splitext(path)[1].lstrip(".").lower()
+        mime = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp", "gif": "gif"}.get(ext, "png")
+        prompt = (
+            "你看这张表情包。输出 JSON（只输出 JSON）："
+            '{"emotion":"happy|angry|sad|shy|confused|daily","caption":"一句话描述画面（20字内）","keywords":"关键词 空格分隔"}'
+        )
+        try:
+            return self.llm.chat_json_vision(prompt, f"data:image/{mime};base64,{b64}") or {}
+        except Exception:
+            return {}
+
     def sleep_consolidate(self, date: str = "") -> str | None:
         """睡眠巩固：把今天的记忆整理成睡前想的事。"""
         if self.llm is None or not getattr(self.llm, "enabled", False):

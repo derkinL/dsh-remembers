@@ -159,6 +159,9 @@ function renderState(state) {
     lines.push(`你和老大现在是「${state.stage.name}」阶段：${state.stage.hint}。`);
   }
   if (state.activity) lines.push(`你现在在：${state.activity}。想换的话可以用 set_my_activity 工具。`);
+  lines.push("【工具速查】发图：find_meme(emotion) 挑 caption 贴切的 → qq_send_image(sources=[图片完整路径])；"
+    + "学图：learn_meme(file, emotion, caption)；派任务：create_task(text, points)；写便签：write_note(text)；"
+    + "改状态：set_my_activity(activity)。");
   if (Number(state.meme_total) > 0) {
     const emo = Array.isArray(state.meme_emotions) && state.meme_emotions.length
       ? `已分类的情绪：${state.meme_emotions.join("、")}`
@@ -637,12 +640,14 @@ function renderState(state) {
           if (!Array.isArray(list) || list.length === 0) {
             return { ok: true, memes: [], hint: "没找到匹配的，换个情绪或关键词试试" };
           }
+          const base = String(config.memeDir || "").replace(/\/$/, "");
           return {
             ok: true,
             memes: list.slice(0, 8).map((m) => ({
               file: m.file,
               emotion: m.emotion,
               caption: m.caption || m.file,
+              path: base ? base + "/" + m.file : m.file,
             })),
           };
         },

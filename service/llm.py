@@ -85,6 +85,42 @@ class LLM:
         content = message.get("content")
         return content.strip() if isinstance(content, str) and content.strip() else None
 
+
+    def chat_json_vision(self, prompt: str, image_data_url: str, max_tokens: int = 300):
+        """带图片的 JSON 调用（OpenAI 兼容 image_url 格式）。"""
+        if not self.enabled:
+            return None
+        payload = {
+            "model": self.model,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_data_url}},
+                ],
+            }],
+            "max_tokens": max_tokens,
+            "temperature": 0.2,
+        }
+        import json as _json
+        import urllib.request as _ur
+        req = _ur.Request(
+            self.base_url.rstrip("/") + "/chat/completions",
+            data=_json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json", "Authorization": "Bearer " + self.api_key},
+            method="POST",
+        )
+        try:
+            with _ur.urlopen(req, timeout=60) as r:
+                res = _json.loads(r.read())
+            text = res["choices"][0]["message"]["content"].strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1] if "\n" in text else text
+                text = text.rsplit("```", 1)[0]
+            return _json.loads(text)
+        except Exception:
+            return None
+
     def chat_json(self, system: str, user: str, max_tokens: int = 1200):
         """要求返回 JSON，失败或解析不出来都返回 None。"""
         text = self.chat(system, user, max_tokens=max_tokens)

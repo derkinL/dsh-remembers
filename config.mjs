@@ -28,6 +28,7 @@ const ENV = {
   episodeEnabled: ["CMEM_EPISODE"],
   episodeEveryTurns: ["CMEM_EPISODE_TURNS"],
   episodeMaxMinutes: ["CMEM_EPISODE_MINUTES"],
+  memeDir: ["CMEM_MEME_DIR"],
 };
 
 function pick(env, names) {
@@ -91,5 +92,8 @@ export function resolveConfig(input = {}, env = process.env) {
     episodeEveryTurns: toInt(value("episodeEveryTurns"), 20, 3, 200),
     // 或者从这一段开始算起超过这么久也压一次：夜里断断续续聊也能收住
     episodeMaxMinutes: toInt(value("episodeMaxMinutes"), 120, 5, 1440),
+
+    // 表情包目录：find_meme 返回完整路径时拼这个前缀
+    memeDir: String(value("memeDir") ?? "/home/ubuntu/.dsh/media/onebot/memes"),
   };
 }

@@ -604,6 +604,108 @@ window.__ModuleLoader__.load({
         );
       }
 
+      // ---------------------------------------------------------------------
+      // 表情包：列表 + 上传（自动识别）+ 删除
+      // ---------------------------------------------------------------------
+      function MemeSection() {
+        const [list, setList] = React.useState([]);
+        const [busy, setBusy] = React.useState(false);
+        const [msg, setMsg] = React.useState(null);
+
+        const load = async () => {
+          try {
+            const l = await call("/memes?limit=50");
+            setList(Array.isArray(l) ? l : []);
+          } catch {
+            setList([]);
+          }
+        };
+
+        React.useEffect(() => {
+          void load();
+        }, []);
+
+        const upload = (ev) => {
+          const file = ev.target.files && ev.target.files[0];
+          if (!file) return;
+          setBusy(true);
+          setMsg(null);
+          const reader = new FileReader();
+          reader.onload = async () => {
+            try {
+              const res = await call("/memes/upload", {
+                method: "POST",
+                body: JSON.stringify({ filename: file.name, data: reader.result }),
+              });
+              setMsg("已上传：" + (res && res.caption ? res.caption : file.name));
+              await load();
+            } catch (err) {
+              setMsg("失败：" + (err && err.message ? err.message : String(err)));
+            } finally {
+              setBusy(false);
+            }
+          };
+          reader.readAsDataURL(file);
+        };
+
+        const remove = async (f) => {
+          if (!window.confirm("删掉 " + f + "？")) return;
+          try {
+            await call("/memes/delete", { method: "POST", body: JSON.stringify({ file: f }) });
+            await load();
+          } catch {
+            /* ignore */
+          }
+        };
+
+        const EMO = { happy: "开心", angry: "生气", sad: "难过", shy: "害羞", confused: "疑惑", daily: "日常" };
+
+        return h("div", { style: S.wrap },
+          h("div", { style: S.desc },
+            "表情包库：" + list.length + " 张。上传后自动识别情绪和描述（视觉模型），她就能按情绪找图。",
+          ),
+          h("div", { style: S.row },
+            h("input", {
+              type: "file",
+              accept: "image/*",
+              onChange: upload,
+              disabled: busy,
+              style: { fontSize: 13 },
+            }),
+            busy ? h("span", { style: S.muted }, "正在上传 + 识别…") : null,
+          ),
+          msg ? h("div", { style: S.muted }, msg) : null,
+          h("div", {
+            style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10 },
+          },
+            list.map((m) => h("div", {
+              key: m.file,
+              style: {
+                border: "1px solid var(--dsw-color-border-subtle, rgba(0,0,0,.08))",
+                borderRadius: 10, padding: 6, display: "flex", flexDirection: "column", gap: 4,
+                background: "var(--dsw-color-bg, #fff)",
+              },
+            },
+              h("img", {
+                src: serviceUrl() + "/memes/file/" + encodeURIComponent(m.file),
+                style: { width: "100%", height: 90, objectFit: "contain", borderRadius: 6, background: "#f3f4f6" },
+              }),
+              h("div", { style: { fontSize: 11, fontWeight: 500 } }, EMO[m.emotion] || "未分类"),
+              h("div", {
+                style: {
+                  fontSize: 11, color: "var(--dsw-color-text-secondary, #6b7280)",
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                },
+              }, m.caption || m.file),
+              h("button", {
+                style: { ...S.btn(false), padding: "2px 8px", fontSize: 11 },
+                onClick: () => void remove(m.file),
+              }, "删除"),
+            )),
+          ),
+        );
+      }
+
       function PersonaSection() {
         const [loading, setLoading] = React.useState(true);
         const [error, setError] = React.useState("");
@@ -756,6 +858,15 @@ window.__ModuleLoader__.load({
               label: () => "鲸鱼日记本",
             },
             DiarySection,
+          ));
+          slots.inject("settings.section", () => slots.register(
+            {
+              name: "settings.section",
+              id: "dsh-remembers-memes",
+              order: 35,
+              label: () => "表情包",
+            },
+            MemeSection,
           ));
         } catch (err) {
           console.error("dsh-remembers: apply() 失败", err);

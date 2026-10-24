@@ -254,10 +254,33 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/activity":
             date = (query.get("date") or [None])[0] or None
             self._json(200, store.list_activities(date))
+        elif path.startswith("/memes/file/"):
+            name = path.rsplit("/", 1)[-1]
+            import os as _os
+            meme_dir = _os.environ.get("CMEM_MEME_DIR", "/home/ubuntu/.dsh/media/onebot/memes")
+            fp = _os.path.join(meme_dir, _os.path.basename(name))
+            if not _os.path.exists(fp):
+                self._json(404, {"ok": False, "error": "not found"})
+                return
+            ext = _os.path.splitext(fp)[1].lstrip(".").lower()
+            ctype = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                     "webp": "image/webp", "gif": "image/gif"}.get(ext, "application/octet-stream")
+            with open(fp, "rb") as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "max-age=86400")
+            self.end_headers()
+            self.wfile.write(data)
         elif path == "/memes":
             emotion = (query.get("emotion") or [""])[0]
             q = (query.get("q") or [""])[0]
-            self._json(200, store.meme_list(emotion, q))
+            try:
+                limit = int((query.get("limit") or ["20"])[0])
+            except Exception:
+                limit = 20
+            self._json(200, store.meme_list(emotion, q, limit))
         elif path == "/slang":
             self._json(200, store.slang_list())
         elif path == "/affinity":
@@ -346,6 +369,10 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._post_meme())
         elif path == "/memes/used":
             self._guard(lambda: self._post_meme_used())
+        elif path == "/memes/upload":
+            self._guard(lambda: self._upload_meme())
+        elif path == "/memes/delete":
+            self._guard(lambda: self._delete_meme())
         elif path == "/slang":
             self._guard(lambda: self._post_slang())
         elif path == "/affinity":
@@ -593,6 +620,62 @@ class Handler(BaseHTTPRequestHandler):
         with _lock:
             data = store.set_self_model(text)
         self._json(200, self._persona_payload(data))
+
+    def _upload_meme(self) -> None:
+        """上传一张表情：写进 memes 目录，自动用视觉识别情绪和描述，入库。"""
+        body = self._body()
+        name = str(body.get("filename") or "").strip()
+        data = str(body.get("data") or "")
+        if not name or not data:
+            self._json(400, {"ok": False, "error": "filename and data required"})
+            return
+        import base64 as _b64
+        import os as _os
+        meme_dir = _os.environ.get("CMEM_MEME_DIR", "/home/ubuntu/.dsh/media/onebot/memes")
+        _os.makedirs(meme_dir, exist_ok=True)
+        # 防路径穿越
+        safe = _os.path.basename(name)
+        path = _os.path.join(meme_dir, safe)
+        try:
+            raw = _b64.b64decode(data.split(",", 1)[-1])
+            with open(path, "wb") as f:
+                f.write(raw)
+        except Exception as e:
+            self._json(400, {"ok": False, "error": "save failed: " + str(e)})
+            return
+        # 自动标注（视觉模型，失败不阻塞）
+        label = {}
+        try:
+            label = extractor.label_meme(path) or {}
+        except Exception:
+            label = {}
+        with _lock:
+            store.meme_upsert(
+                safe,
+                str(label.get("emotion") or ""),
+                str(label.get("caption") or ""),
+                str(label.get("keywords") or ""),
+            )
+        self._json(200, {"ok": True, "file": safe, **label})
+
+    def _delete_meme(self) -> None:
+        body = self._body()
+        name = str(body.get("file") or "")
+        import os as _os
+        meme_dir = _os.environ.get("CMEM_MEME_DIR", "/home/ubuntu/.dsh/media/onebot/memes")
+        path = _os.path.join(meme_dir, _os.path.basename(name))
+        try:
+            if _os.path.exists(path):
+                _os.remove(path)
+        except Exception:
+            pass
+        try:
+            old_conn = store.conn
+            old_conn.execute("DELETE FROM meme WHERE file=?", (name,))
+            old_conn.commit()
+        except Exception:
+            pass
+        self._json(200, {"ok": True})
 
     def _post_meme(self) -> None:
         """表情包入库/更新：文件名 + 情绪 + 描述 + 关键词。"""
