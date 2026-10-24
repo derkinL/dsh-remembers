@@ -21,7 +21,21 @@ window.__ModuleLoader__.load({
       const React = e("react");
       const h = React.createElement;
 
-      const DEFAULT_SERVICE_URL = "http://127.0.0.1:8080";
+      // 公网访问时不能写死 127.0.0.1（那是用户自己的电脑）——
+      // 按当前页面地址推导：主套 /mem，第二套 /lan/mem（caddy 反代到 8081/8082）
+      function defaultServiceUrl() {
+        try {
+          const loc = window.location;
+          const host = loc.hostname;
+          if (host === "127.0.0.1" || host === "localhost") return "http://127.0.0.1:8080";
+          const path = loc.pathname || "/";
+          const base = path.startsWith("/lan/") ? "/lan/mem" : "/mem";
+          const origin = loc.protocol + "//" + loc.host;
+          return origin + base;
+        } catch {
+          return "http://127.0.0.1:8080";
+        }
+      }
       const URL_KEY = "dsh-remembers:serviceUrl";
 
       const PRESETS = {
@@ -50,9 +64,9 @@ window.__ModuleLoader__.load({
 
       function serviceUrl() {
         try {
-          return window.localStorage.getItem(URL_KEY) || DEFAULT_SERVICE_URL;
+          return window.localStorage.getItem(URL_KEY) || defaultServiceUrl();
         } catch {
-          return DEFAULT_SERVICE_URL;
+          return defaultServiceUrl();
         }
       }
 
@@ -157,6 +171,9 @@ window.__ModuleLoader__.load({
         const [saving, setSaving] = React.useState(false);
         const [notice, setNotice] = React.useState(null);
         const [endpoint, setEndpoint] = React.useState(serviceUrl());
+        const [pubStatus, setPubStatus] = React.useState(null);
+        const [pubMsg, setPubMsg] = React.useState(null);
+        const [pubPort, setPubPort] = React.useState("28582");
         const [draft, setDraft] = React.useState({
           provider: "deepseek",
           llm_key: "",
@@ -284,7 +301,7 @@ window.__ModuleLoader__.load({
                 onChange: (ev) => setEndpoint(ev.target.value),
               }),
               h("div", { style: S.muted },
-                "记忆服务默认跑在 127.0.0.1:8080；它没起来时这块会一直转圈。"),
+                "记忆服务地址会按当前页面自动推导（主套 /mem，第二套 /lan/mem）。本机开发默认 127.0.0.1:8080。"),
             ),
 
             h(Field, { label: "提供商" },

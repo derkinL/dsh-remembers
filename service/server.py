@@ -287,6 +287,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, store.emotion_log_list(limit=limit, days=days))
         elif path == "/persona/user":
             self._json(200, {"user_profile": store.get_user_profile()})
+        elif path == "/public/status":
+            self._json(200, _public_status())
         elif path == "/bili/cfg":
             self._json(200, self._load_bili_whale())
         elif path == "/memories":
@@ -436,6 +438,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._set_user_profile())
         elif path == "/bili/comment":
             self._guard(lambda: self._post_bili_comment())
+        elif path == "/public/toggle":
+            self._guard(lambda: self._public_toggle())
         elif path == "/bili/cfg":
             self._guard(lambda: self._set_bili_cfg())
         elif path == "/bili/owner":
@@ -974,6 +978,30 @@ class Handler(BaseHTTPRequestHandler):
             "stderr": (res.get("stderr") or "")[-300:],
         })
 
+    def _public_toggle(self) -> None:
+        """开/关公网入口（调 root 脚本）。"""
+        import subprocess
+        body = self._body()
+        want = bool(body.get("enabled"))
+        port = int(body.get("port") or 28582)
+        try:
+            if want:
+                cmd = ["sudo", "-n", "/usr/local/bin/dsh-public-toggle", "enable", str(port)]
+            else:
+                cmd = ["sudo", "-n", "/usr/local/bin/dsh-public-toggle", "disable"]
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            raw = (out.stdout or "").strip()
+            if not raw:
+                self._json(200, {"ok": False, "error": (out.stderr or "no output")[:300]})
+                return
+            try:
+                data = json.loads(raw.splitlines()[-1])
+            except Exception:
+                data = {"ok": out.returncode == 0, "raw": raw[-300:]}
+            self._json(200, data)
+        except Exception as exc:
+            self._json(200, {"ok": False, "error": str(exc)[:300]})
+
     def _bili_run(self) -> None:
         body = self._body()
         cmd = str(body.get("command") or "").strip()
@@ -1196,9 +1224,18 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, self._bili_status())
 
     def _bili_feed(self) -> dict:
-        """她刷 B 站选题：优先用登录账号的 feed（带偏好），失败退回热门。"""
+        """她刷 B 站选题：优先用登录账号的 feed（带偏好），失败退回热门。
+        会排除已经看过/记过的视频，避免每次都刷到同几个。"""
         import re as _re
-        res = self._run_bili(["feed", "--n", "3"], timeout=90)
+
+        # 已看过/已记过的标题（全量，用于排除）
+        try:
+            history = {str(x.get("title") or "").strip() for x in store.browsed_list(500)}
+        except Exception:
+            history = set()
+
+        # 先拿多一点（6 条），再从里面挑新的
+        res = self._run_bili(["feed", "--n", "6"], timeout=90)
         if res.get("ok") and res.get("stdout"):
             items = []
             seen = set()
@@ -1206,39 +1243,69 @@ class Handler(BaseHTTPRequestHandler):
                 s = ln.strip()
                 if "BV" not in s or s.startswith("已看过"):
                     continue
-                # 从 "1. BV1xxx  175s  弹幕 197593  播放 31714252  猫咪地铁站通车啦  @up" 里抠标题
+                # 只处理编号行（"1. BV1xxx 175s 弹幕 ... 播放 ... 标题 @up"），
+                # 排除 "看完跑：node bili.mjs debrief ..." 这类提示行
+                if not _re.match(r"^\s*\d+\.\s", s):
+                    continue
                 m = _re.search(r"播放\s+\d+\s+(.+?)(?:\s+@|$)", s)
                 title = (m.group(1) if m else s).strip()
-                if title in seen:
+                if not title or title in seen:
                     continue
                 seen.add(title)
                 items.append(title[:120])
-                if len(items) >= 3:
+                if len(items) >= 12:
                     break
-            # 去重入库（最近已有同标题就跳过）
-            recent = {x["title"] for x in store.browsed_list(10)}
-            with _lock:
-                for t_ in items:
-                    if t_ not in recent:
+
+            fresh = [x for x in items if x not in history]
+            if fresh:
+                picked = fresh[:3]
+                with _lock:
+                    for t_ in picked:
                         store.browsed_add(t_, "")
-            return {"ok": True, "source": "bili-feed", "items": items}
-        # 退回匿名热门
+                return {"ok": True, "source": "bili-feed", "items": picked}
+            # 偏好池里没新的了 → 热门兜底（多样化）
+        # 退回热门（翻页找新的，热门也排除已看过）
         try:
             import json as _json
+            import random as _random
             import urllib.request as _ur
-            url = "https://api.bilibili.com/x/web-interface/popular?ps=3"
-            req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com/"})
-            with _ur.urlopen(req, timeout=10) as r:
-                data = _json.loads(r.read())
-            items = []
-            for it in (data.get("data", {}).get("list") or [])[:3]:
-                title = str(it.get("title") or "")[:80]
-                bvid = str(it.get("bvid") or "")
-                if title:
-                    items.append({"title": title, "url": "https://www.bilibili.com/video/" + bvid})
-                    with _lock:
-                        store.browsed_add(title, "https://www.bilibili.com/video/" + bvid)
-            return {"ok": True, "source": "popular", "items": items}
+
+            def _popular_page(page: int, ps: int = 20):
+                url = f"https://api.bilibili.com/x/web-interface/popular?ps={ps}&pn={page}"
+                req = _ur.Request(url, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                    "Referer": "https://www.bilibili.com/",
+                })
+                with _ur.urlopen(req, timeout=12) as r:
+                    return _json.loads(r.read())
+
+            picked = []
+            used_pages = []
+            # 随机挑 4 个页（1-8 页），大概率能翻出没看过的
+            pages = _random.sample(range(1, 9), 4)
+            for page in pages:
+                try:
+                    data = _popular_page(page)
+                except Exception:
+                    continue
+                used_pages.append(page)
+                for it in (data.get("data", {}).get("list") or []):
+                    title = str(it.get("title") or "").strip()[:100]
+                    bvid = str(it.get("bvid") or "")
+                    if not title or not bvid or title in history:
+                        continue
+                    picked.append({"title": title, "url": "https://www.bilibili.com/video/" + bvid})
+                    if len(picked) >= 3:
+                        break
+                if len(picked) >= 3:
+                    break
+
+            with _lock:
+                for x in picked:
+                    store.browsed_add(x["title"], x["url"])
+            if not picked:
+                return {"ok": True, "source": "popular", "items": [], "note": "热门也刷完了（翻了 %d 页）" % len(used_pages)}
+            return {"ok": True, "source": "popular", "items": picked, "pages": used_pages}
         except Exception as e:
             return {"ok": False, "error": str(e), "items": []}
 

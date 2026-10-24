@@ -1176,16 +1176,19 @@ class MemoryStore:
     # -- 她的见闻：刷到的东西 ------------------------------------------------
 
     def browsed_add(self, title: str, url: str = "") -> None:
-        self.conn.execute(
-            "INSERT INTO browsed(title, url, ts) VALUES (?,?,?)",
-            (str(title)[:200], str(url)[:300], time.time()),
-        )
-        self.conn.commit()
+        # 统一 strip：B站标题常带前导空格，不 strip 会导致去重失效
+        clean = str(title).strip()
+        if clean:
+            self.conn.execute(
+                "INSERT INTO browsed(title, url, ts) VALUES (?,?,?)",
+                (clean[:200], str(url)[:300], time.time()),
+            )
+            self.conn.commit()
 
     def browsed_list(self, limit: int = 5) -> list[dict]:
         rows = self.conn.execute(
             "SELECT title, url, ts FROM browsed ORDER BY id DESC LIMIT ?",
-            (max(1, min(int(limit), 20)),),
+            (max(1, min(int(limit), 1000)),),
         ).fetchall()
         return [{"title": r["title"], "url": r["url"], "ts": float(r["ts"] or 0)} for r in rows]
 
