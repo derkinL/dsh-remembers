@@ -740,6 +740,7 @@ class Handler(BaseHTTPRequestHandler):
         "biliMinGapMinutes": 60,       # 两次刷之间至少隔多久
         "biliMaxGapMinutes": 240,      # 两次刷之间最多隔多久
         "biliBrowseLimit": 3,          # 每次刷几条（存进"见闻"）
+        "biliBrowsePerDay": 3,         # 每天最多刷几次
         # 她独处时能做的事（随机抽一条作为这轮的状态提示）
         "silentActions": [
             "自己上网逛逛（B 站热门、新闻、梗），看到有意思的记下来",

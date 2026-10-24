@@ -963,6 +963,7 @@ window.__ModuleLoader__.load({
               num("biliMinGapMinutes", "至少隔（分钟）", "两次刷之间最少多久"),
               num("biliMaxGapMinutes", "最多隔（分钟）", "两次刷之间最多多久"),
               num("biliBrowseLimit", "每次刷几条", "存进见闻的条数"),
+              num("biliBrowsePerDay", "每天最多刷几次", "超过就不点醒她了"),
             ),
           ),
 
