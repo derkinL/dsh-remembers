@@ -217,6 +217,47 @@ class MemoryStore:
 
     # -- 写入 ---------------------------------------------------------------
 
+
+    def list_memories(self, tier: str | None = None, q: str = "", limit: int = 100,
+                      offset: int = 0) -> dict:
+        """管理用：列出记忆（按时间倒序），带 tier 过滤和关键词搜索。"""
+        sql = "SELECT id, tier, subject, text, summary, tags, ts, half_life_days FROM memory"
+        conds = []
+        args: list = []
+        if tier and tier != "all":
+            conds.append("tier = ?")
+            args.append(tier)
+        if q:
+            conds.append("(text LIKE ? OR summary LIKE ?)")
+            args.extend([f"%{q}%", f"%{q}%"])
+        if conds:
+            sql += " WHERE " + " AND ".join(conds)
+        total = self.conn.execute(
+            "SELECT COUNT(*) FROM memory" + ((" WHERE " + " AND ".join(conds)) if conds else ""),
+            args,
+        ).fetchone()[0]
+        sql += " ORDER BY ts DESC LIMIT ? OFFSET ?"
+        rows = self.conn.execute(sql, [*args, max(1, min(int(limit), 500)), max(0, int(offset))]).fetchall()
+        items = []
+        for r in rows:
+            try:
+                tags = json.loads(r["tags"] or "[]")
+            except Exception:
+                tags = []
+            items.append({
+                "id": int(r["id"]),
+                "tier": r["tier"],
+                "subject": r["subject"],
+                "text": r["text"],
+                "summary": r["summary"],
+                "tags": tags,
+                "ts": float(r["ts"] or 0),
+                "half_life_days": r["half_life_days"],
+            })
+        counts = {row["tier"]: int(row["n"]) for row in self.conn.execute(
+            "SELECT tier, COUNT(*) AS n FROM memory GROUP BY tier").fetchall()}
+        return {"total": int(total), "counts": counts, "items": items}
+
     def add(self, item: MemoryInput) -> int:
         # 幂等：同 tier 里已有同义文本（忽略标点/空白）就复用，不重复存
         _norm = _norm_for_dedupe(item.text)

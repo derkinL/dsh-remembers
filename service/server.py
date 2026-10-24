@@ -281,6 +281,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, self._bili_qr_poll(key))
         elif path == "/bili/cfg":
             self._json(200, self._load_bili_whale())
+        elif path == "/memories":
+            tier = (query.get("tier") or ["all"])[0]
+            q = (query.get("q") or [""])[0]
+            limit = int((query.get("limit") or ["100"])[0])
+            offset = int((query.get("offset") or ["0"])[0])
+            self._json(200, store.list_memories(tier=tier, q=q, limit=limit, offset=offset))
         elif path == "/bili/status":
             self._json(200, self._bili_status())
         elif path == "/bili/feed":

@@ -1232,6 +1232,115 @@ window.__ModuleLoader__.load({
         );
       }
 
+      // ---------------------------------------------------------------------
+      // 记忆：她记得的所有东西（L0-L4），能筛能搜
+      // ---------------------------------------------------------------------
+      function MemoriesSection() {
+        const [data, setData] = React.useState(null);
+        const [tier, setTier] = React.useState("all");
+        const [q, setQ] = React.useState("");
+        const [busy, setBusy] = React.useState(false);
+        const [err, setErr] = React.useState(null);
+
+        const TIERS = {
+          all: "全部",
+          L0: "原话",
+          L1: "事实",
+          L2: "画像",
+          L3: "事件",
+          L4: "里程碑",
+        };
+
+        const load = async (t, query) => {
+          setBusy(true);
+          setErr(null);
+          try {
+            const params = new URLSearchParams();
+            params.set("tier", t || tier);
+            params.set("limit", "200");
+            if ((query ?? q).trim()) params.set("q", (query ?? q).trim());
+            setData(await call("/memories?" + params.toString()));
+          } catch (e) {
+            setErr(e && e.message ? e.message : String(e));
+          } finally {
+            setBusy(false);
+          }
+        };
+
+        React.useEffect(() => {
+          void load("all", "");
+        }, []);
+
+        const fmt = (ts) => {
+          if (!ts) return "";
+          const d = new Date(ts * 1000);
+          const pad = (n) => String(n).padStart(2, "0");
+          return `${d.getMonth() + 1}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        };
+
+        const tierColor = {
+          L0: "#8b95a5",
+          L1: "#5b8def",
+          L2: "#2fa36b",
+          L3: "#d9862b",
+          L4: "#b3488f",
+        };
+
+        return h("div", { style: S.wrap },
+          h("div", { style: S.desc },
+            "她记得的所有东西。L0 是原话、L1 是事实、L2 是你的画像、L3 是发生过的事、L4 是里程碑和约定。",
+          ),
+
+          err ? h("div", { style: S.notice("error") }, err) : null,
+
+          data ? h("div", { style: S.card },
+            h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+              Object.entries(TIERS).map(([k, label]) =>
+                h("button", {
+                  key: k,
+                  style: { ...S.btn(tier === k), padding: "4px 10px", fontSize: 12 },
+                  onClick: () => { setTier(k); void load(k, q); },
+                }, label + (k !== "all" && data.counts && data.counts[k] != null ? ` ${data.counts[k]}` : "")),
+              ),
+            ),
+            h("div", { style: { display: "flex", gap: 8, marginTop: 8 } },
+              h("input", {
+                style: S.input,
+                placeholder: "搜记忆内容…",
+                value: q,
+                onChange: (ev) => setQ(ev.target.value),
+                onKeyDown: (ev) => { if (ev.key === "Enter") void load(tier, q); },
+              }),
+              h("button", { style: S.btn(true), onClick: () => void load(tier, q), disabled: busy }, busy ? "查…" : "搜索"),
+            ),
+            h("div", { style: { ...S.muted, marginTop: 6 } },
+              `显示 ${data.items ? data.items.length : 0} / ${data.total} 条`),
+          ) : h("div", { style: S.muted }, "读取中…"),
+
+          data && data.items && data.items.length > 0 ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+            data.items.map((m) => h("div", {
+              key: m.id,
+              style: { ...S.card, padding: "10px 12px" },
+            },
+              h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 4 } },
+                h("span", {
+                  style: {
+                    fontSize: 11, fontWeight: 600, padding: "1px 7px", borderRadius: 999,
+                    background: (tierColor[m.tier] || "#888") + "22",
+                    color: tierColor[m.tier] || "#888",
+                  },
+                }, (TIERS[m.tier] || m.tier) + " " + m.tier),
+                h("span", { style: { ...S.muted, fontSize: 11 } }, fmt(m.ts)),
+                m.tags && m.tags.length ? h("span", { style: { ...S.muted, fontSize: 11 } },
+                  m.tags.filter((x) => x !== "extracted" && x !== "raw").slice(0, 3).join(" · ")) : null,
+              ),
+              h("div", { style: { fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word" } }, m.text),
+              m.summary ? h("div", { style: { ...S.muted, fontSize: 12, marginTop: 4 } }, "摘要：" + m.summary) : null,
+            )),
+          ) : (data ? h("div", { style: S.muted }, "没有匹配的记忆") : null),
+        );
+      }
+
       function PersonaSection() {
         const [loading, setLoading] = React.useState(true);
         const [error, setError] = React.useState("");
@@ -1411,6 +1520,15 @@ window.__ModuleLoader__.load({
               label: () => "B 站",
             },
             BiliSection,
+          ));
+          slots.inject("settings.section", () => slots.register(
+            {
+              name: "settings.section",
+              id: "dsh-remembers-memories",
+              order: 38,
+              label: () => "记忆",
+            },
+            MemoriesSection,
           ));
         } catch (err) {
           console.error("dsh-remembers: apply() 失败", err);
