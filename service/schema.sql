@@ -150,3 +150,55 @@ CREATE TABLE IF NOT EXISTS activity_log (
   detail     TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_activity_ts ON activity_log(ts);
+
+-- ---------------------------------------------------------------------------
+-- 学说话：用户口头禅/常用短语
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS slang (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  phrase     TEXT NOT NULL UNIQUE,
+  count      INTEGER NOT NULL DEFAULT 1,
+  last_seen  REAL NOT NULL DEFAULT 0
+);
+
+-- ---------------------------------------------------------------------------
+-- 社交亲和度：对不同的人的熟悉程度
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS affinity (
+  user_id    TEXT PRIMARY KEY,
+  score      REAL NOT NULL DEFAULT 0,
+  last_seen  REAL NOT NULL DEFAULT 0
+);
+
+-- ---------------------------------------------------------------------------
+-- 任务：她给主人派的任务（Phosphene 那类）
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tasks (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  text       TEXT NOT NULL,
+  points     INTEGER NOT NULL DEFAULT 1,
+  created    REAL NOT NULL DEFAULT 0,
+  done       INTEGER NOT NULL DEFAULT 0,
+  done_at    REAL NOT NULL DEFAULT 0
+);
+
+-- ---------------------------------------------------------------------------
+-- 共享便签：日历/留言
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS notes (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  date       TEXT NOT NULL DEFAULT '',
+  text       TEXT NOT NULL,
+  author     TEXT NOT NULL DEFAULT '',
+  created    REAL NOT NULL DEFAULT 0
+);
+
+-- ---------------------------------------------------------------------------
+-- 睡眠巩固：每晚整理
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS sleep_log (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  date       TEXT NOT NULL,
+  text       TEXT NOT NULL DEFAULT '',
+  created    REAL NOT NULL DEFAULT 0
+);

@@ -897,6 +897,116 @@ class MemoryStore:
         e = self.get_emotion()
         return self.set_emotion(e["valence"] + dv, e["arousal"] + da)
 
+
+    # -- 学说话 / 亲和度 / 任务 / 便签 / 睡眠 --------------------------------
+
+    def slang_add(self, phrase: str, n: int = 1) -> None:
+        phrase = str(phrase).strip()[:20]
+        if not phrase:
+            return
+        now = time.time()
+        self.conn.execute(
+            "INSERT INTO slang(phrase, count, last_seen) VALUES (?,?,?) "
+            "ON CONFLICT(phrase) DO UPDATE SET count = count + ?, last_seen = ?",
+            (phrase, n, now, n, now),
+        )
+        self.conn.commit()
+
+    def slang_list(self, limit: int = 15) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT phrase, count FROM slang ORDER BY count DESC, last_seen DESC LIMIT ?",
+            (max(1, min(int(limit), 50)),),
+        ).fetchall()
+        return [{"phrase": r["phrase"], "count": int(r["count"])} for r in rows]
+
+    def affinity_get(self, user_id: str) -> float:
+        r = self.conn.execute("SELECT score FROM affinity WHERE user_id=?", (str(user_id),)).fetchone()
+        return float(r["score"]) if r else 0.0
+
+    def affinity_bump(self, user_id: str, delta: float = 1.0) -> float:
+        now = time.time()
+        self.conn.execute(
+            "INSERT INTO affinity(user_id, score, last_seen) VALUES (?,?,?) "
+            "ON CONFLICT(user_id) DO UPDATE SET score = score + ?, last_seen = ?",
+            (str(user_id), delta, now, delta, now),
+        )
+        self.conn.commit()
+        return self.affinity_get(user_id)
+
+    def task_add(self, text: str, points: int = 1) -> dict:
+        now = time.time()
+        cur = self.conn.execute(
+            "INSERT INTO tasks(text, points, created) VALUES (?,?,?)",
+            (str(text)[:200], int(points), now),
+        )
+        self.conn.commit()
+        return {"id": cur.lastrowid, "text": text, "points": points}
+
+    def task_list(self, include_done: bool = True, limit: int = 30) -> list[dict]:
+        where = "" if include_done else "WHERE done=0"
+        rows = self.conn.execute(
+            f"SELECT * FROM tasks {where} ORDER BY done ASC, id DESC LIMIT ?",
+            (max(1, min(int(limit), 100)),),
+        ).fetchall()
+        return [
+            {
+                "id": int(r["id"]), "text": r["text"], "points": int(r["points"]),
+                "created": float(r["created"] or 0), "done": bool(r["done"]),
+                "done_at": float(r["done_at"] or 0),
+            }
+            for r in rows
+        ]
+
+    def task_done(self, task_id: int) -> bool:
+        cur = self.conn.execute(
+            "UPDATE tasks SET done=1, done_at=? WHERE id=? AND done=0",
+            (time.time(), int(task_id)),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def note_add(self, text: str, author: str = "", date: str = "") -> dict:
+        now = time.time()
+        import datetime as _dt
+        if not date:
+            date = _dt.date.today().isoformat()
+        cur = self.conn.execute(
+            "INSERT INTO notes(date, text, author, created) VALUES (?,?,?,?)",
+            (str(date), str(text)[:300], str(author), now),
+        )
+        self.conn.commit()
+        return {"id": cur.lastrowid, "date": date, "text": text, "author": author}
+
+    def note_list(self, limit: int = 50) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT id, date, text, author, created FROM notes ORDER BY id DESC LIMIT ?",
+            (max(1, min(int(limit), 200)),),
+        ).fetchall()
+        return [
+            {"id": int(r["id"]), "date": r["date"], "text": r["text"],
+             "author": r["author"], "created": float(r["created"] or 0)}
+            for r in rows
+        ]
+
+    def sleep_add(self, date: str, text: str) -> dict:
+        now = time.time()
+        self.conn.execute(
+            "INSERT INTO sleep_log(date, text, created) VALUES (?,?,?)",
+            (str(date), str(text), now),
+        )
+        self.conn.commit()
+        return {"date": date, "text": text}
+
+    def sleep_list(self, limit: int = 30) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT date, text, created FROM sleep_log ORDER BY id DESC LIMIT ?",
+            (max(1, min(int(limit), 100)),),
+        ).fetchall()
+        return [
+            {"date": r["date"], "text": r["text"], "created": float(r["created"] or 0)}
+            for r in rows
+        ]
+
     def bump_intimacy(self, delta: float = 1.0) -> float:
         cur = self.get_state()
         return self.set_state(intimacy=cur["intimacy"] + delta)["intimacy"]

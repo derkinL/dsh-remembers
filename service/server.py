@@ -254,6 +254,17 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/activity":
             date = (query.get("date") or [None])[0] or None
             self._json(200, store.list_activities(date))
+        elif path == "/slang":
+            self._json(200, store.slang_list())
+        elif path == "/affinity":
+            uid = (query.get("user") or [""])[0]
+            self._json(200, {"user": uid, "score": store.affinity_get(uid) if uid else 0})
+        elif path == "/tasks":
+            self._json(200, store.task_list())
+        elif path == "/notes":
+            self._json(200, store.note_list())
+        elif path == "/sleep":
+            self._json(200, store.sleep_list())
         elif path == "/diary":
             self._json(200, store.diary_list())
         elif path == "/profile":
@@ -278,6 +289,12 @@ class Handler(BaseHTTPRequestHandler):
             st["weather"] = store.current_weather()
             st["stage"] = store.current_stage()
             st["emotion"] = store.get_emotion()
+            try:
+                st["slang"] = store.slang_list(8)
+                st["affinity"] = store.affinity_get("owner")
+            except Exception:
+                st["slang"] = []
+                st["affinity"] = 0
             st["view_hour"] = hour
             self._json(200, st)
         elif path == "/persona":
@@ -316,6 +333,18 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(self._set_self_model)
         elif path == "/extract":
             self._guard(self._extract)
+        elif path == "/slang":
+            self._guard(lambda: self._post_slang())
+        elif path == "/affinity":
+            self._guard(lambda: self._post_affinity())
+        elif path == "/tasks":
+            self._guard(lambda: self._post_task())
+        elif path == "/tasks/complete":
+            self._guard(lambda: self._complete_task())
+        elif path == "/notes":
+            self._guard(lambda: self._post_note())
+        elif path == "/sleep":
+            self._guard(lambda: self._post_sleep())
         elif path == "/activity":
             self._guard(lambda: self._log_activity())
         elif path == "/diary":
@@ -551,6 +580,58 @@ class Handler(BaseHTTPRequestHandler):
         with _lock:
             data = store.set_self_model(text)
         self._json(200, self._persona_payload(data))
+
+    # -- 学说话 / 亲和度 / 任务 / 便签 / 睡眠 --------------------------------
+
+    def _post_slang(self) -> None:
+        body = self._body()
+        with _lock:
+            store.slang_add(str(body.get("phrase") or ""), int(body.get("count") or 1))
+        self._json(200, {"ok": True})
+
+    def _post_affinity(self) -> None:
+        body = self._body()
+        uid = str(body.get("user_id") or "")
+        if not uid:
+            self._json(400, {"ok": False, "error": "user_id required"})
+            return
+        with _lock:
+            score = store.affinity_bump(uid, float(body.get("delta") or 1.0))
+        self._json(200, {"ok": True, "user_id": uid, "score": score})
+
+    def _post_task(self) -> None:
+        body = self._body()
+        with _lock:
+            data = store.task_add(str(body.get("text") or ""), int(body.get("points") or 1))
+        self._json(200, {"ok": True, **data})
+
+    def _complete_task(self) -> None:
+        body = self._body()
+        ok = False
+        with _lock:
+            ok = store.task_done(int(body.get("id") or 0))
+        self._json(200, {"ok": ok})
+
+    def _post_note(self) -> None:
+        body = self._body()
+        with _lock:
+            data = store.note_add(
+                str(body.get("text") or ""),
+                str(body.get("author") or ""),
+                str(body.get("date") or ""),
+            )
+        self._json(200, {"ok": True, **data})
+
+    def _post_sleep(self) -> None:
+        body = self._body()
+        text = extractor.sleep_consolidate(str(body.get("date") or ""))
+        if not text:
+            self._json(503, {"ok": False, "error": "llm unavailable"})
+            return
+        date = str(body.get("date") or time.strftime("%Y-%m-%d"))
+        with _lock:
+            data = store.sleep_add(date, text)
+        self._json(200, {"ok": True, **data})
 
     def _log_activity(self) -> None:
         """记一条活动日志（她真的做过什么）。"""

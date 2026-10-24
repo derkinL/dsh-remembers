@@ -57,6 +57,38 @@ async function fetchState() {
   }
 }
 
+/** 社交亲和度：每次互动 +1（fire-and-forget）。 */
+async function bumpAffinity() {
+  try {
+    await fetch(config.endpoint + "/affinity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: "owner", delta: 1 }),
+      signal: AbortSignal.timeout(3000),
+    });
+  }
+  catch {
+    /* 忽略 */
+  }
+}
+
+/** 学说话：把用户短消息记成口头禅候选（fire-and-forget）。 */
+async function recordSlang(text) {
+  const msg = String(text || "").trim();
+  if (msg.length < 2 || msg.length > 12) return;
+  try {
+    await fetch(config.endpoint + "/slang", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phrase: msg }),
+      signal: AbortSignal.timeout(3000),
+    });
+  }
+  catch {
+    /* 忽略 */
+  }
+}
+
 /** 记一条活动日志（fire-and-forget）。 */
 async function logActivity(kind, detail) {
   try {
@@ -112,6 +144,10 @@ function renderState(state) {
     '<dsh-remembers source="state">',
     `你现在的状态：心情${moodText}；和老大亲密度 ${intimacy}/100；勿扰时段 ${state.dnd_start} 点到 ${state.dnd_end} 点。`,
   ];
+  if (Array.isArray(state.slang) && state.slang.length > 0) {
+    const top = state.slang.slice(0, 5).map((s) => s.phrase).join("、");
+    lines.push(`老大常说的词：${top}。可以学他的说话方式，别刻意。`);
+  }
   if (state.emotion) {
     const v = Number(state.emotion.valence) || 0;
     const a = Number(state.emotion.arousal) || 0.5;
@@ -405,6 +441,8 @@ function renderState(state) {
     // 记一条聊天活动
     if (user) {
       void logActivity("chat", user.slice(0, 80));
+      void recordSlang(user);
+      void bumpAffinity();
     }
 
     // 这一轮之前的几条用户输入，作为惊讶度门控的参照

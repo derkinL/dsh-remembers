@@ -16,6 +16,11 @@ import json
 from dataclasses import dataclass
 
 
+SLEEP_SYSTEM = """你在睡前整理今天发生的事。用第一人称写两到三句话，像在合上本子前想的事。
+要求：具体、有情绪、带一点睡意；不提"整理""总结""记忆"这类词。
+只输出正文。"""
+
+
 DIARY_SYSTEM = """你根据今天的对话，用第一人称写一段日记（不超过 100 字）。
 要求：像真的在写日记，具体、有情绪、有细节；不要评价用户、不要写成总结报告、不要提"AI"。
 只输出日记正文。"""
@@ -127,6 +132,24 @@ class Extractor:
     # -- 对外 ---------------------------------------------------------------
 
 
+
+
+    def sleep_consolidate(self, date: str = "") -> str | None:
+        """睡眠巩固：把今天的记忆整理成睡前想的事。"""
+        if self.llm is None or not getattr(self.llm, "enabled", False):
+            return None
+        import datetime as _dt
+        today = _dt.date.today()
+        start = _dt.datetime.combine(today, _dt.time.min).timestamp()
+        rows = self.conn.execute(
+            "SELECT text FROM memory WHERE ts >= ? ORDER BY id DESC LIMIT 15", (start,)
+        ).fetchall() if hasattr(self, "conn") else []
+        material = "\n".join(str(r["text"]) for r in rows) if rows else "今天很平静，没什么大事。"
+        try:
+            text = self.llm.chat(SLEEP_SYSTEM, material, max_tokens=220)
+        except Exception:
+            return None
+        return (str(text).strip()[:250]) if text else None
 
     def write_diary(self, user_text: str, assistant_text: str = "", date: str = "") -> str | None:
         """写今天的日记（LLM，第一人称，100 字内）。"""

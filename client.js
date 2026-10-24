@@ -536,6 +536,36 @@ window.__ModuleLoader__.load({
           ),
 
           h("div", { style: S.card },
+            h("div", { style: S.label }, "她给老大派的任务"),
+            taskList.length === 0
+              ? h("div", { style: S.muted }, "还没有任务——她说派的时候会出现在这里。")
+              : h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+                  taskList.slice(0, 10).map((tk) => h("div", { key: tk.id, style: S.row },
+                    h("span", { style: { fontSize: 13 } }, (tk.done ? "✓ " : "○ ") + tk.text),
+                    h("span", { style: S.muted }, "(" + tk.points + " 分)"),
+                  ))),
+          ),
+
+          h("div", { style: S.card },
+            h("div", { style: S.label }, "共享便签"),
+            noteList.length === 0
+              ? h("div", { style: S.muted }, "还没有便签。")
+              : h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+                  noteList.slice(0, 10).map((nt) => h("div", { key: nt.id, style: S.muted },
+                    nt.date + " · " + (nt.author || "某人") + "：" + nt.text))),
+          ),
+
+          h("div", { style: S.card },
+            h("div", { style: S.label }, "睡前整理（睡眠巩固）"),
+            sleepList.length === 0
+              ? h("div", { style: S.muted }, "还没有——每天 23:00 她整理一次。")
+              : h("div", { style: { display: "flex", flexDirection: "column", gap: 10 } },
+                  sleepList.slice(0, 7).map((sl, i) => h("div", { key: i },
+                    h("div", { style: { fontSize: 12, color: "var(--dsw-color-text-secondary, #6b7280)", marginBottom: 4 } }, sl.date),
+                    h("div", { style: S.desc }, sl.text)))),
+          ),
+
+          h("div", { style: S.card },
             h("div", { style: S.row },
               h("div", { style: S.label }, "日记本（按天，每天一篇）"),
               diaries.length > 0
