@@ -242,9 +242,6 @@ class Extractor:
                 # 判定失败时保守处理：直接 ADD，不乱改已有记忆
                 decision = {"op": "ADD", "reason": "decide-failed-fallback-add"}
 
-            # 情感轨迹：不管 op 是什么都记（重复的情绪事件也是情绪）
-            self._log_emotion(fact)
-
             op = str(decision.get("op") or "ADD").upper()
             if op == "ADD":
                 self.store.add(self._to_input(fact, text, subject))
@@ -275,6 +272,9 @@ class Extractor:
                 op = "NONE"
 
             details.append({"fact": text[:60], "op": op, "reason": decision.get("reason")})
+
+        # 一次抽取只记一条情感（取强度最高的那条）——避免同一件事刷好几条
+        self._log_best_emotion(facts)
 
         return {"ok": True, "facts": len(facts), "applied": applied, "details": details}
 
@@ -416,6 +416,59 @@ class Extractor:
                 return h
         return None
 
+    def _log_best_emotion(self, facts: list) -> None:
+        """一次抽取只记一条情感：挑强度最高的那个 fact 写 emotion_log。"""
+        try:
+            best = None
+            best_score = -1.0
+            for fact in facts:
+                if not isinstance(fact, dict):
+                    continue
+                emo = fact.get("emotion")
+                label = ""
+                intensity = 0.5
+                reason = ""
+                if isinstance(emo, dict):
+                    label = str(emo.get("label") or "").strip()
+                    intensity = float(emo.get("intensity") or 0.5)
+                    reason = str(emo.get("reason") or "").strip()
+                if not label:
+                    for kw in (fact.get("keywords") or []):
+                        s = str(kw)
+                        if s.startswith("情绪:") and len(s) > 3:
+                            label = s[3:].strip()
+                            reason = str(fact.get("text") or "")[:150]
+                            intensity = 0.6
+                            break
+                if not label:
+                    continue
+                if intensity > best_score:
+                    best_score = intensity
+                    best = (label, max(0.0, min(1.0, intensity)), reason)
+            if best is None:
+                return
+            label, intensity, reason = best
+            # 同 label 30 分钟内不重复
+            try:
+                recent = self.store.emotion_log_list(5)
+                now_ts = __import__("time").time()
+                for r in recent:
+                    if r.get("label") == label and (now_ts - float(r.get("ts") or 0) < 1800):
+                        return
+            except Exception:
+                pass
+            positive = any(w in label for w in ("开心", "高兴", "喜欢", "兴奋", "甜", "被夸", "笑", "暖", "幸福", "感动"))
+            valence = intensity if positive else -intensity
+            self.store.emotion_log_add(
+                valence=valence,
+                arousal=0.5,
+                label=label,
+                trigger=reason[:200],
+                source="extract",
+            )
+        except Exception:
+            pass
+
     def _log_emotion(self, fact: dict) -> None:
         """抽取结果里带 emotion 的，同步写一条情感轨迹。
         LLM 没给 emotion 时，从 keywords 里的「情绪:xxx」兜底。"""
@@ -440,6 +493,15 @@ class Extractor:
             if not label:
                 return
             intensity = max(0.0, min(1.0, intensity))
+            # 情感去重：同一个情绪词，30 分钟内只记一次（防重复抽取刷屏）
+            try:
+                recent = self.store.emotion_log_list(5)
+                now_ts = __import__("time").time()
+                for r in recent:
+                    if (r.get("label") == label) and (now_ts - float(r.get("ts") or 0) < 1800):
+                        return
+            except Exception:
+                pass
             positive = any(w in label for w in ("开心", "高兴", "喜欢", "兴奋", "甜", "被夸", "笑", "暖", "幸福"))
             valence = intensity if positive else -intensity
             self.store.emotion_log_add(
