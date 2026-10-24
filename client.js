@@ -747,6 +747,13 @@ window.__ModuleLoader__.load({
               },
             },
               h("div", { style: { fontWeight: 600, fontSize: 14 } }, "编辑表情包"),
+              h("img", {
+                src: serviceUrl() + "/memes/file/" + encodeURIComponent(editing.file) + "?t=" + Date.now(),
+                style: {
+                  maxWidth: "100%", maxHeight: 180, objectFit: "contain",
+                  borderRadius: 8, background: "#f3f4f6", alignSelf: "center",
+                },
+              }),
               h("div", { style: S.muted }, editing.file),
               h("div", { style: S.field },
                 h("div", { style: S.label }, "分类"),
