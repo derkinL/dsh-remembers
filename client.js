@@ -1455,6 +1455,12 @@ window.__ModuleLoader__.load({
       function MemoriesSection() {
         const [data, setData] = React.useState(null);
         const [emotionList, setEmotionList] = React.useState(null);
+        const [activityList, setActivityList] = React.useState(null);
+        const [activityDate, setActivityDate] = React.useState("");
+        const [browseList, setBrowseList] = React.useState(null);
+        const [notesList, setNotesList] = React.useState(null);
+        const [slangList, setSlangList] = React.useState(null);
+        const [tasksList, setTasksList] = React.useState(null);
         const [mode, setMode] = React.useState("memory");
         const [tier, setTier] = React.useState("all");
         const [q, setQ] = React.useState("");
@@ -1468,6 +1474,46 @@ window.__ModuleLoader__.load({
           L2: "画像",
           L3: "事件",
           L4: "里程碑",
+        };
+
+        const loadActivity = async (date) => {
+          setBusy(true); setErr(null);
+          try {
+            const qs = date ? ("?date=" + encodeURIComponent(date)) : "?limit=200";
+            const r = await call("/activity" + qs);
+            setActivityList(Array.isArray(r) ? r : []);
+          } catch (e) {
+            setErr(e && e.message ? e.message : String(e));
+            setActivityList([]);
+          } finally { setBusy(false); }
+        };
+
+        const loadBrowse = async () => {
+          setBusy(true); setErr(null);
+          try { const r = await call("/browse"); setBrowseList(Array.isArray(r) ? r : []); }
+          catch (e) { setErr(e && e.message ? e.message : String(e)); setBrowseList([]); }
+          finally { setBusy(false); }
+        };
+
+        const loadNotes = async () => {
+          setBusy(true); setErr(null);
+          try { const r = await call("/notes"); setNotesList(Array.isArray(r) ? r : []); }
+          catch (e) { setErr(e && e.message ? e.message : String(e)); setNotesList([]); }
+          finally { setBusy(false); }
+        };
+
+        const loadSlang = async () => {
+          setBusy(true); setErr(null);
+          try { const r = await call("/slang"); setSlangList(Array.isArray(r) ? r : []); }
+          catch (e) { setErr(e && e.message ? e.message : String(e)); setSlangList([]); }
+          finally { setBusy(false); }
+        };
+
+        const loadTasks = async () => {
+          setBusy(true); setErr(null);
+          try { const r = await call("/tasks"); setTasksList(Array.isArray(r) ? r : []); }
+          catch (e) { setErr(e && e.message ? e.message : String(e)); setTasksList([]); }
+          finally { setBusy(false); }
         };
 
         const loadEmotion = async () => {
@@ -1538,6 +1584,26 @@ window.__ModuleLoader__.load({
                 style: { ...S.btn(mode === "emotion"), padding: "4px 10px", fontSize: 12 },
                 onClick: () => { setMode("emotion"); void loadEmotion(); },
               }, "情感" + (emotionList ? ` ${emotionList.length}` : "")),
+              h("button", {
+                style: { ...S.btn(mode === "activity"), padding: "4px 10px", fontSize: 12 },
+                onClick: () => { setMode("activity"); void loadActivity(activityDate); },
+              }, "今天干了什么"),
+              h("button", {
+                style: { ...S.btn(mode === "browse"), padding: "4px 10px", fontSize: 12 },
+                onClick: () => { setMode("browse"); void loadBrowse(); },
+              }, "见闻" + (browseList ? ` ${browseList.length}` : "")),
+              h("button", {
+                style: { ...S.btn(mode === "notes"), padding: "4px 10px", fontSize: 12 },
+                onClick: () => { setMode("notes"); void loadNotes(); },
+              }, "便签" + (notesList ? ` ${notesList.length}` : "")),
+              h("button", {
+                style: { ...S.btn(mode === "slang"), padding: "4px 10px", fontSize: 12 },
+                onClick: () => { setMode("slang"); void loadSlang(); },
+              }, "学会的词" + (slangList ? ` ${slangList.length}` : "")),
+              h("button", {
+                style: { ...S.btn(mode === "tasks"), padding: "4px 10px", fontSize: 12 },
+                onClick: () => { setMode("tasks"); void loadTasks(); },
+              }, "互相派的活" + (tasksList ? ` ${tasksList.length}` : "")),
             ),
             h("div", { style: { display: "flex", gap: 8, marginTop: 8 } },
               h("input", {
@@ -1553,7 +1619,89 @@ window.__ModuleLoader__.load({
               `显示 ${data.items ? data.items.length : 0} / ${data.total} 条`),
           ) : h("div", { style: S.muted }, "读取中…"),
 
-          mode === "emotion" ? (
+          mode === "activity" ? (
+            h("div", {},
+              h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" } },
+                h("span", { style: { ...S.muted, fontSize: 12 } }, "看哪天："),
+                h("input", {
+                  type: "date",
+                  style: { ...S.input, width: 150 },
+                  value: activityDate,
+                  onChange: (ev) => { setActivityDate(ev.target.value); void loadActivity(ev.target.value); },
+                }),
+                h("button", {
+                  style: { ...S.btn(false), padding: "4px 10px", fontSize: 12 },
+                  onClick: () => { setActivityDate(""); void loadActivity(""); },
+                }, "最近 200 条"),
+              ),
+              activityList && activityList.length > 0
+                ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+                    activityList.map((a, i) => {
+                      const d = new Date((a.ts || 0) * 1000);
+                      const pad = (n) => String(n).padStart(2, "0");
+                      const when = pad(d.getHours()) + ":" + pad(d.getMinutes());
+                      const kindColor = { chat: "#4084ff", bili: "#f0803c", proactive: "#8b5cf6", game: "#2fa36b", other: "#8b95a5" };
+                      const tone = kindColor[a.kind] || "#8b95a5";
+                      const kindLabel = { chat: "聊天", bili: "B 站", proactive: "主动找你", game: "游戏" };
+                      return h("div", { key: i, style: { ...S.card, padding: "8px 12px", borderLeft: "3px solid " + tone } },
+                        h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+                          h("span", { style: { fontSize: 11, fontWeight: 600, padding: "1px 7px", borderRadius: 999, background: tone + "22", color: tone } }, kindLabel[a.kind] || a.kind || "其他"),
+                          h("span", { style: { ...S.muted, fontSize: 11 } }, when),
+                          h("span", { style: { fontSize: 13, lineHeight: 1.6 } }, a.detail || ""),
+                        ),
+                      );
+                    }),
+                  )
+                : h("div", { style: S.muted }, activityList ? "这天没做什么" : "读取中…"),
+            )
+          ) : mode === "browse" ? (
+            browseList && browseList.length > 0
+              ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+                  browseList.map((b, i) =>
+                    h("div", { key: i, style: { ...S.card, padding: "8px 12px", borderLeft: "3px solid #f0803c" } },
+                      h("div", { style: { fontSize: 13, lineHeight: 1.6 } }, b.title || ""),
+                      b.url ? h("div", { style: { ...S.muted, fontSize: 11, marginTop: 2 } }, b.url) : null,
+                    ),
+                  ),
+                )
+              : h("div", { style: S.muted }, browseList ? "还没刷到什么" : "读取中…")
+          ) : mode === "notes" ? (
+            notesList && notesList.length > 0
+              ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+                  notesList.map((n) =>
+                    h("div", { key: n.id, style: { ...S.card, padding: "10px 12px", borderLeft: "3px solid #8b5cf6" } },
+                      h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 4 } }, (n.author || "她") + " · " + (n.date || "")),
+                      h("div", { style: { fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" } }, n.text || ""),
+                    ),
+                  ),
+                )
+              : h("div", { style: S.muted }, notesList ? "还没记过便签" : "读取中…")
+          ) : mode === "slang" ? (
+            slangList && slangList.length > 0
+              ? h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
+                  slangList.map((s, i) =>
+                    h("span", {
+                      key: i,
+                      style: { fontSize: 12, padding: "2px 10px", borderRadius: 999, border: "1px solid rgba(127,127,127,.25)", background: "rgba(64,132,255,.08)" },
+                    }, (s.phrase || s.word || "") + " ×" + (s.count || 0)),
+                  ),
+                )
+              : h("div", { style: S.muted }, slangList ? "还没学会什么词" : "读取中…")
+          ) : mode === "tasks" ? (
+            tasksList && tasksList.length > 0
+              ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+                  tasksList.map((k) =>
+                    h("div", { key: k.id, style: { ...S.card, padding: "8px 12px", borderLeft: "3px solid " + (k.done ? "#2fa36b" : "#f0803c"), opacity: k.done ? 0.7 : 1 } },
+                      h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+                        h("span", { style: { fontSize: 11, fontWeight: 600, color: k.done ? "#2fa36b" : "#f0803c" } }, k.done ? "✓ 已完成" : "待办"),
+                        h("span", { style: { fontSize: 13, lineHeight: 1.6, flex: 1 } }, k.text || ""),
+                        h("span", { style: { ...S.muted, fontSize: 11 } }, "+" + (k.points || 0) + " 分"),
+                      ),
+                    ),
+                  ),
+                )
+              : h("div", { style: S.muted }, tasksList ? "还没有互相派的活" : "读取中…")
+          ) : mode === "emotion" ? (
             emotionList && emotionList.length > 0 ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
               emotionList.map((e) => {
                 const v = Number(e.valence) || 0;

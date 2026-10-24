@@ -440,6 +440,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._post_bili_comment())
         elif path == "/public/toggle":
             self._guard(lambda: self._public_toggle())
+        elif path == "/bili/thought":
+            self._guard(lambda: self._bili_thought())
         elif path == "/bili/cfg":
             self._guard(lambda: self._set_bili_cfg())
         elif path == "/bili/owner":
@@ -808,7 +810,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             return {"ok": False, "error": str(e), "stdout": "", "stderr": ""}
 
-    BILI_CFG = "/home/ubuntu/dsh-agentchat/_deploy/dsh-remembers/service/data/bili.json"
+    BILI_CFG = os.path.join(DATA_DIR, "bili.json")
 
     BILI_WHALE_CFG = "/home/ubuntu/.dsh/bili-whale.config.json"
 
@@ -1001,6 +1003,37 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, data)
         except Exception as exc:
             self._json(200, {"ok": False, "error": str(exc)[:300]})
+
+    def _bili_thought(self) -> None:
+        """让 LLM 用她的口气说一句刚看完的想法。"""
+        body = self._body()
+        items = body.get("items") or []
+        if not isinstance(items, list) or not items:
+            self._json(200, {"ok": False, "error": "items required"})
+            return
+        titles = []
+        for it in items[:5]:
+            if isinstance(it, dict):
+                t_ = str(it.get("title") or "").strip()
+            else:
+                t_ = str(it).strip()
+            if t_:
+                titles.append(t_[:80])
+        prompt = (
+            "你刚在B站刷到这些：\n" + "\n".join("- " + x for x in titles) +
+            "\n\n用你自己的口气说一句看完的真实想法（不超过40字，别像总结，像随口说的）。"
+        )
+        try:
+            thought = extractor.llm.chat(
+                "你是一个有自己脾气的鲸鱼娘，说话短、口语、不客套。只输出那一句。",
+                prompt,
+                max_tokens=80,
+            )
+        except Exception as exc:
+            self._json(200, {"ok": False, "error": str(exc)[:200]})
+            return
+        text = str(thought or "").strip()[:200]
+        self._json(200, {"ok": bool(text), "thought": text, "titles": titles})
 
     def _bili_run(self) -> None:
         body = self._body()
@@ -1515,7 +1548,11 @@ class Handler(BaseHTTPRequestHandler):
         """记一条活动日志（她真的做过什么）。"""
         body = self._body()
         with _lock:
-            store.log_activity(str(body.get("kind") or "other"), str(body.get("detail") or ""))
+            store.log_activity(
+                str(body.get("kind") or "other"),
+                str(body.get("detail") or ""),
+                str(body.get("thought") or ""),
+            )
         self._json(200, {"ok": True})
 
     def _write_diary(self) -> None:

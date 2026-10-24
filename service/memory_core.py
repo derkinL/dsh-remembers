@@ -912,11 +912,12 @@ class MemoryStore:
 
     # -- 活动日志：她真的做过什么 ----------------------------------------------
 
-    def log_activity(self, kind: str, detail: str = "") -> None:
+    def log_activity(self, kind: str, detail: str = "", thought: str = "") -> None:
+        """记一条活动。thought = 她当时的想法（可以空）。"""
         try:
             self.conn.execute(
-                "INSERT INTO activity_log(ts, kind, detail) VALUES (?,?,?)",
-                (time.time(), str(kind), str(detail)[:300]),
+                "INSERT INTO activity_log(ts, kind, detail, thought) VALUES (?,?,?,?)",
+                (time.time(), str(kind), str(detail)[:300], str(thought)[:600]),
             )
             self.conn.commit()
         except Exception:
@@ -932,15 +933,16 @@ class MemoryStore:
             start = _dt.datetime.combine(day, _dt.time.min).timestamp()
             end = start + 86400
             rows = self.conn.execute(
-                "SELECT ts, kind, detail FROM activity_log WHERE ts >= ? AND ts < ? ORDER BY ts DESC LIMIT ?",
+                "SELECT ts, kind, detail, thought FROM activity_log WHERE ts >= ? AND ts < ? ORDER BY ts DESC LIMIT ?",
                 (start, end, max(1, min(int(limit), 500))),
             ).fetchall()
         else:
             rows = self.conn.execute(
-                "SELECT ts, kind, detail FROM activity_log ORDER BY ts DESC LIMIT ?",
+                "SELECT ts, kind, detail, thought FROM activity_log ORDER BY ts DESC LIMIT ?",
                 (max(1, min(int(limit), 500)),),
             ).fetchall()
-        return [{"ts": float(r["ts"]), "kind": r["kind"], "detail": r["detail"]} for r in rows]
+        return [{"ts": float(r["ts"]), "kind": r["kind"], "detail": r["detail"],
+                 "thought": (r["thought"] if "thought" in r.keys() else "") or ""} for r in rows]
 
 
     # -- 情绪双轴：valence（效价）/ arousal（唤醒度） --------------------------
