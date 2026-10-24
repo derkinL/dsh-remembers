@@ -92,6 +92,10 @@ class Scheduler:
             changed = True
         if self._tick_bili(st, now):
             changed = True
+        if self._tick_diary(st, now):
+            changed = True
+        if self._tick_evolve(st, now):
+            changed = True
 
         if changed:
             self._save_state(st)
@@ -206,6 +210,34 @@ class Scheduler:
         msg = f"（你自己待着，现在是 {hour} 点。想去 B 站逛逛吗？不想去就干别的，没事。）"
         self._inject(msg, silent=False)
         _log(f"bili: nudged model ({count + 1}/{per_day} today)")
+        return True
+
+    # ---------- 3. 日记（23 点）----------
+    def _tick_diary(self, st: dict, now: float) -> bool:
+        today = datetime.date.today().isoformat()
+        if st.get("diary_date") == today:
+            return False
+        dt = datetime.datetime.now()
+        if dt.hour < 23:
+            return False
+        st["diary_date"] = today
+        msg = f"（该写日记了，今天是 {dt.month} 月 {dt.day} 日。记两句今天的事吧，写给你自己看。）"
+        self._inject(msg, silent=True)
+        _log("diary: nudged model to write")
+        return True
+
+    # ---------- 4. 自我认知演化（22 点）----------
+    def _tick_evolve(self, st: dict, now: float) -> bool:
+        today = datetime.date.today().isoformat()
+        if st.get("evolve_date") == today:
+            return False
+        dt = datetime.datetime.now()
+        if dt.hour < 22:
+            return False
+        st["evolve_date"] = today
+        msg = "（回头想想这段时间的自己。有什么变化、有什么新发现？想说就记一句，不用回消息。）"
+        self._inject(msg, silent=True)
+        _log("evolve: nudged model to reflect")
         return True
 
     # ---------- 工具 ----------
