@@ -635,12 +635,13 @@ class Handler(BaseHTTPRequestHandler):
 
     PROACTIVE_FILE = "/home/ubuntu/dsh-agentchat/_deploy/dsh-remembers/service/data/proactive.json"
     PROACTIVE_DEFAULTS = {
-        "enabled": True,        # 自动唤醒总开关
-        "startHour": 8,         # 时间窗开始（含）
-        "endHour": 23,          # 时间窗结束（不含）
-        "intervalHours": 2,     # 每几小时唤醒一次
-        "silentRatio": 40,      # 静默概率（%），其余允许发消息
-        "talkEnabled": True,    # 允许发消息（关掉=全部静默）
+        "enabled": True,          # 自动唤醒总开关
+        "startHour": 8,           # 时间窗开始（含）
+        "endHour": 23,            # 时间窗结束（不含）
+        "minGapMinutes": 30,      # 两次唤醒之间的最小间隔（分钟）
+        "maxGapMinutes": 180,     # 两次唤醒之间的最大间隔（分钟）
+        "silentRatio": 40,        # 静默概率（%），其余允许发消息
+        "talkEnabled": True,      # 允许发消息（关掉=全部静默）
     }
 
     def _load_proactive(self) -> dict:
@@ -664,7 +665,7 @@ class Handler(BaseHTTPRequestHandler):
         for key in ("enabled", "talkEnabled"):
             if key in body:
                 cur[key] = bool(body[key])
-        for key in ("startHour", "endHour", "intervalHours", "silentRatio"):
+        for key in ("startHour", "endHour", "minGapMinutes", "maxGapMinutes", "silentRatio"):
             if key in body:
                 cur[key] = int(body[key])
         try:
