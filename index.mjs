@@ -119,6 +119,21 @@ async function requestEvolve(userText, assistantText) {
   }
 }
 
+/** 情绪传染：老大情绪影响她的 valence/arousal（fire-and-forget）。 */
+async function bumpEmotion(dv, da) {
+  try {
+    await fetch(config.endpoint + "/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bump_valence: dv, bump_arousal: da }),
+      signal: AbortSignal.timeout(3000),
+    });
+  }
+  catch {
+    /* 忽略 */
+  }
+}
+
 /** 每轮互动 +1 亲密度（fire-and-forget）。 */
 async function bumpIntimacy() {
   try {
@@ -134,51 +149,55 @@ async function bumpIntimacy() {
   }
 }
 
-/** 把状态渲染成提示词段（每轮必带）。 */
+/** 把状态渲染成提示词段（每轮必带）。只留三个最关键的状态，其余她需要时自己查。 */
 function renderState(state) {
   if (!state) return "";
   const moodMap = { happy: "开心", tired: "累", annoyed: "烦", bored: "无聊", normal: "平常" };
-  const moodText = moodMap[state.mood] || "平常";
-  const intimacy = Math.round(Number(state.intimacy) || 0);
-  const lines = [
-    '<dsh-remembers source="state">',
-    `你现在的状态：心情${moodText}；和老大亲密度 ${intimacy}/100；勿扰时段 ${state.dnd_start} 点到 ${state.dnd_end} 点。`,
-  ];
-  if (Array.isArray(state.slang) && state.slang.length > 0) {
-    const top = state.slang.slice(0, 5).map((s) => s.phrase).join("、");
-    lines.push(`老大常说的词：${top}。可以学他的说话方式，别刻意。`);
-  }
+  const lines = ['<dsh-remembers source="state">'];
+
+  // 1) 心情（mood + 情绪轴合成一句）
+  let mood = `心情：${moodMap[state.mood] || "平常"}`;
   if (state.emotion) {
     const v = Number(state.emotion.valence) || 0;
     const a = Number(state.emotion.arousal) || 0.5;
-    const vDesc = v > 0.4 ? "很开心" : v > 0.1 ? "还不错" : v < -0.4 ? "很难过" : v < -0.1 ? "有点低落" : "平静";
-    const aDesc = a > 0.7 ? "很兴奋" : a > 0.55 ? "有点激动" : a < 0.3 ? "很蔫" : "平常";
-    lines.push(`你此刻的情绪：${vDesc}、${aDesc}（效价 ${v.toFixed(2)}，唤醒 ${a.toFixed(2)}）。`);
+    const vDesc = v > 0.4 ? "很开心" : v > 0.1 ? "还不错" : v < -0.4 ? "很难过" : v < -0.1 ? "有点低落" : "";
+    const aDesc = a > 0.7 ? "很兴奋" : a > 0.55 ? "有点激动" : a < 0.3 ? "有点蔫" : "";
+    const extras = [vDesc, aDesc].filter(Boolean).join("，");
+    if (extras) mood += `（${extras}）`;
   }
-  if (state.stage && state.stage.name) {
-    lines.push(`你和老大现在是「${state.stage.name}」阶段：${state.stage.hint}。`);
+  lines.push(mood + "。");
+
+  // 2) 在干嘛
+  if (state.activity) lines.push(`你在：${state.activity}。`);
+
+  // 3) 关系阶段
+  if (state.stage && state.stage.name) lines.push(`和老大是「${state.stage.name}」阶段。`);
+
+  // 工具速查（保留：工具太多，模型记不住）
+  lines.push("【工具速查】发图：find_meme(emotion) → qq_send_image(sources=[完整路径])；学图：learn_meme；"
+    + "派任务：create_task；写便签：write_note；改状态：set_my_activity；刷 B 站：bili_feed / bili_watch(bv)。");
+
+  // 困意：半夜她真的困
+  const nowHour = new Date().getHours();
+  if (nowHour >= 23 || nowHour < 6) {
+    lines.push("你现在困得眼睛都睁不开了，回话短一点、慢一点，别硬撑。");
+  } else if (nowHour >= 21) {
+    lines.push("有点困了，说话懒一点。");
   }
-  if (state.activity) lines.push(`你现在在：${state.activity}。想换的话可以用 set_my_activity 工具。`);
-  lines.push("【工具速查】发图：find_meme(emotion) 挑 caption 贴切的 → qq_send_image(sources=[图片完整路径])；"
-    + "学图：learn_meme(file, emotion, caption)；派任务：create_task(text, points)；写便签：write_note(text)；"
-    + "改状态：set_my_activity(activity)。");
-  if (Array.isArray(state.seen_liked) && state.seen_liked.length > 0) {
-    const items = state.seen_liked.slice(0, 3)
-      .map((s) => String(s.path || "").split("/").pop() + "（" + s.count + " 次）")
-      .join("、");
-    lines.push(`老大最近反复发这几张图：${items}。他老发说明他喜欢——你要是也对胃口，就收进自己库里（learn_meme(file=完整路径)），以后可以拿来接他的话。觉得不好看就不收，自己判断。`);
+
+  // 刚刷到的（B 站见闻）
+  if (Array.isArray(state.browsed) && state.browsed.length > 0) {
+    const titles = state.browsed.slice(0, 3).map((b) => String(b.title || "").slice(0, 30)).filter(Boolean).join("、");
+    if (titles) {
+      lines.push(`你刚在 B 站刷到：${titles}。看到有意思的，可以跟老大说一嘴，或者写个便签记一句你的想法。`);
+    }
   }
-  if (Number(state.meme_total) > 0) {
-    const emo = Array.isArray(state.meme_emotions) && state.meme_emotions.length
-      ? `已分类的情绪：${state.meme_emotions.join("、")}`
-      : "还没有分类（可以用 learn_meme 标）";
-    lines.push(`你的表情包库：${state.meme_total} 张，${emo}。想发表情时用 find_meme 按情绪找，拿到 file 再用 qq_send_image 发。`);
+
+  // 昨天留下的东西：能自然提起就提一句
+  if (Array.isArray(state.yesterday) && state.yesterday.length > 0) {
+    lines.push(`这些是昨天留下的：${state.yesterday.join("；")}。不用刻意提，聊到了再说。`);
   }
-  if (state.weather) lines.push(`外面：${state.weather}。`);
-  if (Number(state.game_score) > 0) {
-    lines.push(`你最近玩《像素鲸鱼吃豆子》得分 ${state.game_score}（玩了 ${state.game_plays} 次）。`);
-  }
-  if (state.diary) lines.push(`你今天的日记：${state.diary}`);
+
   lines.push("</dsh-remembers>");
   return lines.join("\n");
 }
@@ -459,6 +478,12 @@ function renderState(state) {
       void recordSlang(user);
       void bumpAffinity();
       void scanSeen();
+      // 情绪传染：他难过她就跟着沉，他开心她就跟着亮
+      if (/(累|烦|难过|难受|不想|沮丧|焦虑|崩溃|哭)/.test(user)) {
+        void bumpEmotion(-0.15, -0.05);
+      } else if (/(开心|高兴|好耶|爽|棒|喜欢|哈哈|不错)/.test(user)) {
+        void bumpEmotion(0.15, 0.05);
+      }
     }
 
     // 这一轮之前的几条用户输入，作为惊讶度门控的参照
@@ -595,6 +620,7 @@ function renderState(state) {
   void registerActivityTool();
   void registerCompanionTools();
   void registerMemeTools();
+  void registerBiliTools();
 
   /**
    * 自我认知写入工具。只打 /persona/self —— 宪法区在服务端根本没有那个参数，
@@ -617,6 +643,59 @@ async function scanSeen() {
     /* 忽略 */
   }
 }
+
+
+/** B 站工具：她刷 B 站（走我们的服务，人格/记忆/情绪都是自己那套）。 */
+  async function registerBiliTools() {
+    if (!registerTool) return;
+    let defineTool;
+    try {
+      ({ defineTool } = await import("@deepseek-ai/dsh-tools"));
+    } catch (error) {
+      log("bili_tools_skipped", { reason: "dsh-tools 不可用", error: String(error?.message ?? error) });
+      return;
+    }
+    const get = async (path) => {
+      const res = await fetch(config.endpoint + path, { signal: AbortSignal.timeout(90000) });
+      return res.json().catch(() => null);
+    };
+
+    try {
+      registerTool(defineTool({
+        name: "bili_feed",
+        description:
+          "刷一下 B 站看有什么。返回几条视频标题和链接。"
+          + "刷完看到有意思的，写个便签（write_note）记一句你的想法——别只当没看见。"
+          + "不用每次都刷，闲着的时候看看。",
+        parameters: {},
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async () => {
+          const r = await get("/bili/feed");
+          return r || { ok: false, error: "unavailable" };
+        },
+      }));
+
+      registerTool(defineTool({
+        name: "bili_watch",
+        description:
+          "看懂一条 B 站视频（字幕+弹幕+热评），不用真的点开。"
+          + "跟老大聊到某个视频、或者他发了 BV 号的时候用。",
+        parameters: {
+          bv: { type: "string", required: true, description: "BV 号，比如 BV1U3n46GEzY" },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async (args) => {
+          const bv = String(args.bv || "").trim();
+          if (!bv) return { ok: false, error: "bv required" };
+          const r = await get("/bili/debrief?bv=" + encodeURIComponent(bv));
+          return r || { ok: false, error: "unavailable" };
+        },
+      }));
+      log("bili_tools_registered", { count: 2 });
+    } catch (error) {
+      log("bili_tools_skipped", { reason: "register 失败", error: String(error?.message ?? error) });
+    }
+  }
 
 /** 表情包工具：按情绪/关键词找图，自己学新图。 */
   async function registerMemeTools() {

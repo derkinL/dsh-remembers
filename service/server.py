@@ -274,6 +274,17 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
             self.end_headers()
             self.wfile.write(data)
+        elif path == "/bili/status":
+            self._json(200, self._bili_status())
+        elif path == "/bili/feed":
+            self._json(200, self._bili_feed())
+        elif path == "/bili/debrief":
+            bv = (query.get("bv") or [""])[0]
+            self._json(200, self._bili_debrief(bv))
+        elif path == "/bili/toggle":
+            self._guard(lambda: self._bili_toggle())
+        elif path == "/browse":
+            self._json(200, store.browsed_list())
         elif path == "/proactive":
             self._json(200, self._get_proactive())
         elif path == "/memes/seen":
@@ -326,6 +337,25 @@ class Handler(BaseHTTPRequestHandler):
                 st["affinity"] = store.affinity_get("owner")
                 st["open_tasks"] = len([x for x in store.task_list(include_done=False)])
                 st["seen_liked"] = store.seen_liked()
+                # 昨天留下的东西（日记 / 便签），她今天可以自然提起
+                import datetime as _dt
+                yday = (_dt.date.today() - _dt.timedelta(days=1)).isoformat()
+                yd = []
+                try:
+                    d = store.diary_get(yday)
+                    if d and d.get("text"):
+                        yd.append("昨天的日记：" + d["text"][:80])
+                except Exception:
+                    pass
+                try:
+                    for n in store.note_list(5):
+                        if n.get("date") == yday and n.get("text"):
+                            yd.append("昨天的便签：" + n["text"][:60])
+                            break
+                except Exception:
+                    pass
+                st["yesterday"] = yd
+                st["browsed"] = store.browsed_list(3)
                 all_memes = store.meme_list(limit=50)
                 st["meme_total"] = len(all_memes)
                 st["meme_emotions"] = sorted({m["emotion"] for m in all_memes if m["emotion"]})
@@ -375,6 +405,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._post_meme())
         elif path == "/memes/used":
             self._guard(lambda: self._post_meme_used())
+        elif path == "/browse":
+            self._guard(self._post_browse)
         elif path == "/proactive":
             self._guard(lambda: self._set_proactive())
         elif path == "/memes/scan":
@@ -595,6 +627,10 @@ class Handler(BaseHTTPRequestHandler):
             kwargs["diary"] = str(body.get("diary") or "")
         if "diary_date" in body:
             kwargs["diary_date"] = str(body.get("diary_date") or "")
+        if "bump_valence" in body or "bump_arousal" in body:
+            cur_e = store.get_emotion()
+            kwargs["valence"] = cur_e["valence"] + float(body.get("bump_valence") or 0)
+            kwargs["arousal"] = cur_e["arousal"] + float(body.get("bump_arousal") or 0)
         if "valence" in body:
             kwargs["valence"] = float(body.get("valence") or 0)
         if "arousal" in body:
@@ -675,6 +711,151 @@ class Handler(BaseHTTPRequestHandler):
             self._json(500, {"ok": False, "error": str(e)})
             return
         self._json(200, cur)
+
+    # -- 逛 B 站（借 dsh-bili-whale 的 CLI，但人格/记忆/情绪全走我们这套） --------
+
+    BILI_DIR = "/home/ubuntu/.dsh/profiles/web/node_modules/dsh-bili-whale"
+    NODE_BIN = "/home/ubuntu/.local/node/bin/node"
+
+    def _run_bili(self, args: list, timeout: int = 90) -> dict:
+        import subprocess as _sp
+        try:
+            r = _sp.run(
+                [self.NODE_BIN, "tools/bili.mjs"] + args,
+                cwd=self.BILI_DIR, capture_output=True, text=True, timeout=timeout,
+            )
+            return {"ok": r.returncode == 0, "stdout": r.stdout[-4000:], "stderr": r.stderr[-500:]}
+        except Exception as e:
+            return {"ok": False, "error": str(e), "stdout": "", "stderr": ""}
+
+    BILI_CFG = "/home/ubuntu/dsh-agentchat/_deploy/dsh-remembers/service/data/bili.json"
+
+    BILI_WHALE_CFG = "/home/ubuntu/.dsh/bili-whale.config.json"
+
+    def _load_bili_whale(self) -> dict:
+        import json as _json
+        try:
+            with open(self.BILI_WHALE_CFG, encoding="utf-8") as f:
+                return _json.load(f)
+        except Exception:
+            return {}
+
+    def _bili_status(self) -> dict:
+        import json as _json
+        import os as _os
+        cfg = {"enabled": False}
+        try:
+            with open(self.BILI_CFG, encoding="utf-8") as f:
+                cfg.update(_json.load(f))
+        except Exception:
+            pass
+        bw = self._load_bili_whale()
+        cred = "/home/ubuntu/.bili-ai/credentials.json"
+        logged_in = _os.path.exists(cred) and _os.path.getsize(cred) > 20
+        return {
+            "ok": True,
+            "enabled": bool(cfg.get("enabled")),
+            "logged_in": logged_in,
+            "cred_path": cred,
+            # 4 个「嘴」的开关
+            "share": bool((bw.get("share") or {}).get("enabled", False)),
+            "comment": bool((bw.get("listen") or {}).get("comment", False)),
+            "dm": bool((bw.get("listen") or {}).get("dm", False)),
+            "diaryPush": bool((bw.get("diary") or {}).get("push", False)),
+            "login_hint": "在设置页「养鱼」里扫码登录 B 站（登录后按她的偏好刷）",
+        }
+
+    def _bili_toggle(self) -> None:
+        """开关：enabled（我们的总开关）/ share / comment / dm / diaryPush。"""
+        import json as _json
+        body = self._body()
+
+        # 我们的总开关
+        if "enabled" in body:
+            cur = {"enabled": False}
+            try:
+                with open(self.BILI_CFG, encoding="utf-8") as f:
+                    cur.update(_json.load(f))
+            except Exception:
+                pass
+            cur["enabled"] = bool(body["enabled"])
+            with open(self.BILI_CFG, "w", encoding="utf-8") as f:
+                _json.dump(cur, f, ensure_ascii=False, indent=2)
+
+        # bili-whale 的 4 个「嘴」
+        key = str(body.get("key") or "")
+        if key in ("share", "comment", "dm", "diaryPush"):
+            bw = self._load_bili_whale()
+            val = bool(body.get("value"))
+            if key == "share":
+                bw.setdefault("share", {})["enabled"] = val
+            elif key == "diaryPush":
+                bw.setdefault("diary", {})["push"] = val
+            else:
+                bw.setdefault("listen", {})[key] = val
+            with open(self.BILI_WHALE_CFG, "w", encoding="utf-8") as f:
+                _json.dump(bw, f, ensure_ascii=False, indent=2)
+
+        self._json(200, self._bili_status())
+
+    def _bili_feed(self) -> dict:
+        """她刷 B 站选题：优先用登录账号的 feed（带偏好），失败退回热门。"""
+        res = self._run_bili(["feed", "--n", "3"], timeout=90)
+        if res.get("ok") and res.get("stdout"):
+            titles = [ln.strip() for ln in res["stdout"].split("\n") if ln.strip() and "BV" in ln][:3]
+            with _lock:
+                for t_ in titles:
+                    store.browsed_add(t_[:120], "")
+            return {"ok": True, "source": "bili-feed", "items": titles}
+        # 退回匿名热门
+        try:
+            import json as _json
+            import urllib.request as _ur
+            url = "https://api.bilibili.com/x/web-interface/popular?ps=3"
+            req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com/"})
+            with _ur.urlopen(req, timeout=10) as r:
+                data = _json.loads(r.read())
+            items = []
+            for it in (data.get("data", {}).get("list") or [])[:3]:
+                title = str(it.get("title") or "")[:80]
+                bvid = str(it.get("bvid") or "")
+                if title:
+                    items.append({"title": title, "url": "https://www.bilibili.com/video/" + bvid})
+                    with _lock:
+                        store.browsed_add(title, "https://www.bilibili.com/video/" + bvid)
+            return {"ok": True, "source": "popular", "items": items}
+        except Exception as e:
+            return {"ok": False, "error": str(e), "items": []}
+
+    def _bili_debrief(self, bv: str) -> dict:
+        """看懂一条视频（字幕+弹幕+热评+抽帧），返回摘要素材。"""
+        if not bv:
+            return {"ok": False, "error": "bv required"}
+        res = self._run_bili(["debrief", bv, "--no-frames"], timeout=120)
+        return {"ok": res.get("ok", False), "bv": bv, "text": (res.get("stdout") or "")[-3000:], "stderr": res.get("stderr")}
+
+    def _post_browse(self) -> None:
+        """刷一下 B 站热门（公开接口，不需要登录），把看到的记下来。"""
+        import json as _json
+        import urllib.request as _ur
+        items = []
+        try:
+            url = "https://api.bilibili.com/x/web-interface/popular?ps=5"
+            req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com/"})
+            with _ur.urlopen(req, timeout=10) as r:
+                data = _json.loads(r.read())
+            for it in (data.get("data", {}).get("list") or [])[:5]:
+                title = str(it.get("title") or "")[:80]
+                bvid = str(it.get("bvid") or "")
+                if title:
+                    items.append({"title": title, "url": "https://www.bilibili.com/video/" + bvid})
+        except Exception as e:
+            self._json(200, {"ok": False, "error": str(e), "items": []})
+            return
+        with _lock:
+            for it in items:
+                store.browsed_add(it["title"], it["url"])
+        self._json(200, {"ok": True, "items": items})
 
     def _scan_seen(self) -> None:
         """扫用户发来的图并计数。"""

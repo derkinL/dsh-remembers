@@ -538,7 +538,7 @@ window.__ModuleLoader__.load({
               ? h("div", { style: S.muted }, "还没有记录——聊一句或等她主动找你。")
               : h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
                   activities.slice(0, 30).map((a, i) => h("div", { key: i, style: S.muted },
-                    new Date(a.ts * 1000).toLocaleTimeString() + " · " + (a.kind === "chat" ? "聊天" : a.kind === "game" ? "玩游戏" : a.kind === "proactive" ? "主动找你" : a.kind) + " · " + String(a.detail || "").slice(0, 60)))),
+                    new Date(a.ts * 1000).toLocaleTimeString() + " · " + (a.kind === "chat" ? "聊天" : a.kind === "game" ? "玩游戏" : a.kind === "proactive" ? "主动找你" : a.kind === "bili" ? "B 站" : a.kind === "habit" ? "习惯" : a.kind) + " · " + String(a.detail || "").slice(0, 60)))),
           ),
 
           h("div", { style: S.card },
@@ -885,6 +885,137 @@ window.__ModuleLoader__.load({
         );
       }
 
+      // ---------------------------------------------------------------------
+      // B 站：账号状态 + 开关（她自己的号，嘴走 QQ 那套）
+      // ---------------------------------------------------------------------
+      function BiliSection() {
+        const [st, setSt] = React.useState(null);
+        const [busy, setBusy] = React.useState(false);
+        const [test, setTest] = React.useState(null);
+        const [err, setErr] = React.useState(null);
+
+        const load = async () => {
+          setErr(null);
+          try {
+            setSt(await call("/bili/status"));
+          } catch (e) {
+            setErr(e && e.message ? e.message : String(e));
+            setSt(null);
+          }
+        };
+
+        React.useEffect(() => {
+          void load();
+        }, []);
+
+        const toggle = async () => {
+          if (!st) return;
+          setBusy(true);
+          try {
+            await call("/bili/toggle", { method: "POST", body: JSON.stringify({ enabled: !st.enabled }) });
+            await load();
+          } catch (e) {
+            setErr(e && e.message ? e.message : String(e));
+          } finally {
+            setBusy(false);
+          }
+        };
+
+        const toggleMouth = async (key) => {
+          if (!st) return;
+          setBusy(true);
+          try {
+            const cur = st[key];
+            await call("/bili/toggle", { method: "POST", body: JSON.stringify({ key, value: !cur }) });
+            await load();
+          } catch (e) {
+            setErr(e && e.message ? e.message : String(e));
+          } finally {
+            setBusy(false);
+          }
+        };
+
+        const runTest = async () => {
+          setBusy(true);
+          setTest(null);
+          try {
+            const r = await call("/bili/feed");
+            setTest(r);
+          } catch (e) {
+            setTest({ ok: false, error: e && e.message ? e.message : String(e) });
+          } finally {
+            setBusy(false);
+          }
+        };
+
+        if (!st) {
+          return h("div", { style: S.wrap },
+            err ? h("div", { style: S.notice("error") }, "读取失败：" + err) : h("div", { style: S.muted }, "读取中…"));
+        }
+
+        return h("div", { style: S.wrap },
+          h("div", { style: S.desc },
+            "给她一个 B 站账号，让她自己刷视频。但说话只走 QQ 那套人格——B 站只是她的眼睛，不是另一张嘴。",
+          ),
+
+          err ? h("div", { style: S.notice("error") }, err) : null,
+
+          h("div", { style: S.card },
+            h("div", { style: S.row },
+              h("span", { style: { fontSize: 13, fontWeight: 500 } }, "账号："),
+              h("span", { style: S.muted }, st.logged_in ? "已登录 ✓" : "未登录（只能刷公开热门）"),
+            ),
+            h("div", { style: { ...S.desc, fontSize: 12 } }, st.login_hint),
+            h("div", { style: S.row },
+              h("button", { style: S.btn(false), onClick: () => window.open("/dsh-bili/", "_blank") }, "打开 B 站设置页（登录）"),
+            ),
+          ),
+
+          h("div", { style: S.card },
+            h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
+              h("input", { type: "checkbox", checked: !!st.enabled, onChange: () => void toggle(), disabled: busy }),
+              h("span", { style: { fontSize: 13, fontWeight: 500 } }, "启用 B 站功能"),
+            ),
+            h("div", { style: { ...S.muted, marginLeft: 24 } },
+              "关掉后她不会用 bili_feed / bili_watch，也不会同步 B 站活动。"),
+          ),
+
+          h("div", { style: S.card },
+            h("div", { style: S.label }, "她在 B 站说什么（嘴）"),
+            h("div", { style: { ...S.muted, marginBottom: 6 } },
+              "下面这些开着，她就会在 B 站那边自己说话；关掉就只有 QQ 这套嘴。"),
+            h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
+              h("input", { type: "checkbox", checked: !!st.share, onChange: () => void toggleMouth("share") }),
+              h("span", { style: { fontSize: 13 } }, "主动分享（刷到好视频在评论区 @ 你）"),
+            ),
+            h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
+              h("input", { type: "checkbox", checked: !!st.comment, onChange: () => void toggleMouth("comment") }),
+              h("span", { style: { fontSize: 13 } }, "回复 B 站评论"),
+            ),
+            h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
+              h("input", { type: "checkbox", checked: !!st.dm, onChange: () => void toggleMouth("dm") }),
+              h("span", { style: { fontSize: 13 } }, "回复 B 站私信"),
+            ),
+            h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
+              h("input", { type: "checkbox", checked: !!st.diaryPush, onChange: () => void toggleMouth("diaryPush") }),
+              h("span", { style: { fontSize: 13 } }, "推送她的 B 站日记"),
+            ),
+          ),
+
+          h("div", { style: S.card },
+            h("div", { style: S.label }, "测试一下她能刷到什么"),
+            h("div", { style: S.row },
+              h("button", { style: S.btn(false), onClick: () => void runTest(), disabled: busy }, busy ? "刷…" : "刷一下 B 站"),
+            ),
+            test ? h("div", { style: { ...S.desc, marginTop: 8, whiteSpace: "pre-wrap" } },
+              test.ok
+                ? "来源：" + (test.source || "?") + "\n" + (test.items || []).map((i) => (i.title || i) + (i.url ? "  " + i.url : "")).join("\n")
+                : "失败：" + (test.error || "unknown"))
+              : null,
+          ),
+        );
+      }
+
       function PersonaSection() {
         const [loading, setLoading] = React.useState(true);
         const [error, setError] = React.useState("");
@@ -1055,6 +1186,15 @@ window.__ModuleLoader__.load({
               label: () => "主动消息",
             },
             ProactiveSection,
+          ));
+          slots.inject("settings.section", () => slots.register(
+            {
+              name: "settings.section",
+              id: "dsh-remembers-bili",
+              order: 37,
+              label: () => "B 站",
+            },
+            BiliSection,
           ));
         } catch (err) {
           console.error("dsh-remembers: apply() 失败", err);
