@@ -534,7 +534,7 @@ window.__ModuleLoader__.load({
             h("div", { style: S.label }, "她现在"),
             h("div", { style: { display: "flex", gap: 18, flexWrap: "wrap", fontSize: 13 } },
               h("span", null, "心情：" + mood),
-              h("span", null, "亲密度：" + intimacy + "/100"),
+              h("span", null, "亲密度：" + intimacy + "/1000"),
               h("span", null, "阶段：" + stage),
             ),
             h("div", { style: S.muted }, "在干嘛：" + activity),
@@ -1463,6 +1463,8 @@ window.__ModuleLoader__.load({
         const [notesList, setNotesList] = React.useState(null);
         const [slangList, setSlangList] = React.useState(null);
         const [tasksList, setTasksList] = React.useState(null);
+        const [stateInfo, setStateInfo] = React.useState(null);
+        const [selfModel, setSelfModel] = React.useState(null);
         const [mode, setMode] = React.useState("memory");
         const [tier, setTier] = React.useState("all");
         const [q, setQ] = React.useState("");
@@ -1518,6 +1520,20 @@ window.__ModuleLoader__.load({
           finally { setBusy(false); }
         };
 
+        const loadState = async () => {
+          setBusy(true); setErr(null);
+          try { const r = await call("/state"); setStateInfo(r); }
+          catch (e) { setErr(e && e.message ? e.message : String(e)); }
+          finally { setBusy(false); }
+        };
+
+        const loadSelfModel = async () => {
+          setBusy(true); setErr(null);
+          try { const r = await call("/persona"); setSelfModel(r.self_model || ""); }
+          catch (e) { setErr(e && e.message ? e.message : String(e)); }
+          finally { setBusy(false); }
+        };
+
         const loadEmotion = async () => {
           setBusy(true);
           setErr(null);
@@ -1549,6 +1565,7 @@ window.__ModuleLoader__.load({
 
         React.useEffect(() => {
           void load("all", "");
+          void loadState();
         }, []);
 
         const fmt = (ts) => {
@@ -1573,8 +1590,24 @@ window.__ModuleLoader__.load({
 
           err ? h("div", { style: S.notice("error") }, err) : null,
 
+          // 她的状态（常驻顶部，不用点 tab）
+          h("div", { style: S.card },
+            h("div", { style: { ...S.label, marginBottom: 6 } }, "她现在"),
+            stateInfo ? h("div", {},
+              h("div", { style: { display: "flex", gap: 14, flexWrap: "wrap", fontSize: 13, marginBottom: 6 } },
+                h("span", {}, "心情：" + (stateInfo.mood || "normal")),
+                h("span", {}, "亲密度：" + Math.round(Number(stateInfo.intimacy) || 0) + "/1000"),
+                stateInfo.stage && stateInfo.stage.name ? h("span", {}, "阶段：" + stateInfo.stage.name) : null,
+              ),
+              stateInfo.activity ? h("div", { style: { ...S.muted, marginBottom: 4 } }, "在干嘛：" + stateInfo.activity) : null,
+              stateInfo.weather ? h("div", { style: { ...S.muted, marginBottom: 4 } }, "外面：" + stateInfo.weather) : null,
+              h("div", { style: { ...S.muted } },
+                "小游戏：" + (stateInfo.game_score || 0) + " 分（玩了 " + (stateInfo.game_plays || 0) + " 次）"),
+            ) : h("div", { style: S.muted }, "读取中…"),
+          ),
+
           data ? h("div", { style: S.card },
-            h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+            h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", minHeight: 66, alignContent: "flex-start" } },
               Object.entries(TIERS).map(([k, label]) =>
                 h("button", {
                   key: k,
@@ -1606,6 +1639,11 @@ window.__ModuleLoader__.load({
                 style: { ...S.btn(mode === "tasks"), padding: "4px 10px", fontSize: 12 },
                 onClick: () => { setMode("tasks"); void loadTasks(); },
               }, "互相派的活" + (tasksList ? ` ${tasksList.length}` : "")),
+
+              h("button", {
+                style: { ...S.btn(mode === "self"), padding: "4px 10px", fontSize: 12 },
+                onClick: () => { setMode("self"); void loadSelfModel(); },
+              }, "自我认知"),
             ),
             h("div", { style: { display: "flex", gap: 8, marginTop: 8 } },
               h("input", {
@@ -1621,7 +1659,30 @@ window.__ModuleLoader__.load({
               `显示 ${data.items ? data.items.length : 0} / ${data.total} 条`),
           ) : h("div", { style: S.muted }, "读取中…"),
 
-          mode === "activity" ? (
+          mode === "state" ? (
+            stateInfo ? h("div", { style: S.card },
+              h("div", { style: { ...S.label, marginBottom: 8 } }, "她现在"),
+              h("div", { style: { display: "flex", gap: 16, flexWrap: "wrap", fontSize: 13, marginBottom: 8 } },
+                h("span", {}, "心情：" + (stateInfo.mood || "normal")),
+                h("span", {}, "亲密度：" + Math.round(Number(stateInfo.intimacy) || 0) + "/1000"),
+                stateInfo.stage && stateInfo.stage.name ? h("span", {}, "阶段：" + stateInfo.stage.name) : null,
+              ),
+              stateInfo.activity ? h("div", { style: { ...S.muted, marginBottom: 6 } }, "在干嘛：" + stateInfo.activity) : null,
+              stateInfo.weather ? h("div", { style: { ...S.muted, marginBottom: 6 } }, "外面：" + stateInfo.weather) : null,
+              h("div", { style: { ...S.muted, marginBottom: 6 } },
+                "小游戏：" + (stateInfo.game_score || 0) + " 分（玩了 " + (stateInfo.game_plays || 0) + " 次）"),
+              stateInfo.stage && stateInfo.stage.hint
+                ? h("div", { style: { ...S.muted } }, "这个阶段的样子：" + stateInfo.stage.hint)
+                : null,
+            ) : h("div", { style: S.muted }, "读取中…")
+          ) : mode === "self" ? (
+            selfModel
+              ? h("div", { style: S.card },
+                  h("div", { style: { ...S.label, marginBottom: 8 } }, "她对自己的认知"),
+                  h("div", { style: { fontSize: 13, lineHeight: 1.75, whiteSpace: "pre-wrap" } }, selfModel),
+                )
+              : h("div", { style: S.muted }, selfModel === null ? "读取中…" : "还没形成自我认知（每天 22:00 演化一次）")
+          ) : mode === "activity" ? (
             h("div", {},
               h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" } },
                 h("span", { style: { ...S.muted, fontSize: 12 } }, "看哪天："),
@@ -1646,11 +1707,14 @@ window.__ModuleLoader__.load({
                       const tone = kindColor[a.kind] || "#8b95a5";
                       const kindLabel = { chat: "聊天", bili: "B 站", proactive: "主动找你", game: "游戏" };
                       return h("div", { key: i, style: { ...S.card, padding: "8px 12px", borderLeft: "3px solid " + tone } },
-                        h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+                        h("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
                           h("span", { style: { fontSize: 11, fontWeight: 600, padding: "1px 7px", borderRadius: 999, background: tone + "22", color: tone } }, kindLabel[a.kind] || a.kind || "其他"),
                           h("span", { style: { ...S.muted, fontSize: 11 } }, when),
                           h("span", { style: { fontSize: 13, lineHeight: 1.6 } }, a.detail || ""),
                         ),
+                        a.thought
+                          ? h("div", { style: { fontSize: 12, color: "#8b95a5", marginTop: 4, paddingLeft: 10, fontStyle: "italic", borderLeft: "2px solid " + tone + "44" } }, "「" + a.thought + "」")
+                          : null,
                       );
                     }),
                   )
@@ -2080,15 +2144,6 @@ window.__ModuleLoader__.load({
               label: () => "人格设定",
             },
             PersonaSection,
-          ));
-          slots.inject("settings.section", () => slots.register(
-            {
-              name: "settings.section",
-              id: "dsh-remembers-diary",
-              order: 34,
-              label: () => "鲸鱼日记本",
-            },
-            DiarySection,
           ));
           slots.inject("settings.section", () => slots.register(
             {
