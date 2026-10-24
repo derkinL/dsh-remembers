@@ -134,6 +134,21 @@ async function bumpEmotion(dv, da) {
   }
 }
 
+/** 记一次「真实对话」，给唤醒做冷却用。 */
+async function bumpChat() {
+  try {
+    await fetch(config.endpoint + "/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bump_chat: 1 }),
+      signal: AbortSignal.timeout(3000),
+    });
+  }
+  catch {
+    /* 忽略 */
+  }
+}
+
 /** 真实互动涨亲密度（fire-and-forget），默认 +0.2 一轮。 */
 async function bumpIntimacy(delta = 0.2) {
   try {
@@ -476,6 +491,7 @@ function renderState(state) {
     // 亲密度：只有「老大真的说话」才涨（唤醒剥完就没内容了，不会走到这）
     if (keptUser && assistant) {
       void bumpIntimacy(0.2);
+      void bumpChat();
     }
     // 情感层：情绪变化够大时由服务端自动记一条（带触发原因）
     if (keptUser) {

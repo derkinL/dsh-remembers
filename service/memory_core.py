@@ -741,6 +741,7 @@ class MemoryStore:
             "game_plays": int(row["game_plays"] or 0),
             "valence": float(row["valence"] or 0),
             "arousal": float(row["arousal"] or 0.5),
+            "chat_since_wake": int(row["chat_since_wake"] or 0),
         }
 
     def set_state(self, mood=None, intimacy=None, diary=None, diary_date=None,
@@ -1202,6 +1203,18 @@ class MemoryStore:
             "label": r["label"], "trigger": r["trigger"], "source": r["source"],
         } for r in rows]
 
+
+
+    def bump_chat(self, delta: int = 1) -> int:
+        cur = self.get_state()
+        n = int(cur.get("chat_since_wake") or 0) + int(delta)
+        self.conn.execute("UPDATE state SET chat_since_wake = ?", (n,))
+        self.conn.commit()
+        return n
+
+    def reset_chat(self) -> None:
+        self.conn.execute("UPDATE state SET chat_since_wake = 0")
+        self.conn.commit()
 
     def bump_intimacy(self, delta: float = 1.0) -> float:
         cur = self.get_state()

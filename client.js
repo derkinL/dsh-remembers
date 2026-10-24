@@ -944,6 +944,7 @@ window.__ModuleLoader__.load({
               num("endHour", "结束小时（0-23）", "到几点就不再唤醒"),
               num("minGapMinutes", "最小间隔（分钟）", "两次唤醒之间至少隔多久"),
               num("maxGapMinutes", "最大间隔（分钟）", "两次唤醒之间最多隔多久"),
+              num("minChatBeforeWake", "聊几句才唤醒（0=不限制）", "距上次唤醒至少聊这么多句才给下一次唤醒机会，避免刚聊完又戳她"),
             ),
             h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
               num("silentRatio", "静默概率（%）", "醒来后不打扰你的比例"),

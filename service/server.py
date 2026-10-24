@@ -660,6 +660,12 @@ class Handler(BaseHTTPRequestHandler):
             kwargs["diary"] = str(body.get("diary") or "")
         if "diary_date" in body:
             kwargs["diary_date"] = str(body.get("diary_date") or "")
+        if body.get("bump_chat"):
+            with _lock:
+                store.bump_chat(int(body.get("bump_chat") or 1))
+        if body.get("reset_chat"):
+            with _lock:
+                store.reset_chat()
         if "bump_valence" in body or "bump_arousal" in body:
             cur_e = store.get_emotion()
             kwargs["valence"] = cur_e["valence"] + float(body.get("bump_valence") or 0)
@@ -714,6 +720,7 @@ class Handler(BaseHTTPRequestHandler):
         "maxGapMinutes": 180,     # 两次唤醒之间的最大间隔（分钟）
         "silentRatio": 40,        # 静默概率（%），其余允许发消息
         "talkEnabled": True,      # 允许发消息（关掉=全部静默）
+        "minChatBeforeWake": 5,   # 距上次唤醒至少聊几句才唤醒（冷却）
         # 她独处时能做的事（随机抽一条作为这轮的状态提示）
         "silentActions": [
             "自己上网逛逛（B 站热门、新闻、梗），看到有意思的记下来",
