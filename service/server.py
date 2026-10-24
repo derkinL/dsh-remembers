@@ -274,6 +274,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
             self.end_headers()
             self.wfile.write(data)
+        elif path == "/proactive":
+            self._json(200, self._get_proactive())
         elif path == "/memes/seen":
             self._json(200, store.seen_liked())
         elif path == "/memes":
@@ -373,6 +375,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._post_meme())
         elif path == "/memes/used":
             self._guard(lambda: self._post_meme_used())
+        elif path == "/proactive":
+            self._guard(lambda: self._set_proactive())
         elif path == "/memes/scan":
             self._guard(lambda: self._scan_seen())
         elif path == "/memes/upload":
@@ -626,6 +630,50 @@ class Handler(BaseHTTPRequestHandler):
         with _lock:
             data = store.set_self_model(text)
         self._json(200, self._persona_payload(data))
+
+    # -- 主动消息配置：页面可改，cron 读它 -------------------------------------
+
+    PROACTIVE_FILE = "/home/ubuntu/dsh-agentchat/_deploy/dsh-remembers/service/data/proactive.json"
+    PROACTIVE_DEFAULTS = {
+        "enabled": True,        # 自动唤醒总开关
+        "startHour": 8,         # 时间窗开始（含）
+        "endHour": 23,          # 时间窗结束（不含）
+        "intervalHours": 2,     # 每几小时唤醒一次
+        "silentRatio": 40,      # 静默概率（%），其余允许发消息
+        "talkEnabled": True,    # 允许发消息（关掉=全部静默）
+    }
+
+    def _load_proactive(self) -> dict:
+        import json as _json
+        data = dict(self.PROACTIVE_DEFAULTS)
+        try:
+            with open(self.PROACTIVE_FILE, encoding="utf-8") as f:
+                data.update(_json.load(f))
+        except Exception:
+            pass
+        return data
+
+    def _get_proactive(self) -> dict:
+        with _lock:
+            return self._load_proactive()
+
+    def _set_proactive(self) -> None:
+        import json as _json
+        body = self._body()
+        cur = self._load_proactive()
+        for key in ("enabled", "talkEnabled"):
+            if key in body:
+                cur[key] = bool(body[key])
+        for key in ("startHour", "endHour", "intervalHours", "silentRatio"):
+            if key in body:
+                cur[key] = int(body[key])
+        try:
+            with open(self.PROACTIVE_FILE, "w", encoding="utf-8") as f:
+                _json.dump(cur, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self._json(500, {"ok": False, "error": str(e)})
+            return
+        self._json(200, cur)
 
     def _scan_seen(self) -> None:
         """扫用户发来的图并计数。"""

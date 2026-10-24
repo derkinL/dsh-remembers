@@ -791,6 +791,97 @@ window.__ModuleLoader__.load({
         );
       }
 
+      // ---------------------------------------------------------------------
+      // 主动消息：唤醒规则（她醒来之后干嘛由她自己决定）
+      // ---------------------------------------------------------------------
+      function ProactiveSection() {
+        const [cfg, setCfg] = React.useState(null);
+        const [msg, setMsg] = React.useState(null);
+        const [err, setErr] = React.useState(null);
+
+        const load = async () => {
+          setErr(null);
+          try {
+            const c = await call("/proactive");
+            setCfg(c);
+          } catch (e) {
+            setErr(e && e.message ? e.message : String(e));
+            setCfg(null);
+          }
+        };
+
+        React.useEffect(() => {
+          void load();
+        }, []);
+
+        const save = async () => {
+          if (!cfg) return;
+          try {
+            await call("/proactive", { method: "POST", body: JSON.stringify(cfg) });
+            setMsg("已保存");
+            setErr(null);
+          } catch (e) {
+            setMsg("保存失败：" + (e && e.message ? e.message : String(e)));
+          }
+        };
+
+        if (!cfg) {
+          return h("div", { style: S.wrap },
+            err ? h("div", { style: S.notice("error") }, "读取失败：" + err)
+              : h("div", { style: S.muted }, "读取配置…"));
+        }
+
+        const num = (key, label, hint) => h("div", { style: S.field },
+          h("div", { style: S.label }, label),
+          h("input", {
+            type: "number",
+            style: S.input,
+            value: cfg[key],
+            onChange: (ev) => setCfg({ ...cfg, [key]: Number(ev.target.value) || 0 }),
+          }),
+          hint ? h("div", { style: S.muted }, hint) : null,
+        );
+
+        const toggle = (key, label, hint) => h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+          h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
+            h("input", {
+              type: "checkbox",
+              checked: !!cfg[key],
+              onChange: (ev) => setCfg({ ...cfg, [key]: ev.target.checked }),
+            }),
+            h("span", { style: { fontSize: 13, fontWeight: 500 } }, label),
+          ),
+          hint ? h("div", { style: { ...S.muted, marginLeft: 24 } }, hint) : null,
+        );
+
+        return h("div", { style: S.wrap },
+          h("div", { style: S.desc },
+            "定时把她叫醒。醒来之后她想干嘛（发呆 / 上网 / 找你 / 发图）由她自己决定——"
+            + "关掉「允许发消息」就是只唤醒、不打扰。",
+          ),
+
+          h("div", { style: S.card },
+            toggle("enabled", "自动唤醒", "总开关：关掉后完全不叫醒她"),
+            toggle("talkEnabled", "允许她主动发消息", "关掉 = 只唤醒她、不给你发消息（静默活动）"),
+          ),
+
+          h("div", { style: S.card },
+            h("div", { style: S.desc }, "唤醒规则"),
+            h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+              num("startHour", "开始小时（0-23）", "几点之前不唤醒"),
+              num("endHour", "结束小时（0-23）", "到几点就不再唤醒"),
+              num("intervalHours", "间隔（小时）", "每隔几小时叫醒一次"),
+              num("silentRatio", "静默概率（%）", "醒来后不打扰你的比例"),
+            ),
+          ),
+
+          h("div", { style: S.row },
+            h("button", { style: S.btn(true), onClick: () => void save() }, "保存"),
+            msg ? h("span", { style: S.muted }, msg) : null,
+          ),
+        );
+      }
+
       function PersonaSection() {
         const [loading, setLoading] = React.useState(true);
         const [error, setError] = React.useState("");
@@ -952,6 +1043,15 @@ window.__ModuleLoader__.load({
               label: () => "表情包",
             },
             MemeSection,
+          ));
+          slots.inject("settings.section", () => slots.register(
+            {
+              name: "settings.section",
+              id: "dsh-remembers-proactive",
+              order: 36,
+              label: () => "主动消息",
+            },
+            ProactiveSection,
           ));
         } catch (err) {
           console.error("dsh-remembers: apply() 失败", err);
