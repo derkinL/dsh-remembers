@@ -110,6 +110,15 @@ def _tf_map(tokens: Iterable[tuple[str, float]]) -> dict[str, float]:
 # 数据结构
 # ---------------------------------------------------------------------------
 
+def _norm_for_dedupe(text) -> str:
+    """去重用的归一化：去掉标点/空白/常见修饰，只比语义骨架。"""
+    import re as _re
+    s = str(text or "")
+    s = _re.sub(r"<[^>]+>", "", s)
+    s = _re.sub(r"[\s，。！？、,.!?;；:：\"'“”‘’（）()\[\]【】…—\-]+", "", s)
+    return s
+
+
 @dataclass
 class MemoryInput:
     text: str
@@ -209,6 +218,14 @@ class MemoryStore:
     # -- 写入 ---------------------------------------------------------------
 
     def add(self, item: MemoryInput) -> int:
+        # 幂等：同 tier 里已有同义文本（忽略标点/空白）就复用，不重复存
+        _norm = _norm_for_dedupe(item.text)
+        if _norm:
+            for _mid, _txt in self.conn.execute(
+                "SELECT id, text FROM memory WHERE tier=?", (item.tier,)
+            ).fetchall():
+                if _norm_for_dedupe(_txt) == _norm:
+                    return int(_mid)
         self._invalidate_caches()
         now = time.time()
         ts = float(item.ts if item.ts is not None else now)

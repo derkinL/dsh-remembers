@@ -448,9 +448,9 @@ function renderState(state) {
     const text = extractText(message);
     if (!text) return;
     if (message.role === "assistant") {
-      state.turnAssistant = clip(`${state.turnAssistant}\n${text}`.trim(), 1600);
+      state.turnAssistant = clip(`${state.turnAssistant}\n${text}`.trim(), 800);
     } else {
-      state.turnUser = clip(`${state.turnUser}\n${text}`.trim(), 1600);
+      state.turnUser = clip(`${state.turnUser}\n${text}`.trim(), 800);
     }
   });
 
@@ -1110,6 +1110,15 @@ function extractText(message) {
   return text
     .replace(/<\/?user_message[^>]*>/g, "")
     .replace(/<\/?assistant_message[^>]*>/g, "")
+    // 我们自己的注入块（状态/回忆/日记）不能算用户原话
+    .replace(/<dsh-remembers[\s\S]*?<\/dsh-remembers>/g, "")
+    .replace(/<dsh-recall[\s\S]*?<\/dsh-recall>/g, "")
+    .replace(/<dsh-remembers[^>]*\/>/g, "")
+    // 孤立残片（块被拆开后剩下的闭合标签）
+    .replace(/<\/?dsh-remembers[^>]*>/g, "")
+    .replace(/<\/?dsh-recall[^>]*>/g, "")
+    // 系统提醒（cron 唤醒注入的，不是用户说的话）
+    .replace(/（系统提醒：[\s\S]*?）/g, "")
     .trim();
 }
 

@@ -682,7 +682,10 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- 主动消息配置：页面可改，cron 读它 -------------------------------------
 
-    PROACTIVE_FILE = "/home/ubuntu/dsh-agentchat/_deploy/dsh-remembers/service/data/proactive.json"
+    PROACTIVE_FILE = __import__("os").path.join(
+        __import__("os").environ.get("CMEM_DATA_DIR", "/home/ubuntu/dsh-agentchat/_deploy/dsh-remembers/service/data"),
+        "proactive.json",
+    )
     PROACTIVE_DEFAULTS = {
         "enabled": True,          # 自动唤醒总开关
         "startHour": 8,           # 时间窗开始（含）
@@ -727,7 +730,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- 逛 B 站（借 dsh-bili-whale 的 CLI，但人格/记忆/情绪全走我们这套） --------
 
-    BILI_DIR = "/home/ubuntu/.dsh/profiles/web/node_modules/dsh-bili-whale"
+    BILI_DIR = "/home/ubuntu/bili-cli"
     NODE_BIN = "/home/ubuntu/.local/node/bin/node"
 
     def _run_bili(self, args: list, timeout: int = 90) -> dict:
@@ -808,10 +811,12 @@ class Handler(BaseHTTPRequestHandler):
                     "bili_jct": cookies.get("bili_jct", ""),
                     "buvid3": cookies.get("buvid3", ""),
                 }
-                _os.makedirs("/home/ubuntu/.bili-ai", exist_ok=True)
-                with open("/home/ubuntu/.bili-ai/credentials.json", "w", encoding="utf-8") as f:
+                cred_dir = _os.path.join(_os.environ.get("HOME", "/home/ubuntu"), ".bili-ai")
+                cred_path = _os.path.join(cred_dir, "credentials.json")
+                _os.makedirs(cred_dir, exist_ok=True)
+                with open(cred_path, "w", encoding="utf-8") as f:
                     _json.dump(cred, f, ensure_ascii=False, indent=2)
-                _os.chmod("/home/ubuntu/.bili-ai/credentials.json", 0o600)
+                _os.chmod(cred_path, 0o600)
                 # 验证
                 res = self._run_bili(["session"], timeout=40)
                 return {"ok": True, "code": 0, "saved": True,
@@ -866,11 +871,13 @@ class Handler(BaseHTTPRequestHandler):
             "bili_jct": str(body.get("bili_jct") or "").strip(),
             "buvid3": str(body.get("buvid3") or "").strip(),
         }
-        _os.makedirs("/home/ubuntu/.bili-ai", exist_ok=True)
+        cred_dir = _os.path.join(_os.environ.get("HOME", "/home/ubuntu"), ".bili-ai")
+        cred_path = _os.path.join(cred_dir, "credentials.json")
+        _os.makedirs(cred_dir, exist_ok=True)
         try:
-            with open("/home/ubuntu/.bili-ai/credentials.json", "w", encoding="utf-8") as f:
+            with open(cred_path, "w", encoding="utf-8") as f:
                 _json.dump(cred, f, ensure_ascii=False, indent=2)
-            _os.chmod("/home/ubuntu/.bili-ai/credentials.json", 0o600)
+            _os.chmod(cred_path, 0o600)
         except Exception as e:
             self._json(500, {"ok": False, "error": "save failed: " + str(e)})
             return
@@ -893,7 +900,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
         bw = self._load_bili_whale()
-        cred = "/home/ubuntu/.bili-ai/credentials.json"
+        cred = _os.path.join(_os.environ.get("HOME", "/home/ubuntu"), ".bili-ai", "credentials.json")
         logged_in = _os.path.exists(cred) and _os.path.getsize(cred) > 20
         return {
             "ok": True,
