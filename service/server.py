@@ -277,6 +277,7 @@ class Handler(BaseHTTPRequestHandler):
             st["activity"] = store.current_activity(hour)
             st["weather"] = store.current_weather()
             st["stage"] = store.current_stage()
+            st["emotion"] = store.get_emotion()
             st["view_hour"] = hour
             self._json(200, st)
         elif path == "/persona":
@@ -515,6 +516,10 @@ class Handler(BaseHTTPRequestHandler):
             kwargs["diary"] = str(body.get("diary") or "")
         if "diary_date" in body:
             kwargs["diary_date"] = str(body.get("diary_date") or "")
+        if "valence" in body:
+            kwargs["valence"] = float(body.get("valence") or 0)
+        if "arousal" in body:
+            kwargs["arousal"] = float(body.get("arousal") or 0.5)
         if "activity" in body:
             kwargs["activity"] = str(body.get("activity") or "")
         if "game_score" in body:

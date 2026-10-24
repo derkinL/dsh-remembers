@@ -681,11 +681,13 @@ class MemoryStore:
             "weather_updated": float(row["weather_updated"] or 0.0),
             "game_score": int(row["game_score"] or 0),
             "game_plays": int(row["game_plays"] or 0),
+            "valence": float(row["valence"] or 0),
+            "arousal": float(row["arousal"] or 0.5),
         }
 
     def set_state(self, mood=None, intimacy=None, diary=None, diary_date=None,
                   dnd_start=None, dnd_end=None, game_score=None, game_plays=None,
-                  activity=None) -> dict[str, Any]:
+                  activity=None, valence=None, arousal=None) -> dict[str, Any]:
         cur = self.get_state()
         now = time.time()
         next_mood = cur["mood"] if mood is None else str(mood)
@@ -696,7 +698,7 @@ class MemoryStore:
         self.conn.execute(
             """UPDATE state SET mood=?, mood_updated=?, intimacy=?, last_interaction=?,
                                diary=?, diary_date=?, dnd_start=?, dnd_end=?,
-                               game_score=?, game_plays=?, activity=? WHERE id=1""",
+                               game_score=?, game_plays=?, activity=?, valence=?, arousal=? WHERE id=1""",
             (
                 next_mood,
                 now if mood is not None else cur["mood_updated"],
@@ -709,6 +711,8 @@ class MemoryStore:
                 cur.get("game_score", 0) if game_score is None else int(game_score),
                 cur.get("game_plays", 0) if game_plays is None else int(game_plays),
                 cur.get("activity", "") if activity is None else str(activity),
+                cur.get("valence", 0.0) if valence is None else float(valence),
+                cur.get("arousal", 0.5) if arousal is None else float(arousal),
             ),
         )
         self.conn.commit()
@@ -865,6 +869,33 @@ class MemoryStore:
                 (max(1, min(int(limit), 500)),),
             ).fetchall()
         return [{"ts": float(r["ts"]), "kind": r["kind"], "detail": r["detail"]} for r in rows]
+
+
+    # -- 情绪双轴：valence（效价）/ arousal（唤醒度） --------------------------
+    #
+    # mood 是粗档（开心/累/烦...），valence+arousal 是连续值，更接近人。
+    # 情绪会自然衰减：没事干的时候慢慢回中性，不会一直high。
+    #   衰减规则：valence 每小时向 0 收 20%，arousal 向 0.5 收 20%。
+
+    def get_emotion(self) -> dict:
+        cur = self.get_state()
+        now = time.time()
+        updated = float(cur.get("mood_updated") or 0) or now
+        hours = max(0.0, (now - updated) / 3600.0)
+        decay = max(0.0, 1.0 - 0.2 * hours)
+        valence = float(cur.get("valence") or 0) * decay
+        arousal = 0.5 + (float(cur.get("arousal") or 0.5) - 0.5) * decay
+        return {"valence": round(valence, 3), "arousal": round(arousal, 3)}
+
+    def set_emotion(self, valence: float, arousal: float) -> dict:
+        v = max(-1.0, min(1.0, float(valence)))
+        a = max(0.0, min(1.0, float(arousal)))
+        self.set_state(valence=v, arousal=a)
+        return {"valence": v, "arousal": a}
+
+    def bump_emotion(self, dv: float = 0.0, da: float = 0.0) -> dict:
+        e = self.get_emotion()
+        return self.set_emotion(e["valence"] + dv, e["arousal"] + da)
 
     def bump_intimacy(self, delta: float = 1.0) -> float:
         cur = self.get_state()

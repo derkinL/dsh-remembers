@@ -112,6 +112,13 @@ function renderState(state) {
     '<dsh-remembers source="state">',
     `你现在的状态：心情${moodText}；和老大亲密度 ${intimacy}/100；勿扰时段 ${state.dnd_start} 点到 ${state.dnd_end} 点。`,
   ];
+  if (state.emotion) {
+    const v = Number(state.emotion.valence) || 0;
+    const a = Number(state.emotion.arousal) || 0.5;
+    const vDesc = v > 0.4 ? "很开心" : v > 0.1 ? "还不错" : v < -0.4 ? "很难过" : v < -0.1 ? "有点低落" : "平静";
+    const aDesc = a > 0.7 ? "很兴奋" : a > 0.55 ? "有点激动" : a < 0.3 ? "很蔫" : "平常";
+    lines.push(`你此刻的情绪：${vDesc}、${aDesc}（效价 ${v.toFixed(2)}，唤醒 ${a.toFixed(2)}）。`);
+  }
   if (state.stage && state.stage.name) {
     lines.push(`你和老大现在是「${state.stage.name}」阶段：${state.stage.hint}。`);
   }

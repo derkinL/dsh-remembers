@@ -121,6 +121,8 @@ CREATE TABLE IF NOT EXISTS state (
   diary_date       TEXT NOT NULL DEFAULT '',
   dnd_start        INTEGER NOT NULL DEFAULT 23,
   dnd_end          INTEGER NOT NULL DEFAULT 8,
+  valence          REAL NOT NULL DEFAULT 0,
+  arousal          REAL NOT NULL DEFAULT 0.5,
   activity         TEXT NOT NULL DEFAULT '',
   weather          TEXT NOT NULL DEFAULT '',
   weather_updated  REAL NOT NULL DEFAULT 0
