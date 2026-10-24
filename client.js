@@ -611,6 +611,23 @@ window.__ModuleLoader__.load({
         const [list, setList] = React.useState([]);
         const [busy, setBusy] = React.useState(false);
         const [msg, setMsg] = React.useState(null);
+        const [editing, setEditing] = React.useState(null);
+
+        const startEdit = (m) => {
+          setEditing({ file: m.file, emotion: m.emotion || "", caption: m.caption || "", keywords: m.keywords || "" });
+        };
+
+        const saveEdit = async () => {
+          if (!editing) return;
+          try {
+            await call("/memes", { method: "POST", body: JSON.stringify(editing) });
+            setMsg("已保存：" + editing.file);
+            setEditing(null);
+            await load();
+          } catch (err) {
+            setMsg("保存失败：" + (err && err.message ? err.message : String(err)));
+          }
+        };
 
         const load = async () => {
           try {
@@ -687,9 +704,16 @@ window.__ModuleLoader__.load({
               },
             },
               h("img", {
-                src: serviceUrl() + "/memes/file/" + encodeURIComponent(m.file),
+                src: serviceUrl() + "/memes/file/" + encodeURIComponent(m.file) + "?t=" + Date.now(),
+                onError: (ev) => {
+                  ev.target.style.display = "none";
+                  if (ev.target.nextSibling) ev.target.nextSibling.style.display = "block";
+                },
                 style: { width: "100%", height: 90, objectFit: "contain", borderRadius: 6, background: "#f3f4f6" },
               }),
+              h("div", {
+                style: { display: "none", height: 90, alignItems: "center", justifyContent: "center", fontSize: 11, color: "#9ca3af", textAlign: "center", padding: 4 },
+              }, m.file + "（加载失败）"),
               h("div", { style: { fontSize: 11, fontWeight: 500 } }, EMO[m.emotion] || "未分类"),
               h("div", {
                 style: {
@@ -697,12 +721,66 @@ window.__ModuleLoader__.load({
                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                 },
               }, m.caption || m.file),
-              h("button", {
-                style: { ...S.btn(false), padding: "2px 8px", fontSize: 11 },
-                onClick: () => void remove(m.file),
-              }, "删除"),
+              h("div", { style: { display: "flex", gap: 4 } },
+                h("button", {
+                  style: { ...S.btn(false), padding: "2px 8px", fontSize: 11, flex: 1 },
+                  onClick: () => startEdit(m),
+                }, "编辑"),
+                h("button", {
+                  style: { ...S.btn(false), padding: "2px 8px", fontSize: 11, flex: 1 },
+                  onClick: () => void remove(m.file),
+                }, "删除"),
+              ),
             )),
           ),
+          editing ? h("div", {
+            style: {
+              position: "fixed", inset: 0, background: "rgba(0,0,0,.35)",
+              display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
+            },
+            onClick: (ev) => { if (ev.target === ev.currentTarget) setEditing(null); },
+          },
+            h("div", {
+              style: {
+                background: "var(--dsw-color-bg, #fff)", borderRadius: 12, padding: 18,
+                width: 420, maxWidth: "90vw", display: "flex", flexDirection: "column", gap: 10,
+              },
+            },
+              h("div", { style: { fontWeight: 600, fontSize: 14 } }, "编辑表情包"),
+              h("div", { style: S.muted }, editing.file),
+              h("div", { style: S.field },
+                h("div", { style: S.label }, "分类"),
+                h("select", {
+                  style: S.select,
+                  value: editing.emotion,
+                  onChange: (ev) => setEditing({ ...editing, emotion: ev.target.value }),
+                },
+                  h("option", { value: "" }, "未分类"),
+                  Object.keys(EMO).map((k) => h("option", { key: k, value: k }, EMO[k])),
+                ),
+              ),
+              h("div", { style: S.field },
+                h("div", { style: S.label }, "描述"),
+                h("textarea", {
+                  style: { ...S.input, minHeight: 60, resize: "vertical" },
+                  value: editing.caption,
+                  onChange: (ev) => setEditing({ ...editing, caption: ev.target.value }),
+                }),
+              ),
+              h("div", { style: S.field },
+                h("div", { style: S.label }, "关键词（空格分隔）"),
+                h("input", {
+                  style: S.input,
+                  value: editing.keywords,
+                  onChange: (ev) => setEditing({ ...editing, keywords: ev.target.value }),
+                }),
+              ),
+              h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 6 } },
+                h("button", { style: S.btn(false), onClick: () => setEditing(null) }, "取消"),
+                h("button", { style: S.btn(true), onClick: () => void saveEdit() }, "保存"),
+              ),
+            ),
+          ) : null,
         );
       }
 
