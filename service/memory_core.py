@@ -1175,6 +1175,34 @@ class MemoryStore:
         ).fetchall()
         return [{"title": r["title"], "url": r["url"], "ts": float(r["ts"] or 0)} for r in rows]
 
+
+    # -- 情感层：情绪轨迹 ------------------------------------------------------
+
+    def emotion_log_add(self, valence: float, arousal: float, label: str = "",
+                        trigger: str = "", source: str = "chat") -> int:
+        cur = self.conn.execute(
+            "INSERT INTO emotion_log(ts, valence, arousal, label, trigger, source) VALUES (?,?,?,?,?,?)",
+            (time.time(), float(valence), float(arousal), str(label)[:40], str(trigger)[:200], str(source)[:20]),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def emotion_log_list(self, limit: int = 50, days: int = 0) -> list[dict]:
+        sql = "SELECT id, ts, valence, arousal, label, trigger, source FROM emotion_log"
+        args: list = []
+        if days and days > 0:
+            sql += " WHERE ts >= ?"
+            args.append(time.time() - days * 86400)
+        sql += " ORDER BY ts DESC LIMIT ?"
+        args.append(max(1, min(int(limit), 500)))
+        rows = self.conn.execute(sql, args).fetchall()
+        return [{
+            "id": int(r["id"]), "ts": float(r["ts"]),
+            "valence": float(r["valence"]), "arousal": float(r["arousal"]),
+            "label": r["label"], "trigger": r["trigger"], "source": r["source"],
+        } for r in rows]
+
+
     def bump_intimacy(self, delta: float = 1.0) -> float:
         cur = self.get_state()
         return self.set_state(intimacy=cur["intimacy"] + delta)["intimacy"]

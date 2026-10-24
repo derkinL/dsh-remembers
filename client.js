@@ -796,6 +796,9 @@ window.__ModuleLoader__.load({
       // ---------------------------------------------------------------------
       function ProactiveSection() {
         const [cfg, setCfg] = React.useState(null);
+        const [silentActions, setSilentActions] = React.useState([]);
+        const [talkActions, setTalkActions] = React.useState([]);
+        const [newAction, setNewAction] = React.useState({ silent: "", talk: "" });
         const [msg, setMsg] = React.useState(null);
         const [err, setErr] = React.useState(null);
 
@@ -803,6 +806,9 @@ window.__ModuleLoader__.load({
           setErr(null);
           try {
             const c = await call("/proactive");
+            setCfg(c);
+            setSilentActions(Array.isArray(c.silentActions) ? c.silentActions : []);
+            setTalkActions(Array.isArray(c.talkActions) ? c.talkActions : []);
             setCfg(c);
           } catch (e) {
             setErr(e && e.message ? e.message : String(e));
@@ -817,7 +823,7 @@ window.__ModuleLoader__.load({
         const save = async () => {
           if (!cfg) return;
           try {
-            await call("/proactive", { method: "POST", body: JSON.stringify(cfg) });
+            await call("/proactive", { method: "POST", body: JSON.stringify({ ...cfg, silentActions, talkActions }) });
             setMsg("已保存");
             setErr(null);
           } catch (e) {
@@ -866,6 +872,72 @@ window.__ModuleLoader__.load({
           ),
 
           h("div", { style: S.card },
+            h("div", { style: S.label }, "她醒着能做什么（动作编辑器）"),
+            h("div", { style: { ...S.muted, marginBottom: 8 } },
+              "每次唤醒随机抽一条当作她这轮的状态提示。静默=她自己待着，说话=可以找你。改完点下面的保存。"),
+
+            h("div", { style: { ...S.muted, fontSize: 11, marginTop: 4 } }, "静默时（自己待着）"),
+            h("div", { style: { display: "flex", flexDirection: "column", gap: 3, marginTop: 4 } },
+              silentActions.map((a, i) => h("div", { key: "s" + i, style: { display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12 } },
+                h("span", { style: { flex: 1, lineHeight: "18px" } }, "· " + a),
+                h("span", { style: { cursor: "pointer", opacity: 0.55, padding: "0 4px" }, onClick: () => setSilentActions(silentActions.filter((_, j) => j !== i)) }, "×"),
+              )),
+            ),
+            h("div", { style: { display: "flex", gap: 6, marginTop: 6 } },
+              h("input", {
+                style: { ...S.input, flex: 1 }, placeholder: "加一个（例如：躺着听雨声）",
+                value: newAction.silent,
+                onChange: (ev) => setNewAction({ ...newAction, silent: ev.target.value }),
+                onKeyDown: (ev) => {
+                  if (ev.key === "Enter" && newAction.silent.trim()) {
+                    setSilentActions([...silentActions, newAction.silent.trim()]);
+                    setNewAction({ ...newAction, silent: "" });
+                  }
+                },
+              }),
+              h("button", {
+                style: { ...S.btn(false), fontSize: 12 },
+                onClick: () => {
+                  if (newAction.silent.trim()) {
+                    setSilentActions([...silentActions, newAction.silent.trim()]);
+                    setNewAction({ ...newAction, silent: "" });
+                  }
+                },
+              }, "加"),
+            ),
+
+            h("div", { style: { ...S.muted, fontSize: 11, marginTop: 14 } }, "说话时（可以找你）"),
+            h("div", { style: { display: "flex", flexDirection: "column", gap: 3, marginTop: 4 } },
+              talkActions.map((a, i) => h("div", { key: "t" + i, style: { display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12 } },
+                h("span", { style: { flex: 1, lineHeight: "18px" } }, "· " + a),
+                h("span", { style: { cursor: "pointer", opacity: 0.55, padding: "0 4px" }, onClick: () => setTalkActions(talkActions.filter((_, j) => j !== i)) }, "×"),
+              )),
+            ),
+            h("div", { style: { display: "flex", gap: 6, marginTop: 6 } },
+              h("input", {
+                style: { ...S.input, flex: 1 }, placeholder: "加一个（例如：想问他明天忙不忙）",
+                value: newAction.talk,
+                onChange: (ev) => setNewAction({ ...newAction, talk: ev.target.value }),
+                onKeyDown: (ev) => {
+                  if (ev.key === "Enter" && newAction.talk.trim()) {
+                    setTalkActions([...talkActions, newAction.talk.trim()]);
+                    setNewAction({ ...newAction, talk: "" });
+                  }
+                },
+              }),
+              h("button", {
+                style: { ...S.btn(false), fontSize: 12 },
+                onClick: () => {
+                  if (newAction.talk.trim()) {
+                    setTalkActions([...talkActions, newAction.talk.trim()]);
+                    setNewAction({ ...newAction, talk: "" });
+                  }
+                },
+              }, "加"),
+            ),
+          ),
+
+          h("div", { style: S.card },
             h("div", { style: S.desc }, "唤醒规则"),
             h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
               num("startHour", "开始小时（0-23）", "几点之前不唤醒"),
@@ -885,6 +957,100 @@ window.__ModuleLoader__.load({
         );
       }
 
+      // B 站选题的预设标签（按分区整理，点一下就能选）
+      const PRESET_LIKE = [
+        "猫咪", "狗狗", "宠物", "萌宠", "动物",
+        "科技", "数码", "手机", "电脑", "AI", "编程", "极客",
+        "游戏", "电竞", "主机", "手游", "单机", "游戏实况", "速通",
+        "鬼畜", "搞笑", "沙雕", "整活",
+        "音乐", "翻唱", "Vocaloid", "纯音乐", "DJ",
+        "舞蹈", "宅舞", "街舞",
+        "美食", "做饭", "厨艺", "探店", "吃播",
+        "动漫", "番剧", "二次元", "cos",
+        "电影", "影视解说", "影评",
+        "纪录片", "科普", "历史", "人文",
+        "知识", "学习", "考研", "公开课",
+        "生活", "vlog", "日常",
+        "手工", "DIY", "模型", "手办",
+        "绘画", "画师", "插画", "板绘",
+        "摄影", "摄像",
+        "运动", "健身", "跑步",
+        "治愈", "白噪音", "ASMR", "助眠",
+        "猫咪视频", "猫meme", "萌宠日常",
+      ];
+
+      const PRESET_DISLIKE = [
+        "恐怖", "惊悚", "恐怖游戏", "血腥", "暴力",
+        "擦边", "软色情", "擦边舞", "宅男向",
+        "猎奇", "重口", "恶心",
+        "争吵", "节奏", "撕逼", "引战",
+        "带货", "广告", "推广", "营销号", "标题党",
+        "政治", "时政",
+        "装疯卖傻", "lowb", "土味",
+        "ASMR擦边", "整蛊",
+      ];
+
+      /** 标签选择器：预设点选 + 自定义输入。 */
+      function TagPicker({ presets, value, onChange, placeholder }) {
+        const [draft, setDraft] = React.useState("");
+        const list = Array.isArray(value) ? value : [];
+        const toggle = (tag) => {
+          if (list.includes(tag)) onChange(list.filter((x) => x !== tag));
+          else onChange([...list, tag]);
+        };
+        const addDraft = () => {
+          const v = draft.trim();
+          if (!v) return;
+          if (!list.includes(v)) onChange([...list, v]);
+          setDraft("");
+        };
+        const isOn = (tag) => list.includes(tag);
+        return h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+          h("div", { style: { display: "flex", flexWrap: "wrap", gap: 5 } },
+            presets.map((tag) =>
+              h("button", {
+                key: tag,
+                onClick: () => toggle(tag),
+                style: {
+                  fontSize: 12, lineHeight: "20px", padding: "1px 9px", borderRadius: 999,
+                  cursor: "pointer", border: "1px solid " + (isOn(tag) ? "transparent" : "rgba(127,127,127,.28)"),
+                  background: isOn(tag) ? "rgba(64,132,255,.16)" : "transparent",
+                  color: isOn(tag) ? "#4084ff" : "inherit",
+                },
+              }, tag),
+            ),
+          ),
+          h("div", { style: { display: "flex", gap: 6 } },
+            h("input", {
+              style: { ...S.input, flex: 1 },
+              placeholder,
+              value: draft,
+              onChange: (ev) => setDraft(ev.target.value),
+              onKeyDown: (ev) => { if (ev.key === "Enter") { ev.preventDefault(); addDraft(); } },
+            }),
+            h("button", { style: { ...S.btn(false), fontSize: 12, padding: "0 10px" }, onClick: addDraft }, "添加"),
+          ),
+          list.length ? h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4, marginTop: 2 } },
+            list.map((tag) =>
+              h("span", {
+                key: tag,
+                style: {
+                  fontSize: 12, padding: "1px 7px", borderRadius: 999,
+                  background: "rgba(64,132,255,.14)", color: "#4084ff",
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                },
+              },
+                tag,
+                h("span", {
+                  style: { cursor: "pointer", opacity: 0.7, fontWeight: 600 },
+                  onClick: () => toggle(tag),
+                }, "×"),
+              ),
+            ),
+          ) : h("div", { style: { ...S.muted, fontSize: 11 } }, "还没选（空着就按默认偏好）"),
+        );
+      }
+
       // ---------------------------------------------------------------------
       // B 站：账号状态 + 开关（她自己的号，嘴走 QQ 那套）
       // ---------------------------------------------------------------------
@@ -896,6 +1062,9 @@ window.__ModuleLoader__.load({
         const [sessdata, setSessdata] = React.useState("");
         const [ownerMid, setOwnerMid] = React.useState("");
         const [biliCfg, setBiliCfg] = React.useState(null);
+        const [biliTools, setBiliTools] = React.useState(null);
+        const [biliForm, setBiliForm] = React.useState({});
+        const [savedAt, setSavedAt] = React.useState(null);
         const [ownerName, setOwnerName] = React.useState("");
         const [qr, setQr] = React.useState(null);
         const [qrState, setQrState] = React.useState(null);
@@ -910,7 +1079,23 @@ window.__ModuleLoader__.load({
             setSt(s);
             if (s && s.owner_mid) setOwnerMid(s.owner_mid);
             if (s && s.owner_name) setOwnerName(s.owner_name);
-            try { setBiliCfg(await call("/bili/cfg")); } catch { setBiliCfg(null); }
+            try {
+              const c = await call("/bili/cfg");
+              setBiliCfg(c);
+              setBiliForm({
+                like: (c.preferences || {}).like || [],
+                dislike: (c.preferences || {}).dislike || [],
+                skipChance: (c.night || {}).skipChance ?? 0.3,
+                maxVideos: (c.night || {}).maxVideos ?? 6,
+                minGapMin: (c.night || {}).minGapMin ?? 10,
+                name: (c.persona || {}).name || "",
+                ownerTitle: (c.persona || {}).ownerTitle || "",
+                selfClaim: (c.persona || {}).selfClaim || "",
+                aiCommentGuard: !!((c.share || {}).aiCommentGuard),
+                mentionSummary: !!((c.listen || {}).mentionSummary),
+              });
+            } catch { setBiliCfg(null); }
+            try { setBiliTools(await call("/bili/tools")); } catch { setBiliTools(null); }
           } catch (e) {
             setErr(e && e.message ? e.message : String(e));
             setSt(null);
@@ -1030,6 +1215,20 @@ window.__ModuleLoader__.load({
           }
         };
 
+        const toggleTool = async (cmd) => {
+          if (!biliTools) return;
+          const cur = (biliTools.tools || []).find((x) => x.cmd === cmd);
+          setBusy(true);
+          try {
+            const r = await call("/bili/tools", { method: "POST", body: JSON.stringify({ cmd, enabled: !(cur && cur.enabled) }) });
+            setBiliTools(r);
+          } catch (e) {
+            setErr(e && e.message ? e.message : String(e));
+          } finally {
+            setBusy(false);
+          }
+        };
+
         const toggleMouth = async (key) => {
           if (!st) return;
           setBusy(true);
@@ -1131,6 +1330,30 @@ window.__ModuleLoader__.load({
             ),
           ),
 
+          biliTools ? h("div", { style: S.card },
+            h("div", { style: S.label }, "她能用的 B 站工具"),
+            h("div", { style: { ...S.muted, marginBottom: 8 } },
+              "勾上的命令她才能调。只读的默认开着，写操作（评论/私信/弹幕）默认关——想让她能说再打开。"),
+            ...(biliTools.tools || []).map((tool) =>
+              h("label", {
+                key: tool.cmd,
+                style: { display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginBottom: 6 },
+              },
+                h("input", {
+                  type: "checkbox",
+                  checked: !!tool.enabled,
+                  onChange: () => void toggleTool(tool.cmd),
+                  style: { marginTop: 3 },
+                }),
+                h("span", { style: { display: "flex", flexDirection: "column" } },
+                  h("span", { style: { fontSize: 13 } },
+                    tool.cmd + (tool.write ? "（写）" : "")),
+                  h("span", { style: { ...S.muted, fontSize: 12 } }, tool.desc),
+                ),
+              ),
+            ),
+          ) : null,
+
           h("div", { style: S.card },
             h("div", { style: S.label }, "你在 B 站的 UID"),
             h("div", { style: { ...S.muted, marginBottom: 6 } },
@@ -1144,79 +1367,118 @@ window.__ModuleLoader__.load({
             ),
           ),
 
-          biliCfg ? h("div", { style: S.card },
-            h("div", { style: S.label }, "更多设置（她刷 B 站的偏好）"),
+          biliCfg ? (() => {
+            const f = biliForm;
+            const set = (k, v) => setBiliForm({ ...f, [k]: v });
+            const split = (s) => String(s || "").split(/[,，]/).map((x) => x.trim()).filter(Boolean);
+            const saveAll = async () => {
+              setBusy(true);
+              setErr(null);
+              try {
+                await Promise.all([
+                  call("/bili/cfg", { method: "POST", body: JSON.stringify({ path: ["preferences", "like"], value: Array.isArray(f.like) ? f.like : [] }) }),
+                  call("/bili/cfg", { method: "POST", body: JSON.stringify({ path: ["preferences", "dislike"], value: Array.isArray(f.dislike) ? f.dislike : [] }) }),
+                  call("/bili/cfg", { method: "POST", body: JSON.stringify({ path: ["night", "skipChance"], value: Number(f.skipChance) || 0 }) }),
+                  call("/bili/cfg", { method: "POST", body: JSON.stringify({ path: ["night", "maxVideos"], value: Number(f.maxVideos) || 6 }) }),
+                  call("/bili/cfg", { method: "POST", body: JSON.stringify({ path: ["night", "minGapMin"], value: Number(f.minGapMin) || 10 }) }),
+                  call("/bili/cfg", { method: "POST", body: JSON.stringify({ path: ["persona", "name"], value: String(f.name || "") }) }),
+                  call("/bili/cfg", { method: "POST", body: JSON.stringify({ path: ["persona", "ownerTitle"], value: String(f.ownerTitle || "") }) }),
+                  call("/bili/cfg", { method: "POST", body: JSON.stringify({ path: ["persona", "selfClaim"], value: String(f.selfClaim || "") }) }),
+                ]);
+                setSavedAt(new Date().toLocaleTimeString());
+                const c = await call("/bili/cfg");
+                setBiliCfg(c);
+              } catch (e) {
+                setErr(e && e.message ? e.message : String(e));
+              } finally {
+                setBusy(false);
+              }
+            };
+            return h("div", { style: S.card },
+              h("div", { style: S.label }, "更多设置（她刷 B 站的偏好）"),
 
-            h("div", { style: S.desc }, "口味（逗号分隔，影响 feed 选题）"),
-            h("div", { style: { display: "flex", gap: 8 } },
-              h("input", {
-                style: S.input, placeholder: "爱看：猫咪，科技",
-                defaultValue: ((biliCfg.preferences || {}).like || []).join("，"),
-                onBlur: (ev) => void saveCfg(["preferences", "like"], ev.target.value.split(/[,，]/).map((x) => x.trim()).filter(Boolean)),
-              }),
-              h("input", {
-                style: S.input, placeholder: "不爱看：恐怖，擦边",
-                defaultValue: ((biliCfg.preferences || {}).dislike || []).join("，"),
-                onBlur: (ev) => void saveCfg(["preferences", "dislike"], ev.target.value.split(/[,，]/).map((x) => x.trim()).filter(Boolean)),
-              }),
-            ),
+              h("div", { style: { ...S.desc, marginTop: 4, fontWeight: 600, fontSize: 12 } }, "口味（点标签选，或自己加）"),
+              h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 4 } }, "决定 feed 给她推什么。选中的会高亮，保存后生效。"),
 
-            h("div", { style: { ...S.desc, marginTop: 8 } }, "作息"),
-            h("div", { style: { display: "flex", gap: 8 } },
-              h("input", {
-                style: S.input, type: "number", placeholder: "今晚不看的概率 0-1",
-                defaultValue: ((biliCfg.night || {}).skipChance ?? 0.3),
-                onBlur: (ev) => void saveCfg(["night", "skipChance"], Number(ev.target.value)),
+              h("div", { style: { ...S.muted, fontSize: 11, marginTop: 4 } }, "爱看（优先推这类）"),
+              h(TagPicker, {
+                presets: PRESET_LIKE,
+                value: Array.isArray(f.like) ? f.like : [],
+                onChange: (v) => set("like", v),
+                placeholder: "自己加一个（回车）",
               }),
-              h("input", {
-                style: S.input, type: "number", placeholder: "单次看几个",
-                defaultValue: ((biliCfg.night || {}).maxVideos ?? 6),
-                onBlur: (ev) => void saveCfg(["night", "maxVideos"], Number(ev.target.value)),
-              }),
-              h("input", {
-                style: S.input, type: "number", placeholder: "最小唤醒间隔(分)",
-                defaultValue: ((biliCfg.night || {}).minGapMin ?? 10),
-                onBlur: (ev) => void saveCfg(["night", "minGapMin"], Number(ev.target.value)),
-              }),
-            ),
 
-            h("div", { style: { ...S.desc, marginTop: 8 } }, "B 站发言用的人设（她开嘴时才用；平时走 QQ 那套卡）"),
-            h("div", { style: { display: "flex", gap: 8 } },
-              h("input", {
-                style: S.input, placeholder: "角色名",
-                defaultValue: ((biliCfg.persona || {}).name || ""),
-                onBlur: (ev) => void saveCfg(["persona", "name"], ev.target.value),
+              h("div", { style: { ...S.muted, fontSize: 11, marginTop: 10 } }, "不爱看（选题时避开）"),
+              h(TagPicker, {
+                presets: PRESET_DISLIKE,
+                value: Array.isArray(f.dislike) ? f.dislike : [],
+                onChange: (v) => set("dislike", v),
+                placeholder: "自己加一个（回车）",
               }),
-              h("input", {
-                style: S.input, placeholder: "怎么称呼你（默认 主人）",
-                defaultValue: ((biliCfg.persona || {}).ownerTitle || ""),
-                onBlur: (ev) => void saveCfg(["persona", "ownerTitle"], ev.target.value),
-              }),
-              h("input", {
-                style: S.input, placeholder: "怎么自称（默认 我）",
-                defaultValue: ((biliCfg.persona || {}).selfClaim || ""),
-                onBlur: (ev) => void saveCfg(["persona", "selfClaim"], ev.target.value),
-              }),
-            ),
 
-            h("div", { style: { ...S.desc, marginTop: 8 } }, "高级"),
-            h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
-              h("input", {
-                type: "checkbox",
-                checked: !!((biliCfg.share || {}).aiCommentGuard),
-                onChange: () => void saveCfg(["share", "aiCommentGuard"], !((biliCfg.share || {}).aiCommentGuard)),
-              }),
-              h("span", { style: { fontSize: 13 } }, "分享前检查疑似 AI 评论（超阈值暂缓）"),
-            ),
-            h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
-              h("input", {
-                type: "checkbox",
-                checked: !!((biliCfg.listen || {}).mentionSummary),
-                onChange: () => void saveCfg(["listen", "mentionSummary"], !((biliCfg.listen || {}).mentionSummary)),
-              }),
-              h("span", { style: { fontSize: 13 } }, "你 @ 她要总结时自动处理"),
-            ),
-          ) : null,
+              h("div", { style: { ...S.desc, marginTop: 12, fontWeight: 600, fontSize: 12 } }, "作息（她什么时候刷、刷多少）"),
+              h("div", { style: { display: "flex", gap: 8, marginTop: 4 } },
+                h("div", { style: { flex: 1 } },
+                  h("div", { style: { ...S.muted, fontSize: 11 } }, "今晚不看的概率（0~1，0.3 = 三成）"),
+                  h("input", { style: S.input, type: "number", step: "0.1", min: 0, max: 1, value: f.skipChance ?? "", onChange: (ev) => set("skipChance", ev.target.value) }),
+                ),
+                h("div", { style: { flex: 1 } },
+                  h("div", { style: { ...S.muted, fontSize: 11 } }, "单次看几条（一次醒来最多看几个视频）"),
+                  h("input", { style: S.input, type: "number", value: f.maxVideos ?? "", onChange: (ev) => set("maxVideos", ev.target.value) }),
+                ),
+                h("div", { style: { flex: 1 } },
+                  h("div", { style: { ...S.muted, fontSize: 11 } }, "最小唤醒间隔（分钟，两次醒来至少隔多久）"),
+                  h("input", { style: S.input, type: "number", value: f.minGapMin ?? "", onChange: (ev) => set("minGapMin", ev.target.value) }),
+                ),
+              ),
+
+              h("div", { style: { ...S.desc, marginTop: 12, fontWeight: 600, fontSize: 12 } }, "B 站发言用的人设"),
+              h("div", { style: { ...S.muted, fontSize: 12 } }, "只有她「开嘴」（评论/私信/弹幕）时才用；平时聊天走 QQ 那套人格卡。"),
+              h("div", { style: { display: "flex", gap: 8, marginTop: 4 } },
+                h("div", { style: { flex: 1 } },
+                  h("div", { style: { ...S.muted, fontSize: 11 } }, "角色名（她在 B 站用的身份）"),
+                  h("input", { style: S.input, placeholder: "鲸鱼娘", value: f.name || "", onChange: (ev) => set("name", ev.target.value) }),
+                ),
+                h("div", { style: { flex: 1 } },
+                  h("div", { style: { ...S.muted, fontSize: 11 } }, "怎么称呼你（默认「主人」）"),
+                  h("input", { style: S.input, placeholder: "主人", value: f.ownerTitle || "", onChange: (ev) => set("ownerTitle", ev.target.value) }),
+                ),
+                h("div", { style: { flex: 1 } },
+                  h("div", { style: { ...S.muted, fontSize: 11 } }, "怎么自称（默认「我」）"),
+                  h("input", { style: S.input, placeholder: "我", value: f.selfClaim || "", onChange: (ev) => set("selfClaim", ev.target.value) }),
+                ),
+              ),
+
+              h("div", { style: { ...S.desc, marginTop: 12, fontWeight: 600, fontSize: 12 } }, "高级（一般不用动）"),
+              h("label", { style: { display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginTop: 4 } },
+                h("input", {
+                  type: "checkbox", style: { marginTop: 3 },
+                  checked: !!f.aiCommentGuard,
+                  onChange: () => set("aiCommentGuard", !f.aiCommentGuard),
+                }),
+                h("span", { style: { display: "flex", flexDirection: "column" } },
+                  h("span", { style: { fontSize: 13 } }, "分享前检查「像 AI 写的」评论"),
+                  h("span", { style: { ...S.muted, fontSize: 12 } }, "打开后，她发评论前先自检是不是太像 AI；超阈值会暂缓并通知你。防她被认出来是机器人。"),
+                ),
+              ),
+              h("label", { style: { display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginTop: 6 } },
+                h("input", {
+                  type: "checkbox", style: { marginTop: 3 },
+                  checked: !!f.mentionSummary,
+                  onChange: () => set("mentionSummary", !f.mentionSummary),
+                }),
+                h("span", { style: { display: "flex", flexDirection: "column" } },
+                  h("span", { style: { fontSize: 13 } }, "你 @ 她说「总结」时自动处理"),
+                  h("span", { style: { ...S.muted, fontSize: 12 } }, "你在 B 站 @ 她并说「总结/摘要/概括」，她自动整理后推给你。不开就当作普通 @。"),
+                ),
+              ),
+
+              h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 12 } },
+                h("button", { style: S.btn(true), onClick: () => void saveAll(), disabled: busy }, busy ? "保存中…" : "保存全部更改"),
+                savedAt ? h("span", { style: S.muted }, "已保存 " + savedAt) : h("span", { style: S.muted }, "改完点这里保存"),
+              ),
+            );
+          })() : null,
 
           h("div", { style: S.card },
             h("div", { style: S.label }, "测试一下她能刷到什么"),
@@ -1237,6 +1499,8 @@ window.__ModuleLoader__.load({
       // ---------------------------------------------------------------------
       function MemoriesSection() {
         const [data, setData] = React.useState(null);
+        const [emotionList, setEmotionList] = React.useState(null);
+        const [mode, setMode] = React.useState("memory");
         const [tier, setTier] = React.useState("all");
         const [q, setQ] = React.useState("");
         const [busy, setBusy] = React.useState(false);
@@ -1249,6 +1513,19 @@ window.__ModuleLoader__.load({
           L2: "画像",
           L3: "事件",
           L4: "里程碑",
+        };
+
+        const loadEmotion = async () => {
+          setBusy(true);
+          setErr(null);
+          try {
+            const r = await call("/emotion?limit=200");
+            setEmotionList(Array.isArray(r) ? r : []);
+          } catch (e) {
+            setErr(e && e.message ? e.message : String(e));
+          } finally {
+            setBusy(false);
+          }
         };
 
         const load = async (t, query) => {
@@ -1298,10 +1575,14 @@ window.__ModuleLoader__.load({
               Object.entries(TIERS).map(([k, label]) =>
                 h("button", {
                   key: k,
-                  style: { ...S.btn(tier === k), padding: "4px 10px", fontSize: 12 },
-                  onClick: () => { setTier(k); void load(k, q); },
+                  style: { ...S.btn(mode === "memory" && tier === k), padding: "4px 10px", fontSize: 12 },
+                  onClick: () => { setMode("memory"); setTier(k); void load(k, q); },
                 }, label + (k !== "all" && data.counts && data.counts[k] != null ? ` ${data.counts[k]}` : "")),
               ),
+              h("button", {
+                style: { ...S.btn(mode === "emotion"), padding: "4px 10px", fontSize: 12 },
+                onClick: () => { setMode("emotion"); void loadEmotion(); },
+              }, "情感" + (emotionList ? ` ${emotionList.length}` : "")),
             ),
             h("div", { style: { display: "flex", gap: 8, marginTop: 8 } },
               h("input", {
@@ -1317,7 +1598,26 @@ window.__ModuleLoader__.load({
               `显示 ${data.items ? data.items.length : 0} / ${data.total} 条`),
           ) : h("div", { style: S.muted }, "读取中…"),
 
-          data && data.items && data.items.length > 0 ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+          mode === "emotion" ? (
+            emotionList && emotionList.length > 0 ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+              emotionList.map((e) => {
+                const v = Number(e.valence) || 0;
+                const tone = v > 0.2 ? "#2fa36b" : v < -0.2 ? "#c0392b" : "#8b95a5";
+                const d = new Date((e.ts || 0) * 1000);
+                const pad = (n) => String(n).padStart(2, "0");
+                const when = `${d.getMonth() + 1}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                return h("div", { key: e.id, style: { ...S.card, padding: "10px 12px", borderLeft: "3px solid " + tone } },
+                  h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 4 } },
+                    h("span", { style: { fontSize: 11, fontWeight: 600, padding: "1px 7px", borderRadius: 999, background: tone + "22", color: tone } }, e.label || "情绪"),
+                    h("span", { style: { ...S.muted, fontSize: 11 } }, when),
+                    h("span", { style: { ...S.muted, fontSize: 11 } }, `v=${v.toFixed(2)} a=${(Number(e.arousal) || 0).toFixed(2)}`),
+                    h("span", { style: { ...S.muted, fontSize: 11 } }, e.source || ""),
+                  ),
+                  h("div", { style: { fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" } }, e.trigger || "（没有记录原因）"),
+                );
+              }),
+            ) : h("div", { style: S.muted }, emotionList ? "还没有情感记录（聊几句，情绪有波动就会记）" : "读取中…")
+          ) : data && data.items && data.items.length > 0 ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
             data.items.map((m) => h("div", {
               key: m.id,
               style: { ...S.card, padding: "10px 12px" },

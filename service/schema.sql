@@ -236,3 +236,17 @@ CREATE TABLE IF NOT EXISTS browsed (
   url     TEXT NOT NULL DEFAULT '',
   ts      REAL NOT NULL DEFAULT 0
 );
+
+-- ---------------------------------------------------------------------------
+-- 情感层：她的情绪轨迹（每次明显波动记一条，带原因）
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS emotion_log (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts           REAL NOT NULL DEFAULT 0,
+  valence      REAL NOT NULL DEFAULT 0,
+  arousal      REAL NOT NULL DEFAULT 0,
+  label        TEXT NOT NULL DEFAULT '',
+  trigger      TEXT NOT NULL DEFAULT '',
+  source       TEXT NOT NULL DEFAULT 'chat'
+);
+CREATE INDEX IF NOT EXISTS idx_emotion_log_ts ON emotion_log(ts);

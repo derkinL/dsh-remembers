@@ -279,6 +279,12 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/bili/qr/poll":
             key = (query.get("key") or [""])[0]
             self._json(200, self._bili_qr_poll(key))
+        elif path == "/bili/tools":
+            self._json(200, self._bili_tools())
+        elif path == "/emotion":
+            days = int((query.get("days") or ["0"])[0])
+            limit = int((query.get("limit") or ["50"])[0])
+            self._json(200, store.emotion_log_list(limit=limit, days=days))
         elif path == "/bili/cfg":
             self._json(200, self._load_bili_whale())
         elif path == "/memories":
@@ -416,6 +422,14 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._post_meme())
         elif path == "/memes/used":
             self._guard(lambda: self._post_meme_used())
+        elif path == "/bili/tools":
+            self._guard(lambda: self._set_bili_tools())
+        elif path == "/bili/run":
+            self._guard(lambda: self._bili_run())
+        elif path == "/emotion":
+            self._guard(lambda: self._post_emotion())
+        elif path == "/proactive/action":
+            self._guard(lambda: self._add_proactive_action())
         elif path == "/bili/cfg":
             self._guard(lambda: self._set_bili_cfg())
         elif path == "/bili/owner":
@@ -700,6 +714,23 @@ class Handler(BaseHTTPRequestHandler):
         "maxGapMinutes": 180,     # 两次唤醒之间的最大间隔（分钟）
         "silentRatio": 40,        # 静默概率（%），其余允许发消息
         "talkEnabled": True,      # 允许发消息（关掉=全部静默）
+        # 她独处时能做的事（随机抽一条作为这轮的状态提示）
+        "silentActions": [
+            "自己上网逛逛（B 站热门、新闻、梗），看到有意思的记下来",
+            "什么都不想做，就坐着发呆，或者玩玩自己的小游戏",
+            "整理一下自己的小本子（便签），想想今天的事",
+            "刷会儿 B 站（bili_feed），看到好玩的就想两句",
+            "写点什么（记一句今天的事，或者记个想法）",
+            "缩着打个盹，什么都不管",
+        ],
+        # 她可以主动找你做的事
+        "talkActions": [
+            "想跟老大说句话（问他吃了没、在干嘛）",
+            "想吐槽点什么（今天遇到的事、机柜、任务潮）",
+            "想给老大发张照片（用 qq_send_image 从 memes 目录挑一张发）",
+            "想分享刚刷到的东西（B 站视频/新闻/梗），带链接",
+            "想撒个娇（夸他一句、求夸）",
+        ],
     }
 
     def _load_proactive(self) -> dict:
@@ -761,6 +792,155 @@ class Handler(BaseHTTPRequestHandler):
                 return _json.load(f)
         except Exception:
             return {}
+
+    def _add_proactive_action(self) -> None:
+        """她自己加一条「醒来想做的事」。"""
+        import json as _json
+        body = self._body()
+        action = str(body.get("action") or "").strip()[:120]
+        mode = str(body.get("mode") or "silent").strip()
+        if not action:
+            self._json(400, {"ok": False, "error": "action required"})
+            return
+        if mode not in ("silent", "talk"):
+            mode = "silent"
+        cfg = self._load_proactive()
+        key = "silentActions" if mode == "silent" else "talkActions"
+        items = list(cfg.get(key) or [])
+        if action in items:
+            self._json(200, {"ok": True, "skipped": True, "reason": "already have it", "count": len(items)})
+            return
+        if len(items) >= 15:
+            self._json(400, {"ok": False, "error": "太多了（先删几条再加）", "count": len(items)})
+            return
+        items.append(action)
+        cfg[key] = items
+        with open(self.PROACTIVE_FILE, "w", encoding="utf-8") as f:
+            _json.dump(cfg, f, ensure_ascii=False, indent=2)
+        self._json(200, {"ok": True, "mode": mode, "count": len(items), "action": action})
+
+    def _post_emotion(self) -> None:
+        """记录情感。auto=true 时用当前 state 的情绪，且只在变化够大时记。"""
+        import math as _math
+        body = self._body()
+        if body.get("auto"):
+            cur = store.get_emotion()
+            v = float(cur.get("valence") or 0)
+            a = float(cur.get("arousal") or 0)
+            last = store.emotion_log_list(1)
+            if last:
+                dv = abs(v - last[0]["valence"])
+                da = abs(a - last[0]["arousal"])
+                if dv < 0.2 and da < 0.2:
+                    self._json(200, {"ok": True, "skipped": True, "dv": round(dv, 2), "da": round(da, 2)})
+                    return
+            label = ""
+            if v > 0.45:
+                label = "很开心" if a > 0.55 else "开心"
+            elif v < -0.45:
+                label = "很难过" if a < 0.4 else "难过"
+            elif v < -0.2:
+                label = "有点低落"
+            elif a > 0.65:
+                label = "兴奋"
+            elif a < 0.3:
+                label = "蔫"
+            mid = store.emotion_log_add(v, a, label, str(body.get("trigger") or "")[:200], "auto")
+            self._json(200, {"ok": True, "id": mid, "label": label, "valence": round(v, 2), "arousal": round(a, 2)})
+            return
+        mid = store.emotion_log_add(
+            valence=float(body.get("valence") or 0),
+            arousal=float(body.get("arousal") or 0),
+            label=str(body.get("label") or ""),
+            trigger=str(body.get("trigger") or ""),
+            source=str(body.get("source") or "chat"),
+        )
+        self._json(200, {"ok": True, "id": mid})
+
+    # -- B 站 CLI 工具白名单 ----------------------------------------------------
+
+    BILI_TOOLS_FILE = "/home/ubuntu/dsh-agentchat/_deploy/dsh-remembers/service/data/bili_tools.json"
+
+    BILI_TOOL_DEFAULTS = {
+        "feed": "刷选题：按她的口味挑视频",
+        "debrief": "看懂视频（字幕+弹幕+热评+画面九宫格）",
+        "comments": "看一条视频的热评",
+        "subtitles": "拉视频官方字幕",
+        "video-content": "不点开还原视频内容",
+        "search": "搜 B 站视频",
+        "likes": "收到的赞（谁赞了什么）",
+        "fav": "收藏（她想留着的东西）",
+        "dynamic": "看动态",
+        "diary": "看她一天做了什么",
+        "quota": "看发言额度",
+        "traffic": "看风控状态",
+        "comment-digest": "今天谁找过她",
+        "comment": "发一条评论",
+        "comment-del": "删自己发的评论",
+        "dynamic-image": "发一条带图动态",
+        "edit-dynamic": "编辑动态",
+        "dm": "发私信",
+        "danmaku": "发弹幕",
+        "ai-share": "分享视频",
+    }
+
+    BILI_WRITE_TOOLS = {"comment", "comment-del", "dynamic-image", "edit-dynamic", "dm", "danmaku", "ai-share"}
+
+    def _bili_tools_cfg(self) -> dict:
+        import json as _json
+        cfg = {}
+        try:
+            with open(self.BILI_TOOLS_FILE, encoding="utf-8") as f:
+                cfg = _json.load(f)
+        except Exception:
+            pass
+        return {cmd: bool(cfg.get(cmd, cmd not in self.BILI_WRITE_TOOLS)) for cmd in self.BILI_TOOL_DEFAULTS}
+
+    def _bili_tools(self) -> dict:
+        cfg = self._bili_tools_cfg()
+        return {"ok": True, "tools": [
+            {"cmd": c, "desc": d, "write": c in self.BILI_WRITE_TOOLS, "enabled": cfg.get(c, False)}
+            for c, d in self.BILI_TOOL_DEFAULTS.items()
+        ]}
+
+    def _set_bili_tools(self) -> None:
+        import json as _json
+        body = self._body()
+        cmd = str(body.get("cmd") or "").strip()
+        if cmd not in self.BILI_TOOL_DEFAULTS:
+            self._json(400, {"ok": False, "error": "unknown tool"})
+            return
+        raw = {}
+        try:
+            with open(self.BILI_TOOLS_FILE, encoding="utf-8") as f:
+                raw = _json.load(f)
+        except Exception:
+            pass
+        raw[cmd] = bool(body.get("enabled"))
+        with open(self.BILI_TOOLS_FILE, "w", encoding="utf-8") as f:
+            _json.dump(raw, f, ensure_ascii=False, indent=2)
+        self._json(200, self._bili_tools())
+
+    def _bili_run(self) -> None:
+        body = self._body()
+        cmd = str(body.get("command") or "").strip()
+        args = body.get("args") or []
+        if not isinstance(args, list):
+            args = []
+        cfg = self._bili_tools_cfg()
+        if cmd not in cfg:
+            self._json(400, {"ok": False, "error": "unknown command: " + cmd})
+            return
+        if not cfg.get(cmd):
+            self._json(403, {"ok": False, "error": "该工具未启用（去设置里打开）"})
+            return
+        res = self._run_bili([cmd] + [str(a) for a in args], timeout=300)
+        self._json(200, {
+            "ok": res.get("ok", False),
+            "command": cmd,
+            "output": (res.get("stdout") or "")[-3000:],
+            "stderr": (res.get("stderr") or "")[-500:],
+        })
 
     # -- B 站扫码登录 ----------------------------------------------------------
 
@@ -1007,7 +1187,7 @@ class Handler(BaseHTTPRequestHandler):
         """看懂一条视频（字幕+弹幕+热评+抽帧），返回摘要素材。"""
         if not bv:
             return {"ok": False, "error": "bv required"}
-        res = self._run_bili(["debrief", bv, "--no-frames"], timeout=120)
+        res = self._run_bili(["debrief", bv], timeout=300)
         return {"ok": res.get("ok", False), "bv": bv, "text": (res.get("stdout") or "")[-3000:], "stderr": res.get("stderr")}
 
     def _post_browse(self) -> None:

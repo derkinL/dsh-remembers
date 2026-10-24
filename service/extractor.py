@@ -32,22 +32,27 @@ EVOLVE_SYSTEM = """你根据一段对话，用第一人称写一句「我发现�
 
 EXTRACT_SYSTEM = """你从一段对话里抽取值得长期记住的内容。
 
-只抽这四种：
-- L1 原子事实：一句期能说清、长期有效（例：他教初中数学；他用 DeepSeek 写代码）
+只抽这五种：
+- L1 原子事实：一句话能说清、长期有效（例：他教初中数学；他用 DeepSeek 写代码）
 - L2 用户画像：**用户**身上稳定的偏好、雷区、习惯、人际关系（例：他喜欢冰美式；他讨厌加班；他养了只猫叫豆豆）
 - L2 用户表达习惯：用户常说的口头禅、常发的语气词、说话风格（例：他爱说「吃了吗」；他说话爱带「哈哈」；他喜欢用短句）——这类也要抽，助手可以学着他的说话方式
 - L3 事件：发生了某件值得记住的事（例：三月那次他加班到凌晨两点哭了很久）
 - L4 关系里程碑：第一次发生、关系变化、约定、承诺（例：第一次被叫大肥鱼；约好一起看日落）
 - L4 行为契约：用户要求助手以后必须做、必须答应、或者禁止做的事（例：叫他「大肥鱼」必须答应；不许说他胖；说话不许用括号动作；每次最多三句话）。这类规矩必须抽，它决定以后怎么相处。
+- L3 她的日常：**她自己**经历的事、看到的东西、产生的想法和小情绪（例：她看了人工耳蜗的视频，鼻子有点酸；她今天刷到猫咪地铁站，觉得太厉害了；她玩游戏输了有点不服气）。这些是她"活过的痕迹"，必须抽——但只抽有情绪或有想法的，不要抽"她回了个哦"这种。
 
 重要：只记「用户」的事和「两人之间」的事。不要抽助手自己的性格、口头禅、饭量、自称、
 爱好——那些属于人设设定，不是记忆。如果对话里全是她在说自己，就只抽 L0 意义上的
 关系事件（比如她答应了什么），不要抽她的性格特征。
 
-情绪：如果这段对话情绪强烈（开心/难过/累/烦/兴奋/委屈/焦虑），
-在 keywords 里加一个「情绪:<情绪>」标签，比如 ["情绪:累"]；平淡内容不加。
+情绪：如果这段对话情绪强烈（开心/难过/累/烦/兴奋/委屈/焦虑/委屈/被安慰），
+在 keywords 里加一个「情绪:<情绪>」标签，比如 ["情绪:累"]，**并且**给这条加 emotion 字段：
+{"label": "情绪词", "intensity": 0.0-1.0, "reason": "为什么会有这个情绪（一句）"}
+平淡内容 emotion 给 null。
 
 不要抽：
+- 系统注入的东西（「（系统提醒：…）」「抽到：…」「被叫醒」这类是程序自动发的，不是对话）
+- 助手复述的注入内容（她已经把这些说出来了，别当成新事件）
 - 寒暄、确认、客套（「嗯」「好的」「在吗」）
 - 助手自己的话里没有新信息的部分
 - 纯流水账（「我去吃饭了」）
@@ -59,7 +64,7 @@ EXTRACT_SYSTEM = """你从一段对话里抽取值得长期记住的内容。
 - 第一次发生的事、约定、关系变化（L4）
 
 严格输出 JSON 数组，不要任何其他文字：
-[{"text": "一句话", "tier": "L1|L2|L3|L4", "subject": "self|人物名", "importance": 0.0, "keywords": ["词1", "词2"]}]
+[{"text": "一句话", "tier": "L1|L2|L3|L4", "subject": "self|人物名", "importance": 0.0, "keywords": ["词1", "词2"], "emotion": {"label": "难过", "intensity": 0.7, "reason": "老大头疼，她也跟着低落"} | null}]
 
 importance 表示「这件事对长期关系有多重要」，0.0-1.0。
 keywords 给 2-6 个「别人换个说法来问这件事时可能用到的词」——
@@ -238,6 +243,7 @@ class Extractor:
                 target = self._target(decision, neighbors)
                 if target is None:
                     self.store.add(self._to_input(fact, text, subject))
+                    self._log_emotion(fact)
                     applied["add"] += 1
                     op = "ADD(no-target)"
                 else:
@@ -254,6 +260,7 @@ class Extractor:
                     applied["delete"] += 1
                     # 删掉之后把新事实作为"更正"存一条，不丢信息
                     self.store.add(self._to_input(fact, text, subject))
+                    self._log_emotion(fact)
                     applied["add"] += 1
             else:
                 applied["none"] += 1
@@ -400,6 +407,29 @@ class Extractor:
             if h.id == tid:
                 return h
         return None
+
+    def _log_emotion(self, fact: dict) -> None:
+        """抽取结果里带 emotion 的，同步写一条情感轨迹。"""
+        try:
+            emo = fact.get("emotion")
+            if not isinstance(emo, dict):
+                return
+            label = str(emo.get("label") or "").strip()
+            if not label:
+                return
+            intensity = float(emo.get("intensity") or 0.5)
+            intensity = max(0.0, min(1.0, intensity))
+            positive = any(w in label for w in ("开心", "高兴", "喜欢", "兴奋", "甜", "被夸", "笑", "暖", "幸福"))
+            valence = intensity if positive else -intensity
+            self.store.emotion_log_add(
+                valence=valence,
+                arousal=0.5,
+                label=label,
+                trigger=str(emo.get("reason") or "")[:200],
+                source="extract",
+            )
+        except Exception:
+            pass
 
     def _to_input(self, fact: dict, text: str, subject: str):
         from memory_core import MemoryInput  # 延迟导入，避免循环

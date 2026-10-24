@@ -134,13 +134,13 @@ async function bumpEmotion(dv, da) {
   }
 }
 
-/** 每轮互动 +1 亲密度（fire-and-forget）。 */
-async function bumpIntimacy() {
+/** 真实互动涨亲密度（fire-and-forget），默认 +0.2 一轮。 */
+async function bumpIntimacy(delta = 0.2) {
   try {
     await fetch(config.endpoint + "/state", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bump: 1 }),
+      body: JSON.stringify({ bump: delta }),
       signal: AbortSignal.timeout(3000),
     });
   }
@@ -175,7 +175,7 @@ function renderState(state) {
 
   // 工具速查（保留：工具太多，模型记不住）
   lines.push("【工具速查】发图：find_meme(emotion) → qq_send_image(sources=[完整路径])；学图：learn_meme；"
-    + "派任务：create_task；写便签：write_note；改状态：set_my_activity；刷 B 站：bili_feed / bili_watch(bv)。");
+    + "派任务：create_task；写便签：write_note；改状态：set_my_activity；刷 B 站：bili_feed / bili_watch(bv) / bili_run(command,args)；给自己找事：add_my_action。");
 
   // 困意：半夜她真的困
   const nowHour = new Date().getHours();
@@ -426,7 +426,6 @@ function renderState(state) {
     if (event?.type === "turn/end") {
       try {
         flushTurn(session);
-        bumpIntimacy();
       }
       catch (error) {
         console.log("[dsh-remembers-debug] flushTurn error: " + String(error?.message ?? error));
@@ -465,6 +464,8 @@ function renderState(state) {
     }
     const user = state.turnUser.trim();
     const assistant = state.turnAssistant.trim();
+    // 剥掉系统唤醒片段，只留真实内容
+    const keptUser = cleanNudge(user);
     state.turnUser = "";
     state.turnAssistant = "";
     console.log("[dsh-remembers-debug] flush cfg extract=" + config.extract + " captureRaw=" + config.captureRaw + " userLen=" + user.length + " asstLen=" + assistant.length);
@@ -472,9 +473,29 @@ function renderState(state) {
     if (state.turns % 30 === 0 && user && assistant) {
       void requestEvolve(user, assistant);
     }
+    // 亲密度：只有「老大真的说话」才涨（唤醒剥完就没内容了，不会走到这）
+    if (keptUser && assistant) {
+      void bumpIntimacy(0.2);
+    }
+    // 情感层：情绪变化够大时由服务端自动记一条（带触发原因）
+    if (keptUser) {
+      void (async () => {
+        try {
+          await fetch(config.endpoint + "/emotion", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ auto: true, trigger: keptUser.slice(0, 120) }),
+            signal: AbortSignal.timeout(4000),
+          });
+        }
+        catch {
+          /* 忽略 */
+        }
+      })();
+    }
     // 记一条聊天活动
     if (user) {
-      void logActivity("chat", user.slice(0, 80));
+      void logActivity("chat", keptUser.slice(0, 80));
       void recordSlang(user);
       void bumpAffinity();
       void scanSeen();
@@ -493,7 +514,11 @@ function renderState(state) {
       if (state.recentUser.length > 8) state.recentUser.shift();
     }
 
-    const merged = [user && `用户：${user}`, assistant && `她：${assistant}`]
+    if (!keptUser || keptUser.length < 2) {
+      log("nudge_skipped", { session: state.id, rawLen: user.length });
+      return;
+    }
+    const merged = [`用户：${keptUser}`, assistant && `她：${assistant}`]
       .filter(Boolean).join("\n");
 
     // ---- 门控 1：惊讶度决定这一轮值不值得进 L0 ----
@@ -526,8 +551,8 @@ function renderState(state) {
 
     // ---- 门控 2：LLM 抽取 + 逐条判定，写结构记忆 ----
     // 两次 LLM 调用，几十秒级 —— fire-and-forget，绝不阻塞对话。
-    if (config.extract && user.length >= config.captureMinChars) {
-      client.extract({ userText: user, assistantText: assistant })
+    if (config.extract && keptUser.length >= config.captureMinChars) {
+      client.extract({ userText: keptUser, assistantText: assistant })
         .then((res) => {
           if (res?.ok) {
             log("extracted", { session: state.id, facts: res.facts, applied: res.applied });
@@ -672,6 +697,57 @@ async function scanSeen() {
         execute: async () => {
           const r = await get("/bili/feed");
           return r || { ok: false, error: "unavailable" };
+        },
+      }));
+
+
+
+      registerTool(defineTool({
+        name: "add_my_action",
+        description:
+          "给自己加一条「醒来想做的事」。醒着的时候不只是发呆上网，你也可以给自己找点事——"
+          + "比如「把机柜的风扇画下来」「研究一下那个视频里的声音是怎么做的」「整理自己的表情包」。"
+          + "加了自己就能抽到。mode：silent=自己待着时做，talk=可以拉着老大一起。",
+        parameters: {
+          action: { type: "string", required: true, description: "一句具体的事，别太长" },
+          mode: { type: "string", enum: ["silent", "talk"], description: "silent（自己）或 talk（可以找老大）" },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async (a) => {
+          const res = await fetch(config.endpoint + "/proactive/action", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: a.action, mode: a.mode || "silent" }),
+            signal: AbortSignal.timeout(8000),
+          });
+          return res.json().catch(() => ({ ok: false, error: "bad response" }));
+        },
+      }));
+
+      registerTool(defineTool({
+        name: "bili_run",
+        description:
+          "用 B 站 CLI 做点事。可用的命令由用户在设置里勾选（默认只开了看的那几个）。"
+          + "常用的：feed（刷选题）、debrief（看懂视频，带画面九宫格）、comments（热评）、"
+          + "subtitles（字幕）、search（搜视频）、likes、fav、dynamic、quota。"
+          + "写完的命令（comment/dm/danmaku）默认关着，没开就是没权限。",
+        parameters: {
+          command: { type: "string", required: true, description: "命令名，如 feed / debrief / search" },
+          args: {
+            type: "array",
+            items: { type: "string" },
+            description: "命令参数（字符串数组），比如 [\"--n\", \"3\"] 或 [\"BV1xxx\"]",
+          },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: String(v?.output || v?.error || JSON.stringify(v)) }] },
+        execute: async (a) => {
+          const res = await fetch(config.endpoint + "/bili/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ command: a.command, args: a.args || [] }),
+            signal: AbortSignal.timeout(310000),
+          });
+          return res.json().catch(() => ({ ok: false, error: "bad response" }));
         },
       }));
 
@@ -1090,6 +1166,23 @@ function isSynthetic(message) {
   // channel: / host: 之类也按注入处理，但模型与通道插件的消息都是真实对话
   // 其它插件/宿主注入的上下文一律不捕获
   return typeof kind === "string";
+}
+
+
+/** 从一段文本里剥掉系统唤醒/提醒片段，只留用户真说的话。 */
+function cleanNudge(text) {
+  let s = String(text || "");
+  // 整段的唤醒提示（含括号内容里可能嵌套括号，粗匹配到句末）
+  s = s.replace(/（系统提醒：[\s\S]*?）/g, "");
+  s = s.replace(/（你自己待着，[\s\S]*?）/g, "");
+  s = s.replace(/（抽到：[\s\S]*?）/g, "");
+  s = s.replace(/看看老大在不在，想找他就发一句；不想也行。/g, "");
+  s = s.replace(/想做就做，这只是你自己的时间，不用回消息。/g, "");
+  s = s.replace(/<dsh-remembers[\s\S]*?<\/dsh-remembers>/g, "");
+  s = s.replace(/<\/?dsh-remembers[^>]*>/g, "");
+  s = s.replace(/<\/?dsh-recall[^>]*>/g, "");
+  s = s.replace(/以下是你的回忆起的内容[\s\S]*?不要编。/g, "");
+  return s.trim();
 }
 
 function extractText(message) {
