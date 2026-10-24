@@ -813,7 +813,8 @@ class Handler(BaseHTTPRequestHandler):
 
     BILI_CFG = os.path.join(DATA_DIR, "bili.json")
 
-    BILI_WHALE_CFG = "/home/ubuntu/.dsh/bili-whale.config.json"
+    # 按 HOME 分实例：主套 /home/ubuntu/.dsh/，第二套 /home/ubuntu/dsh2/.dsh/
+    BILI_WHALE_CFG = os.path.expanduser("~/.dsh/bili-whale.config.json")
 
     def _load_bili_whale(self) -> dict:
         import json as _json
