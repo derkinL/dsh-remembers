@@ -1555,9 +1555,12 @@ class Handler(BaseHTTPRequestHandler):
         没配 LLM 时返回 503 和 degraded 原因，调用方退回到直接存原话。
         """
         body = self._body()
+        # 兼容两种命名：插件发驼峰（userText），旧客户端发下划线（user_text）
+        _u = body.get("user_text") or body.get("userText") or ""
+        _a = body.get("assistant_text") or body.get("assistantText") or ""
         res = extractor.process_turn(
-            user_text=str(body.get("user_text") or ""),
-            assistant_text=str(body.get("assistant_text") or ""),
+            user_text=str(_u),
+            assistant_text=str(_a),
             subject=str(body.get("subject") or "self"),
         )
         self._json(200 if res.get("ok") else 503, res)

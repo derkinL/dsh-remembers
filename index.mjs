@@ -1189,11 +1189,12 @@ function isSynthetic(message) {
 function cleanNudge(text) {
   let s = String(text || "");
   // 整段的唤醒提示（含括号内容里可能嵌套括号，粗匹配到句末）
-  s = s.replace(/（系统提醒：[\s\S]*?）/g, "");
-  s = s.replace(/（你自己待着，[\s\S]*?）/g, "");
+  // 结尾锚定：动作文本里自带括号，非贪婪会提前断
+  s = s.replace(/（系统提醒：[\s\S]*?不想也行。）/g, "");
+  s = s.replace(/（你自己待着，[\s\S]*?不用回消息。）/g, "");
   s = s.replace(/（抽到：[\s\S]*?）/g, "");
-  s = s.replace(/看看老大在不在，想找他就发一句；不想也行。/g, "");
-  s = s.replace(/想做就做，这只是你自己的时间，不用回消息。/g, "");
+  // 残留的括号碎片
+  s = s.replace(/^[，,。.）)]+/, "");
   s = s.replace(/<dsh-remembers[\s\S]*?<\/dsh-remembers>/g, "");
   s = s.replace(/<\/?dsh-remembers[^>]*>/g, "");
   s = s.replace(/<\/?dsh-recall[^>]*>/g, "");

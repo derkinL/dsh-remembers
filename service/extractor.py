@@ -45,10 +45,17 @@ EXTRACT_SYSTEM = """你从一段对话里抽取值得长期记住的内容。
 爱好——那些属于人设设定，不是记忆。如果对话里全是她在说自己，就只抽 L0 意义上的
 关系事件（比如她答应了什么），不要抽她的性格特征。
 
-情绪：如果这段对话情绪强烈（开心/难过/累/烦/兴奋/委屈/焦虑/委屈/被安慰），
-在 keywords 里加一个「情绪:<情绪>」标签，比如 ["情绪:累"]，**并且**给这条加 emotion 字段：
-{"label": "情绪词", "intensity": 0.0-1.0, "reason": "为什么会有这个情绪（一句）"}
-平淡内容 emotion 给 null。
+情绪（重要）：如果这段对话情绪强烈（开心/难过/累/烦/兴奋/委屈/焦虑/被安慰/被夸），
+必须做两件事：
+1. keywords 里加一个「情绪:<情绪>」标签，比如 ["情绪:委屈"]
+2. **这一条必须带 emotion 字段，不能给 null**：
+   {"label": "委屈", "intensity": 0.8, "reason": "被领导当众骂，躲厕所哭了半小时"}
+
+示例（必须照这个格式）：
+{"text": "用户今天被领导当众骂了一顿", "tier": "L3", "subject": "self", "importance": 0.8,
+ "keywords": ["情绪:委屈", "领导", "职场"], "emotion": {"label": "委屈", "intensity": 0.8, "reason": "被当众骂，躲厕所哭"}}
+
+平淡内容（没有情绪）emotion 给 null。
 
 不要抽：
 - 系统注入的东西（「（系统提醒：…）」「抽到：…」「被叫醒」这类是程序自动发的，不是对话）
@@ -235,6 +242,9 @@ class Extractor:
                 # 判定失败时保守处理：直接 ADD，不乱改已有记忆
                 decision = {"op": "ADD", "reason": "decide-failed-fallback-add"}
 
+            # 情感轨迹：不管 op 是什么都记（重复的情绪事件也是情绪）
+            self._log_emotion(fact)
+
             op = str(decision.get("op") or "ADD").upper()
             if op == "ADD":
                 self.store.add(self._to_input(fact, text, subject))
@@ -243,7 +253,6 @@ class Extractor:
                 target = self._target(decision, neighbors)
                 if target is None:
                     self.store.add(self._to_input(fact, text, subject))
-                    self._log_emotion(fact)
                     applied["add"] += 1
                     op = "ADD(no-target)"
                 else:
@@ -260,7 +269,6 @@ class Extractor:
                     applied["delete"] += 1
                     # 删掉之后把新事实作为"更正"存一条，不丢信息
                     self.store.add(self._to_input(fact, text, subject))
-                    self._log_emotion(fact)
                     applied["add"] += 1
             else:
                 applied["none"] += 1
@@ -409,15 +417,28 @@ class Extractor:
         return None
 
     def _log_emotion(self, fact: dict) -> None:
-        """抽取结果里带 emotion 的，同步写一条情感轨迹。"""
+        """抽取结果里带 emotion 的，同步写一条情感轨迹。
+        LLM 没给 emotion 时，从 keywords 里的「情绪:xxx」兜底。"""
         try:
             emo = fact.get("emotion")
-            if not isinstance(emo, dict):
-                return
-            label = str(emo.get("label") or "").strip()
+            label = ""
+            reason = ""
+            intensity = 0.5
+            if isinstance(emo, dict):
+                label = str(emo.get("label") or "").strip()
+                reason = str(emo.get("reason") or "").strip()
+                intensity = float(emo.get("intensity") or 0.5)
+            if not label:
+                # 兜底：从 keywords 里找「情绪:xxx」
+                for kw in (fact.get("keywords") or []):
+                    s = str(kw)
+                    if s.startswith("情绪:") and len(s) > 3:
+                        label = s[3:].strip()
+                        reason = str(fact.get("text") or "")[:150]
+                        intensity = 0.6
+                        break
             if not label:
                 return
-            intensity = float(emo.get("intensity") or 0.5)
             intensity = max(0.0, min(1.0, intensity))
             positive = any(w in label for w in ("开心", "高兴", "喜欢", "兴奋", "甜", "被夸", "笑", "暖", "幸福"))
             valence = intensity if positive else -intensity
