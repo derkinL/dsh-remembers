@@ -274,6 +274,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
             self.end_headers()
             self.wfile.write(data)
+        elif path == "/bili/qr":
+            self._json(200, self._bili_qr())
+        elif path == "/bili/qr/poll":
+            key = (query.get("key") or [""])[0]
+            self._json(200, self._bili_qr_poll(key))
+        elif path == "/bili/cfg":
+            self._json(200, self._load_bili_whale())
         elif path == "/bili/status":
             self._json(200, self._bili_status())
         elif path == "/bili/feed":
@@ -281,8 +288,6 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/bili/debrief":
             bv = (query.get("bv") or [""])[0]
             self._json(200, self._bili_debrief(bv))
-        elif path == "/bili/toggle":
-            self._guard(lambda: self._bili_toggle())
         elif path == "/browse":
             self._json(200, store.browsed_list())
         elif path == "/proactive":
@@ -405,6 +410,14 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._post_meme())
         elif path == "/memes/used":
             self._guard(lambda: self._post_meme_used())
+        elif path == "/bili/cfg":
+            self._guard(lambda: self._set_bili_cfg())
+        elif path == "/bili/owner":
+            self._guard(lambda: self._set_bili_owner())
+        elif path == "/bili/login":
+            self._guard(lambda: self._bili_login())
+        elif path == "/bili/toggle":
+            self._guard(lambda: self._bili_toggle())
         elif path == "/browse":
             self._guard(self._post_browse)
         elif path == "/proactive":
@@ -740,6 +753,136 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return {}
 
+    # -- B 站扫码登录 ----------------------------------------------------------
+
+    def _bili_qr(self) -> dict:
+        """生成登录二维码（B 站官方 API），返回 SVG base64 + qrcode_key。"""
+        import base64 as _b64
+        import json as _json
+        import urllib.request as _ur
+        from io import BytesIO
+        try:
+            url = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate"
+            req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com/"})
+            with _ur.urlopen(req, timeout=10) as r:
+                data = _json.loads(r.read())
+            d = data.get("data") or {}
+            qr_url = d.get("url") or ""
+            key = d.get("qrcode_key") or ""
+            if not qr_url:
+                return {"ok": False, "error": "generate failed: " + str(data)[:200]}
+            import qrcode
+            import qrcode.image.svg
+            img = qrcode.make(qr_url, image_factory=qrcode.image.svg.SvgPathImage)
+            buf = BytesIO()
+            img.save(buf)
+            svg = "data:image/svg+xml;base64," + _b64.b64encode(buf.getvalue()).decode()
+            return {"ok": True, "key": key, "svg": svg}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def _bili_qr_poll(self, key: str) -> dict:
+        """轮询扫码状态；成功后保存凭据。code: 0=成功 86101=未扫 86090=已扫待确认 86038=过期。"""
+        import http.cookiejar as _cj
+        import json as _json
+        import os as _os
+        import urllib.request as _ur
+        if not key:
+            return {"ok": False, "error": "key required"}
+        try:
+            url = "https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=" + key
+            jar = _cj.CookieJar()
+            opener = _ur.build_opener(_ur.HTTPCookieProcessor(jar))
+            req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com/"})
+            with opener.open(req, timeout=10) as r:
+                data = _json.loads(r.read())
+            d = data.get("data") or {}
+            code = d.get("code")
+            if code == 0:
+                cookies = {c.name: c.value for c in jar}
+                sessdata = cookies.get("SESSDATA", "")
+                if not sessdata:
+                    return {"ok": False, "code": code, "error": "no SESSDATA in cookies"}
+                cred = {
+                    "sessdata": sessdata,
+                    "bili_jct": cookies.get("bili_jct", ""),
+                    "buvid3": cookies.get("buvid3", ""),
+                }
+                _os.makedirs("/home/ubuntu/.bili-ai", exist_ok=True)
+                with open("/home/ubuntu/.bili-ai/credentials.json", "w", encoding="utf-8") as f:
+                    _json.dump(cred, f, ensure_ascii=False, indent=2)
+                _os.chmod("/home/ubuntu/.bili-ai/credentials.json", 0o600)
+                # 验证
+                res = self._run_bili(["session"], timeout=40)
+                return {"ok": True, "code": 0, "saved": True,
+                        "verify_ok": res.get("ok", False),
+                        "verify_output": (res.get("stdout") or res.get("stderr") or "")[-400:]}
+            return {"ok": True, "code": code, "saved": False}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def _set_bili_cfg(self) -> None:
+        """设置 bili-whale 的任意配置字段（path 数组 + value）。"""
+        import json as _json
+        body = self._body()
+        path = body.get("path")
+        if not isinstance(path, list) or not path:
+            self._json(400, {"ok": False, "error": "path (array) required"})
+            return
+        bw = self._load_bili_whale()
+        cur = bw
+        for k in path[:-1]:
+            if not isinstance(cur.get(k), dict):
+                cur[k] = {}
+            cur = cur[k]
+        cur[path[-1]] = body.get("value")
+        with open(self.BILI_WHALE_CFG, "w", encoding="utf-8") as f:
+            _json.dump(bw, f, ensure_ascii=False, indent=2)
+        self._json(200, {"ok": True})
+
+    def _set_bili_owner(self) -> None:
+        """设置主人的 B 站 UID（她 @ 谁用）。"""
+        import json as _json
+        body = self._body()
+        mid = str(body.get("mid") or "").strip()
+        name = str(body.get("name") or "").strip()
+        bw = self._load_bili_whale()
+        bw["owner"] = {"mid": mid, "name": name}
+        with open(self.BILI_WHALE_CFG, "w", encoding="utf-8") as f:
+            _json.dump(bw, f, ensure_ascii=False, indent=2)
+        self._json(200, self._bili_status())
+
+    def _bili_login(self) -> None:
+        """填 SESSDATA 登录：写 ~/.bili-ai/credentials.json，然后让 CLI 验一下。"""
+        import json as _json
+        import os as _os
+        body = self._body()
+        sessdata = str(body.get("sessdata") or "").strip()
+        if not sessdata:
+            self._json(400, {"ok": False, "error": "sessdata required"})
+            return
+        cred = {
+            "sessdata": sessdata,
+            "bili_jct": str(body.get("bili_jct") or "").strip(),
+            "buvid3": str(body.get("buvid3") or "").strip(),
+        }
+        _os.makedirs("/home/ubuntu/.bili-ai", exist_ok=True)
+        try:
+            with open("/home/ubuntu/.bili-ai/credentials.json", "w", encoding="utf-8") as f:
+                _json.dump(cred, f, ensure_ascii=False, indent=2)
+            _os.chmod("/home/ubuntu/.bili-ai/credentials.json", 0o600)
+        except Exception as e:
+            self._json(500, {"ok": False, "error": "save failed: " + str(e)})
+            return
+        # 验证：CLI session
+        res = self._run_bili(["session"], timeout=40)
+        self._json(200, {
+            "ok": True,
+            "saved": True,
+            "verify_ok": res.get("ok", False),
+            "verify_output": (res.get("stdout") or res.get("stderr") or "")[-800:],
+        })
+
     def _bili_status(self) -> dict:
         import json as _json
         import os as _os
@@ -762,7 +905,9 @@ class Handler(BaseHTTPRequestHandler):
             "comment": bool((bw.get("listen") or {}).get("comment", False)),
             "dm": bool((bw.get("listen") or {}).get("dm", False)),
             "diaryPush": bool((bw.get("diary") or {}).get("push", False)),
-            "login_hint": "在设置页「养鱼」里扫码登录 B 站（登录后按她的偏好刷）",
+            "owner_mid": str((bw.get("owner") or {}).get("mid") or ""),
+            "owner_name": str((bw.get("owner") or {}).get("name") or ""),
+            "login_hint": "扫码登录 B 站（登录后按她的偏好刷）",
         }
 
     def _bili_toggle(self) -> None:
@@ -800,13 +945,31 @@ class Handler(BaseHTTPRequestHandler):
 
     def _bili_feed(self) -> dict:
         """她刷 B 站选题：优先用登录账号的 feed（带偏好），失败退回热门。"""
+        import re as _re
         res = self._run_bili(["feed", "--n", "3"], timeout=90)
         if res.get("ok") and res.get("stdout"):
-            titles = [ln.strip() for ln in res["stdout"].split("\n") if ln.strip() and "BV" in ln][:3]
+            items = []
+            seen = set()
+            for ln in res["stdout"].split("\n"):
+                s = ln.strip()
+                if "BV" not in s or s.startswith("已看过"):
+                    continue
+                # 从 "1. BV1xxx  175s  弹幕 197593  播放 31714252  猫咪地铁站通车啦  @up" 里抠标题
+                m = _re.search(r"播放\s+\d+\s+(.+?)(?:\s+@|$)", s)
+                title = (m.group(1) if m else s).strip()
+                if title in seen:
+                    continue
+                seen.add(title)
+                items.append(title[:120])
+                if len(items) >= 3:
+                    break
+            # 去重入库（最近已有同标题就跳过）
+            recent = {x["title"] for x in store.browsed_list(10)}
             with _lock:
-                for t_ in titles:
-                    store.browsed_add(t_[:120], "")
-            return {"ok": True, "source": "bili-feed", "items": titles}
+                for t_ in items:
+                    if t_ not in recent:
+                        store.browsed_add(t_, "")
+            return {"ok": True, "source": "bili-feed", "items": items}
         # 退回匿名热门
         try:
             import json as _json

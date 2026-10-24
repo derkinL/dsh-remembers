@@ -893,11 +893,24 @@ window.__ModuleLoader__.load({
         const [busy, setBusy] = React.useState(false);
         const [test, setTest] = React.useState(null);
         const [err, setErr] = React.useState(null);
+        const [sessdata, setSessdata] = React.useState("");
+        const [ownerMid, setOwnerMid] = React.useState("");
+        const [biliCfg, setBiliCfg] = React.useState(null);
+        const [ownerName, setOwnerName] = React.useState("");
+        const [qr, setQr] = React.useState(null);
+        const [qrState, setQrState] = React.useState(null);
+        const [biliJct, setBiliJct] = React.useState("");
+        const [buvid3, setBuvid3] = React.useState("");
+        const [loginMsg, setLoginMsg] = React.useState(null);
 
         const load = async () => {
           setErr(null);
           try {
-            setSt(await call("/bili/status"));
+            const s = await call("/bili/status");
+            setSt(s);
+            if (s && s.owner_mid) setOwnerMid(s.owner_mid);
+            if (s && s.owner_name) setOwnerName(s.owner_name);
+            try { setBiliCfg(await call("/bili/cfg")); } catch { setBiliCfg(null); }
           } catch (e) {
             setErr(e && e.message ? e.message : String(e));
             setSt(null);
@@ -907,6 +920,102 @@ window.__ModuleLoader__.load({
         React.useEffect(() => {
           void load();
         }, []);
+
+        const startQr = async () => {
+          setBusy(true);
+          setQrState("生成二维码…");
+          try {
+            const r = await call("/bili/qr");
+            if (!r.ok) {
+              setQrState("生成失败：" + (r.error || "unknown"));
+              return;
+            }
+            setQr(r);
+            setQrState("用手机 B 站扫码（然后用手机确认）");
+            void pollQr(r.key, 0);
+          } catch (e) {
+            setQrState("生成失败：" + (e && e.message ? e.message : String(e)));
+          } finally {
+            setBusy(false);
+          }
+        };
+
+        const pollQr = async (key, tries) => {
+          if (tries > 60) {
+            setQrState("二维码超时，重新生成吧");
+            setQr(null);
+            return;
+          }
+          await new Promise((r) => setTimeout(r, 3000));
+          try {
+            const r = await call("/bili/qr/poll?key=" + encodeURIComponent(key));
+            if (!r.ok) {
+              setQrState("出错了：" + (r.error || "unknown"));
+              return;
+            }
+            if (r.code === 0) {
+              setQrState("登录成功 ✓ " + (r.verify_output || "").slice(0, 60));
+              setQr(null);
+              await load();
+              return;
+            }
+            if (r.code === 86090) setQrState("已扫码，请在手机上点确认");
+            else if (r.code === 86038) {
+              setQrState("二维码过期了，重新生成");
+              setQr(null);
+              return;
+            }
+            void pollQr(key, tries + 1);
+          } catch (e) {
+            setQrState("轮询失败：" + (e && e.message ? e.message : String(e)));
+          }
+        };
+
+        const saveCfg = async (path, value) => {
+          try {
+            await call("/bili/cfg", { method: "POST", body: JSON.stringify({ path, value }) });
+            const c = await call("/bili/cfg");
+            setBiliCfg(c);
+          } catch (e) {
+            setErr(e && e.message ? e.message : String(e));
+          }
+        };
+
+        const saveOwner = async () => {
+          setBusy(true);
+          try {
+            await call("/bili/owner", { method: "POST", body: JSON.stringify({ mid: ownerMid.trim(), name: ownerName.trim() }) });
+            await load();
+          } catch (e) {
+            setErr(e && e.message ? e.message : String(e));
+          } finally {
+            setBusy(false);
+          }
+        };
+
+        const doLogin = async () => {
+          if (!sessdata.trim()) {
+            setLoginMsg("SESSDATA 必填");
+            return;
+          }
+          setBusy(true);
+          setLoginMsg(null);
+          try {
+            const r = await call("/bili/login", {
+              method: "POST",
+              body: JSON.stringify({ sessdata: sessdata.trim(), bili_jct: biliJct.trim(), buvid3: buvid3.trim() }),
+            });
+            setLoginMsg(r.verify_ok ? "登录成功 ✓ " + (r.verify_output || "").slice(0, 80) : "已保存，但验证没通过：" + (r.verify_output || "").slice(0, 120));
+            setSessdata("");
+            setBiliJct("");
+            setBuvid3("");
+            await load();
+          } catch (e) {
+            setLoginMsg("失败：" + (e && e.message ? e.message : String(e)));
+          } finally {
+            setBusy(false);
+          }
+        };
 
         const toggle = async () => {
           if (!st) return;
@@ -965,10 +1074,30 @@ window.__ModuleLoader__.load({
               h("span", { style: { fontSize: 13, fontWeight: 500 } }, "账号："),
               h("span", { style: S.muted }, st.logged_in ? "已登录 ✓" : "未登录（只能刷公开热门）"),
             ),
-            h("div", { style: { ...S.desc, fontSize: 12 } }, st.login_hint),
-            h("div", { style: S.row },
-              h("button", { style: S.btn(false), onClick: () => window.open("/dsh-bili/", "_blank") }, "打开 B 站设置页（登录）"),
+            h("div", { style: { ...S.desc, fontSize: 12 } },
+              st.logged_in ? "已登录，可以刷她自己的推荐了。" : "填 SESSDATA 登录（浏览器 F12 → Application → Cookies → bilibili.com 里复制）。",
             ),
+            !st.logged_in ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginTop: 6 } },
+              h("div", { style: S.row },
+                h("button", { style: S.btn(true), onClick: () => void startQr(), disabled: busy }, "扫码登录"),
+                qrState ? h("span", { style: S.muted }, qrState) : null,
+              ),
+              qr ? h("img", { src: qr.svg, style: { width: 180, height: 180, alignSelf: "center", background: "#fff", borderRadius: 8 } }) : null,
+              h("details", { style: { marginTop: 4 } },
+                h("summary", { style: { ...S.muted, cursor: "pointer" } }, "或者手动填 cookie（高级）"),
+                h("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginTop: 8 } },
+                  h("input", { style: S.input, placeholder: "SESSDATA（必填）", value: sessdata, onChange: (ev) => setSessdata(ev.target.value) }),
+                  h("div", { style: { display: "flex", gap: 8 } },
+                    h("input", { style: S.input, placeholder: "bili_jct（可选）", value: biliJct, onChange: (ev) => setBiliJct(ev.target.value) }),
+                    h("input", { style: S.input, placeholder: "buvid3（可选）", value: buvid3, onChange: (ev) => setBuvid3(ev.target.value) }),
+                  ),
+                  h("div", { style: S.row },
+                    h("button", { style: S.btn(false), onClick: () => void doLogin(), disabled: busy }, busy ? "验证中…" : "保存并验证"),
+                    loginMsg ? h("span", { style: S.muted }, loginMsg) : null,
+                  ),
+                ),
+              ),
+            ) : null,
           ),
 
           h("div", { style: S.card },
@@ -1001,6 +1130,93 @@ window.__ModuleLoader__.load({
               h("span", { style: { fontSize: 13 } }, "推送她的 B 站日记"),
             ),
           ),
+
+          h("div", { style: S.card },
+            h("div", { style: S.label }, "你在 B 站的 UID"),
+            h("div", { style: { ...S.muted, marginBottom: 6 } },
+              "她在评论区主动分享时 @ 谁。填你自己的 B 站 UID（个人主页地址里 space.bilibili.com/ 后面那串数字）。不填就不 @。"),
+            h("div", { style: { display: "flex", gap: 8 } },
+              h("input", { style: S.input, placeholder: "你的 B 站 UID（数字）", value: ownerMid, onChange: (ev) => setOwnerMid(ev.target.value) }),
+              h("input", { style: S.input, placeholder: "昵称（可选）", value: ownerName, onChange: (ev) => setOwnerName(ev.target.value) }),
+            ),
+            h("div", { style: S.row },
+              h("button", { style: S.btn(false), onClick: () => void saveOwner(), disabled: busy }, "保存 UID"),
+            ),
+          ),
+
+          biliCfg ? h("div", { style: S.card },
+            h("div", { style: S.label }, "更多设置（她刷 B 站的偏好）"),
+
+            h("div", { style: S.desc }, "口味（逗号分隔，影响 feed 选题）"),
+            h("div", { style: { display: "flex", gap: 8 } },
+              h("input", {
+                style: S.input, placeholder: "爱看：猫咪，科技",
+                defaultValue: ((biliCfg.preferences || {}).like || []).join("，"),
+                onBlur: (ev) => void saveCfg(["preferences", "like"], ev.target.value.split(/[,，]/).map((x) => x.trim()).filter(Boolean)),
+              }),
+              h("input", {
+                style: S.input, placeholder: "不爱看：恐怖，擦边",
+                defaultValue: ((biliCfg.preferences || {}).dislike || []).join("，"),
+                onBlur: (ev) => void saveCfg(["preferences", "dislike"], ev.target.value.split(/[,，]/).map((x) => x.trim()).filter(Boolean)),
+              }),
+            ),
+
+            h("div", { style: { ...S.desc, marginTop: 8 } }, "作息"),
+            h("div", { style: { display: "flex", gap: 8 } },
+              h("input", {
+                style: S.input, type: "number", placeholder: "今晚不看的概率 0-1",
+                defaultValue: ((biliCfg.night || {}).skipChance ?? 0.3),
+                onBlur: (ev) => void saveCfg(["night", "skipChance"], Number(ev.target.value)),
+              }),
+              h("input", {
+                style: S.input, type: "number", placeholder: "单次看几个",
+                defaultValue: ((biliCfg.night || {}).maxVideos ?? 6),
+                onBlur: (ev) => void saveCfg(["night", "maxVideos"], Number(ev.target.value)),
+              }),
+              h("input", {
+                style: S.input, type: "number", placeholder: "最小唤醒间隔(分)",
+                defaultValue: ((biliCfg.night || {}).minGapMin ?? 10),
+                onBlur: (ev) => void saveCfg(["night", "minGapMin"], Number(ev.target.value)),
+              }),
+            ),
+
+            h("div", { style: { ...S.desc, marginTop: 8 } }, "B 站发言用的人设（她开嘴时才用；平时走 QQ 那套卡）"),
+            h("div", { style: { display: "flex", gap: 8 } },
+              h("input", {
+                style: S.input, placeholder: "角色名",
+                defaultValue: ((biliCfg.persona || {}).name || ""),
+                onBlur: (ev) => void saveCfg(["persona", "name"], ev.target.value),
+              }),
+              h("input", {
+                style: S.input, placeholder: "怎么称呼你（默认 主人）",
+                defaultValue: ((biliCfg.persona || {}).ownerTitle || ""),
+                onBlur: (ev) => void saveCfg(["persona", "ownerTitle"], ev.target.value),
+              }),
+              h("input", {
+                style: S.input, placeholder: "怎么自称（默认 我）",
+                defaultValue: ((biliCfg.persona || {}).selfClaim || ""),
+                onBlur: (ev) => void saveCfg(["persona", "selfClaim"], ev.target.value),
+              }),
+            ),
+
+            h("div", { style: { ...S.desc, marginTop: 8 } }, "高级"),
+            h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
+              h("input", {
+                type: "checkbox",
+                checked: !!((biliCfg.share || {}).aiCommentGuard),
+                onChange: () => void saveCfg(["share", "aiCommentGuard"], !((biliCfg.share || {}).aiCommentGuard)),
+              }),
+              h("span", { style: { fontSize: 13 } }, "分享前检查疑似 AI 评论（超阈值暂缓）"),
+            ),
+            h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
+              h("input", {
+                type: "checkbox",
+                checked: !!((biliCfg.listen || {}).mentionSummary),
+                onChange: () => void saveCfg(["listen", "mentionSummary"], !((biliCfg.listen || {}).mentionSummary)),
+              }),
+              h("span", { style: { fontSize: 13 } }, "你 @ 她要总结时自动处理"),
+            ),
+          ) : null,
 
           h("div", { style: S.card },
             h("div", { style: S.label }, "测试一下她能刷到什么"),

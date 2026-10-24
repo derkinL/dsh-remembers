@@ -226,3 +226,13 @@ CREATE TABLE IF NOT EXISTS meme_seen (
   count      INTEGER NOT NULL DEFAULT 1,
   last_seen  REAL NOT NULL DEFAULT 0
 );
+
+-- ---------------------------------------------------------------------------
+-- 她的见闻：刷到的东西（B 站热门等）
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS browsed (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  title   TEXT NOT NULL DEFAULT '',
+  url     TEXT NOT NULL DEFAULT '',
+  ts      REAL NOT NULL DEFAULT 0
+);

@@ -1100,6 +1100,23 @@ class MemoryStore:
             for r in rows
         ]
 
+
+    # -- 她的见闻：刷到的东西 ------------------------------------------------
+
+    def browsed_add(self, title: str, url: str = "") -> None:
+        self.conn.execute(
+            "INSERT INTO browsed(title, url, ts) VALUES (?,?,?)",
+            (str(title)[:200], str(url)[:300], time.time()),
+        )
+        self.conn.commit()
+
+    def browsed_list(self, limit: int = 5) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT title, url, ts FROM browsed ORDER BY id DESC LIMIT ?",
+            (max(1, min(int(limit), 20)),),
+        ).fetchall()
+        return [{"title": r["title"], "url": r["url"], "ts": float(r["ts"] or 0)} for r in rows]
+
     def bump_intimacy(self, delta: float = 1.0) -> float:
         cur = self.get_state()
         return self.set_state(intimacy=cur["intimacy"] + delta)["intimacy"]

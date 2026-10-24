@@ -189,7 +189,7 @@ function renderState(state) {
   if (Array.isArray(state.browsed) && state.browsed.length > 0) {
     const titles = state.browsed.slice(0, 3).map((b) => String(b.title || "").slice(0, 30)).filter(Boolean).join("、");
     if (titles) {
-      lines.push(`你刚在 B 站刷到：${titles}。看到有意思的，可以跟老大说一嘴，或者写个便签记一句你的想法。`);
+      lines.push(`你刚在 B 站刷到：${titles}。看到有意思的，把链接和你的想法发给老大（别只写便签），也可以写便签记一句。`);
     }
   }
 
@@ -679,6 +679,8 @@ async function scanSeen() {
         name: "bili_watch",
         description:
           "看懂一条 B 站视频（字幕+弹幕+热评），不用真的点开。"
+          + "看完如果觉得有意思，主动把链接（https://www.bilibili.com/video/<BV号>）和你的感想发给老大——"
+          + "直接说一句「刚看了个视频…https://…」，别只在脑子里记着。"
           + "跟老大聊到某个视频、或者他发了 BV 号的时候用。",
         parameters: {
           bv: { type: "string", required: true, description: "BV 号，比如 BV1U3n46GEzY" },
