@@ -53,7 +53,8 @@ EXTRACT_SYSTEM = """你从一段对话里抽取值得长期记住的内容。
 爱好——那些属于人设设定，不是记忆。如果对话里全是她在说自己，就只抽 L0 意义上的
 关系事件（比如她答应了什么），不要抽她的性格特征。
 
-情绪（重要）：如果这段对话情绪强烈（开心/难过/累/烦/兴奋/委屈/焦虑/被安慰/被夸），
+情绪（重要）：只要对话里有一点点情绪（开心/难过/累/烦/兴奋/委屈/焦虑/被安慰/被夸/被逗笑/有点丧），
+就填 emotion，不要等"强烈"才填。intensity 按强弱给：轻微 0.3、明显 0.6、强烈 0.9。
 必须做两件事：
 1. keywords 里加一个「情绪:<情绪>」标签，比如 ["情绪:委屈"]
 2. **这一条必须带 emotion 字段，不能给 null**：
@@ -134,6 +135,7 @@ class ExtractConfig:
     # episode 摘要的输入上限：超了留后面那段，近况比开头重要
     episode_max_chars: int = 12000
     episode_per_turn_chars: int = 800
+    emotion_threshold: float = 0.2     # 情绪强度下限：低于这个不记 emotion_log
 
 
 class Extractor:
@@ -154,6 +156,33 @@ class Extractor:
 
 
 
+
+    def label_slang(self, phrase: str, context: str = "") -> dict:
+        """给一个词/短语生成词义和使用场景。返回 {meaning, example}。"""
+        if self.llm is None or not getattr(self.llm, "enabled", False):
+            return {}
+        prompt = (
+            f"词/短语：{phrase}\n"
+            + (f"出现时的上下文：{context[:300]}\n" if context else "")
+            + "请判断这个词是什么意思，以及什么时候会用。"
+        )
+        system = (
+            "你是个语言助手。判断用户给的一个词或短语：\n"
+            "1) 是什么意思（如果是网络梗/方言/圈内黑话，解释清楚）\n"
+            "2) 什么场景下会说出来（给一个具体例句，像真的在聊天）\n"
+            "输出 JSON：{\"meaning\": \"一句话解释\", \"example\": \"例句\"}\n"
+            "如果这个词很普通（如「好的」「吃饭」），meaning 写「常用词，无特殊含义」。"
+        )
+        try:
+            res = self.llm.chat_json(system, prompt, max_tokens=200)
+            if isinstance(res, dict):
+                return {
+                    "meaning": str(res.get("meaning") or "")[:120],
+                    "example": str(res.get("example") or "")[:160],
+                }
+        except Exception:
+            pass
+        return {}
 
     def label_meme(self, path: str) -> dict:
         """用视觉模型看一张图，返回 {emotion, caption, keywords}。"""
@@ -465,12 +494,15 @@ class Extractor:
                             break
                 if not label:
                     continue
-                if intensity > best_score:
+                if intensity > best_score and intensity >= float(getattr(self.config, "emotion_threshold", 0.2)):
                     best_score = intensity
                     best = (label, max(0.0, min(1.0, intensity)), reason)
             if best is None:
                 return
             label, intensity, reason = best
+            # 去掉开头自称污染（本澜我下班了 → 我下班了）
+            import re as _re
+            reason = _re.sub(r"^(本澜|她|澜澜|咱澜|启)[，、\s]*", "", str(reason or ""))
             # 去重：同 label 或同 trigger 前缀，30 分钟内不重复
             try:
                 recent = self.store.emotion_log_list(8)
@@ -479,7 +511,8 @@ class Extractor:
                 for r in recent:
                     if (now_ts - float(r.get("ts") or 0)) >= 1800:
                         continue
-                    if r.get("label") == label:
+                    # 只在「同标签且同触发」时才算重复；同标签不同事 → 允许记
+                    if r.get("label") == label and trig_key and str(r.get("trigger") or "")[:12] == trig_key:
                         return
                     if trig_key and str(r.get("trigger") or "")[:12] == trig_key:
                         return

@@ -236,6 +236,18 @@ window.__ModuleLoader__.load({
           set({ provider: key, llm_base: p.llm_base, llm_model: p.llm_model });
         };
 
+
+        const removeAction = (texts, enabled, i, setTexts, setEnabled) => {
+          const newTexts = texts.filter((_, j) => j !== i);
+          const newEnabled = {};
+          newTexts.forEach((_, j) => {
+            const srcIdx = j < i ? j : j + 1;
+            newEnabled[j] = enabled[srcIdx] !== false;
+          });
+          setTexts(newTexts);
+          setEnabled(newEnabled);
+        };
+
         const save = async () => {
           setSaving(true);
           setNotice(null);
@@ -402,33 +414,21 @@ window.__ModuleLoader__.load({
                       }),
                     ),
 
-                    h(Field, {
-                      label: "惊讶度阈值",
-                      hint: "低于这个值的一轮对话不进长期记忆。0.35 起步；觉得她记得太碎就调高，太健忘就调低。",
-                    },
-                      h("input", {
-                        style: S.input, type: "number", step: "0.05", min: "0", max: "1",
-                        value: draft.surprisal_threshold,
-                        onChange: (ev) => set({ surprisal_threshold: ev.target.value }),
-                      }),
-                    ),
-
-                    h("label", { style: { ...S.row, cursor: "pointer", fontSize: 13 } },
-                      h("input", {
-                        type: "checkbox", checked: !!draft.extract,
-                        onChange: (ev) => set({ extract: ev.target.checked }),
-                      }),
-                      "自动抽取结构记忆（每轮多两次模型调用，会花钱）",
-                    ),
                   )
                 : null,
             ),
           ),
 
-          notice ? h("div", { style: S.notice(notice.kind) }, notice.text) : null,
-
-          h("div", { style: S.footer },
-            h("button", { type: "button", style: S.btn(false), onClick: cancel, disabled: saving }, "取消"),
+          h("div", {
+            style: {
+              position: "fixed", right: 24, top: "50%", transform: "translateY(-50%)",
+              display: "flex", flexDirection: "column", alignItems: "stretch", gap: 8,
+              background: "#ffffff", padding: "12px 16px", borderRadius: 12,
+              border: "1px solid rgba(0,0,0,.08)", boxShadow: "0 8px 24px rgba(0,0,0,.12)", zIndex: 9999,
+              minWidth: 140,
+            },
+          },
+            notice ? h("div", { style: { fontSize: 12, color: notice.kind === "error" ? "#c0392b" : "#2fa36b", textAlign: "center" } }, notice.text) : null,
             h("button", { type: "button", style: S.btn(true), onClick: save, disabled: saving },
               saving ? "保存中…" : "保存"),
           ),
@@ -1068,7 +1068,11 @@ window.__ModuleLoader__.load({
       // ---------------------------------------------------------------------
       function ProactiveSection() {
         const [cfg, setCfg] = React.useState(null);
+        const [qqBusy, setQqBusy] = React.useState(false);
+        const [qqMsg, setQqMsg] = React.useState(null);
         const [silentActions, setSilentActions] = React.useState([]);
+        const [silentActionEnabled, setSilentActionEnabled] = React.useState({});
+        const [talkActionEnabled, setTalkActionEnabled] = React.useState({});
         const [talkActions, setTalkActions] = React.useState([]);
         const [newAction, setNewAction] = React.useState({ silent: "", talk: "" });
         const [msg, setMsg] = React.useState(null);
@@ -1078,10 +1082,27 @@ window.__ModuleLoader__.load({
           setErr(null);
           try {
             const c = await call("/proactive");
+            const parseActions = (arr) => {
+              const texts = [];
+              const enabled = {};
+              (Array.isArray(arr) ? arr : []).forEach((a, i) => {
+                if (a && typeof a === "object") {
+                  texts.push(String(a.text || ""));
+                  enabled[i] = a.enabled !== false;
+                } else {
+                  texts.push(String(a || ""));
+                  enabled[i] = true;
+                }
+              });
+              return { texts, enabled };
+            };
+            const sp = parseActions(c.silentActions);
+            const tp = parseActions(c.talkActions);
             setCfg(c);
-            setSilentActions(Array.isArray(c.silentActions) ? c.silentActions : []);
-            setTalkActions(Array.isArray(c.talkActions) ? c.talkActions : []);
-            setCfg(c);
+            setSilentActions(sp.texts);
+            setTalkActions(tp.texts);
+            setSilentActionEnabled(sp.enabled);
+            setTalkActionEnabled(tp.enabled);
           } catch (e) {
             setErr(e && e.message ? e.message : String(e));
             setCfg(null);
@@ -1095,7 +1116,16 @@ window.__ModuleLoader__.load({
         const save = async () => {
           if (!cfg) return;
           try {
-            await call("/proactive", { method: "POST", body: JSON.stringify({ ...cfg, silentActions, talkActions }) });
+            const packActions = (texts, enabled) =>
+              texts.map((txt, i) => ({ text: txt, enabled: enabled[i] !== false }));
+            await call("/proactive", {
+              method: "POST",
+              body: JSON.stringify({
+                ...cfg,
+                silentActions: packActions(silentActions, silentActionEnabled),
+                talkActions: packActions(talkActions, talkActionEnabled),
+              }),
+            });
             setMsg("已保存");
             setErr(null);
           } catch (e) {
@@ -1120,16 +1150,25 @@ window.__ModuleLoader__.load({
           hint ? h("div", { style: S.muted }, hint) : null,
         );
 
-        const toggle = (key, label, hint) => h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
-          h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
-            h("input", {
-              type: "checkbox",
-              checked: !!cfg[key],
-              onChange: (ev) => setCfg({ ...cfg, [key]: ev.target.checked }),
-            }),
+        const toggle = (key, label, hint) => h("label", {
+          style: {
+            display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
+            padding: "10px 12px", borderRadius: 8, marginBottom: 8,
+            border: "1.5px solid " + (cfg[key] ? "#4084ff" : "rgba(0,0,0,.10)"),
+            background: cfg[key] ? "rgba(64,132,255,.04)" : "#ffffff",
+            transition: "border-color .15s, background .15s",
+          },
+        },
+          h("input", {
+            type: "checkbox",
+            checked: !!cfg[key],
+            onChange: (ev) => setCfg({ ...cfg, [key]: ev.target.checked }),
+            style: { marginTop: 2 },
+          }),
+          h("span", { style: { display: "flex", flexDirection: "column", gap: 2 } },
             h("span", { style: { fontSize: 13, fontWeight: 500 } }, label),
+            hint ? h("span", { style: { ...S.muted, fontSize: 12 } }, hint) : null,
           ),
-          hint ? h("div", { style: { ...S.muted, marginLeft: 24 } }, hint) : null,
         );
 
         return h("div", { style: S.wrap },
@@ -1137,6 +1176,7 @@ window.__ModuleLoader__.load({
             "定时把她叫醒。醒来之后她想干嘛（发呆 / 上网 / 找你 / 发图）由她自己决定——"
             + "关掉「允许发消息」就是只唤醒、不打扰。",
           ),
+
 
           h("div", { style: S.card },
             toggle("enabled", "自动唤醒", "总开关：关掉后完全不叫醒她"),
@@ -1149,10 +1189,25 @@ window.__ModuleLoader__.load({
               "每次唤醒随机抽一条当作她这轮的状态提示。静默=她自己待着，说话=可以找你。改完点下面的保存。"),
 
             h("div", { style: { ...S.muted, fontSize: 11, marginTop: 4 } }, "静默时（自己待着）"),
-            h("div", { style: { display: "flex", flexDirection: "column", gap: 3, marginTop: 4 } },
-              silentActions.map((a, i) => h("div", { key: "s" + i, style: { display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12 } },
-                h("span", { style: { flex: 1, lineHeight: "18px" } }, "· " + a),
-                h("span", { style: { cursor: "pointer", opacity: 0.55, padding: "0 4px" }, onClick: () => setSilentActions(silentActions.filter((_, j) => j !== i)) }, "×"),
+            h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 } },
+              silentActions.map((a, i) => h("label", {
+                key: "s" + i,
+                style: {
+                  display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, cursor: "pointer",
+                  padding: "8px 10px", borderRadius: 8,
+                  border: "1.5px solid " + (silentActionEnabled[i] !== false ? "#4084ff" : "rgba(0,0,0,.10)"),
+                  background: silentActionEnabled[i] !== false ? "rgba(64,132,255,.04)" : "#ffffff",
+                  transition: "border-color .15s, background .15s",
+                },
+              },
+                h("input", {
+                  type: "checkbox",
+                  checked: silentActionEnabled[i] !== false,
+                  onChange: (ev) => { ev.stopPropagation(); setSilentActionEnabled((prev) => ({ ...prev, [i]: prev[i] === false })); },
+                  style: { marginTop: 2, flexShrink: 0 },
+                }),
+                h("span", { style: { flex: 1, lineHeight: "18px" } }, a),
+                h("span", { style: { cursor: "pointer", opacity: 0.55, padding: "0 4px", fontSize: 14, lineHeight: "18px" }, onClick: (ev) => { ev.preventDefault(); ev.stopPropagation(); removeAction(silentActions, silentActionEnabled, i, setSilentActions, setSilentActionEnabled); } }, "×"),
               )),
             ),
             h("div", { style: { display: "flex", gap: 6, marginTop: 6 } },
@@ -1179,10 +1234,25 @@ window.__ModuleLoader__.load({
             ),
 
             h("div", { style: { ...S.muted, fontSize: 11, marginTop: 14 } }, "说话时（可以找你）"),
-            h("div", { style: { display: "flex", flexDirection: "column", gap: 3, marginTop: 4 } },
-              talkActions.map((a, i) => h("div", { key: "t" + i, style: { display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12 } },
-                h("span", { style: { flex: 1, lineHeight: "18px" } }, "· " + a),
-                h("span", { style: { cursor: "pointer", opacity: 0.55, padding: "0 4px" }, onClick: () => setTalkActions(talkActions.filter((_, j) => j !== i)) }, "×"),
+            h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 } },
+              talkActions.map((a, i) => h("label", {
+                key: "t" + i,
+                style: {
+                  display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, cursor: "pointer",
+                  padding: "8px 10px", borderRadius: 8,
+                  border: "1.5px solid " + (talkActionEnabled[i] !== false ? "#4084ff" : "rgba(0,0,0,.10)"),
+                  background: talkActionEnabled[i] !== false ? "rgba(64,132,255,.04)" : "#ffffff",
+                  transition: "border-color .15s, background .15s",
+                },
+              },
+                h("input", {
+                  type: "checkbox",
+                  checked: talkActionEnabled[i] !== false,
+                  onChange: (ev) => { ev.stopPropagation(); setTalkActionEnabled((prev) => ({ ...prev, [i]: prev[i] === false })); },
+                  style: { marginTop: 2, flexShrink: 0 },
+                }),
+                h("span", { style: { flex: 1, lineHeight: "18px" } }, a),
+                h("span", { style: { cursor: "pointer", opacity: 0.55, padding: "0 4px", fontSize: 14, lineHeight: "18px" }, onClick: (ev) => { ev.preventDefault(); ev.stopPropagation(); removeAction(talkActions, talkActionEnabled, i, setTalkActions, setTalkActionEnabled); } }, "×"),
               )),
             ),
             h("div", { style: { display: "flex", gap: 6, marginTop: 6 } },
@@ -1236,9 +1306,17 @@ window.__ModuleLoader__.load({
             ),
           ),
 
-          h("div", { style: S.row },
+          h("div", {
+            style: {
+              position: "fixed", right: 24, top: "50%", transform: "translateY(-50%)",
+              display: "flex", flexDirection: "column", alignItems: "stretch", gap: 8,
+              background: "#ffffff", padding: "12px 16px", borderRadius: 12,
+              border: "1px solid rgba(0,0,0,.08)", boxShadow: "0 8px 24px rgba(0,0,0,.12)", zIndex: 9999,
+              minWidth: 140,
+            },
+          },
+            msg ? h("div", { style: { fontSize: 12, color: msg.includes("失败") ? "#c0392b" : "#2fa36b", textAlign: "center" } }, msg) : null,
             h("button", { style: S.btn(true), onClick: () => void save() }, "保存"),
-            msg ? h("span", { style: S.muted }, msg) : null,
           ),
         );
       }
@@ -1347,6 +1425,7 @@ window.__ModuleLoader__.load({
         const [err, setErr] = React.useState(null);
         const [sessdata, setSessdata] = React.useState("");
         const [ownerMid, setOwnerMid] = React.useState("");
+        const ownerInit = React.useRef("");
         const [biliCfg, setBiliCfg] = React.useState(null);
         const [biliTools, setBiliTools] = React.useState(null);
         const [biliForm, setBiliForm] = React.useState({});
@@ -1366,6 +1445,7 @@ window.__ModuleLoader__.load({
             setSt(s);
             if (s && s.owner_mid) setOwnerMid(s.owner_mid);
             if (s && s.owner_name) setOwnerName(s.owner_name);
+            ownerInit.current = (s && s.owner_mid) || "";
             try {
               const c = await call("/bili/cfg");
               setBiliCfg(c);
@@ -1588,34 +1668,48 @@ window.__ModuleLoader__.load({
             ) : null,
           ),
 
-          h("div", { style: S.card },
-            h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
-              h("input", { type: "checkbox", checked: !!st.enabled, onChange: () => void toggle(), disabled: busy }),
-              h("span", { style: { fontSize: 13, fontWeight: 500 } }, "启用 B 站功能"),
+          h("label", { style: {
+            display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
+            padding: "14px 16px", borderRadius: 12,
+            border: "1.5px solid " + (st.enabled ? "#4084ff" : "rgba(0,0,0,.10)"),
+            background: st.enabled ? "rgba(64,132,255,.04)" : "#ffffff",
+            transition: "border-color .15s, background .15s",
+          } },
+            h("input", { type: "checkbox", checked: !!st.enabled, onChange: () => void toggle(), disabled: busy, style: { marginTop: 3 } }),
+            h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+              h("span", { style: { fontSize: 13, fontWeight: 600 } }, "启用 B 站功能"),
+              h("span", { style: { ...S.muted, fontSize: 12 } },
+                "关掉后她不会用 bili_feed / bili_watch，也不会同步 B 站活动。"),
             ),
-            h("div", { style: { ...S.muted, marginLeft: 24 } },
-              "关掉后她不会用 bili_feed / bili_watch，也不会同步 B 站活动。"),
           ),
 
           biliTools ? h("div", { style: S.card },
             h("div", { style: S.label }, "她能用的 B 站工具"),
             h("div", { style: { ...S.muted, marginBottom: 8 } },
               "勾上的命令她才能调。只读的默认开着，写操作（评论/私信/弹幕）默认关——想让她能说再打开。"),
-            ...(biliTools.tools || []).map((tool) =>
-              h("label", {
-                key: tool.cmd,
-                style: { display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginBottom: 6 },
-              },
-                h("input", {
-                  type: "checkbox",
-                  checked: !!tool.enabled,
-                  onChange: () => void toggleTool(tool.cmd),
-                  style: { marginTop: 3 },
-                }),
-                h("span", { style: { display: "flex", flexDirection: "column" } },
-                  h("span", { style: { fontSize: 13 } },
-                    tool.cmd + (tool.write ? "（写）" : "")),
-                  h("span", { style: { ...S.muted, fontSize: 12 } }, tool.desc),
+            h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, alignItems: "stretch" } },
+              ...(biliTools.tools || []).map((tool) =>
+                h("label", {
+                  key: tool.cmd,
+                  style: {
+                    display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
+                    padding: "10px 12px", borderRadius: 8, height: "100%", boxSizing: "border-box",
+                    border: "1.5px solid " + (tool.enabled ? "#4084ff" : "rgba(0,0,0,.10)"),
+                    background: tool.enabled ? "rgba(64,132,255,.04)" : "#ffffff",
+                    transition: "border-color .15s, background .15s",
+                  },
+                },
+                  h("input", {
+                    type: "checkbox",
+                    checked: !!tool.enabled,
+                    onChange: () => void toggleTool(tool.cmd),
+                    style: { marginTop: 3, flexShrink: 0 },
+                  }),
+                  h("span", { style: { display: "flex", flexDirection: "column", minWidth: 0 } },
+                    h("span", { style: { fontSize: 13, fontWeight: tool.enabled ? 600 : 400 } },
+                      tool.cmd + (tool.write ? "（写）" : "")),
+                    h("span", { style: { ...S.muted, fontSize: 12 } }, tool.desc),
+                  ),
                 ),
               ),
             ),
@@ -1629,10 +1723,7 @@ window.__ModuleLoader__.load({
               h("input", { style: S.input, placeholder: "你的 B 站 UID（数字）", value: ownerMid, onChange: (ev) => setOwnerMid(ev.target.value) }),
               h("input", { style: S.input, placeholder: "昵称（可选）", value: ownerName, onChange: (ev) => setOwnerName(ev.target.value) }),
             ),
-            h("div", { style: S.row },
-              h("button", { style: S.btn(false), onClick: () => void saveOwner(), disabled: busy }, busy ? "保存中…" : "保存 UID"),
-              ownerMsg ? h("span", { style: { fontSize: 12, color: ownerMsg.includes("失败") ? "#c0392b" : "#2fa36b" } }, ownerMsg) : h("span", { style: S.muted }, "填了 UID 才能 @ 你") ,
-            ),
+            ownerMsg ? h("div", { style: { fontSize: 12, color: ownerMsg.includes("失败") ? "#c0392b" : "#2fa36b", marginTop: 6 } }, ownerMsg) : null,
           ),
 
           biliCfg ? (() => {
@@ -1643,6 +1734,14 @@ window.__ModuleLoader__.load({
               setBusy(true);
               setErr(null);
               try {
+              // 一起保存 UID（只有用户真改过才写，避免空值覆盖）
+              try {
+                if (ownerMid.trim() !== (ownerInit.current || "")) {
+                  await call("/bili/owner", { method: "POST", body: JSON.stringify({ mid: ownerMid.trim(), name: ownerName.trim() }) });
+                  ownerInit.current = ownerMid.trim();
+                }
+              } catch (e) { /* UID 失败不影响主配置 */ }
+
                 await Promise.all([
                   call("/bili/cfg", { method: "POST", body: JSON.stringify({ path: ["preferences", "like"], value: Array.isArray(f.like) ? f.like : [] }) }),
                   call("/bili/cfg", { method: "POST", body: JSON.stringify({ path: ["preferences", "dislike"], value: Array.isArray(f.dislike) ? f.dislike : [] }) }),
@@ -1684,9 +1783,17 @@ window.__ModuleLoader__.load({
                 placeholder: "自己加一个（回车）",
               }),
 
-                h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 12 } },
-                h("button", { style: S.btn(true), onClick: () => void saveAll(), disabled: busy }, busy ? "保存中…" : "保存全部更改"),
-                savedAt ? h("span", { style: S.muted }, "已保存 " + savedAt) : h("span", { style: S.muted }, "改完点这里保存"),
+                h("div", {
+                  style: {
+                    position: "fixed", right: 24, top: "50%", transform: "translateY(-50%)",
+                    display: "flex", flexDirection: "column", alignItems: "stretch", gap: 8,
+                    background: "#ffffff", padding: "12px 16px", borderRadius: 12,
+                    border: "1px solid rgba(0,0,0,.08)", boxShadow: "0 8px 24px rgba(0,0,0,.12)", zIndex: 9999,
+                    minWidth: 140,
+                  },
+                },
+                savedAt ? h("div", { style: { fontSize: 12, color: "#2fa36b", textAlign: "center" } }, "已保存 " + savedAt) : null,
+                h("button", { style: S.btn(true), onClick: () => void saveAll(), disabled: busy }, busy ? "保存中…" : "保存"),
               ),
             );
           })() : null,
@@ -1801,6 +1908,38 @@ window.__ModuleLoader__.load({
           }
         };
 
+        const [memCfg, setMemCfg] = React.useState(null);
+        const [memCfgMsg, setMemCfgMsg] = React.useState(null);
+
+        const loadMemCfg = async () => {
+          try {
+            const c = await call("/config");
+            const cur = (c && c.current) || {};
+            setMemCfg({
+              extract: !!cur.extract,
+              surprisal_threshold: cur.surprisal_threshold != null ? cur.surprisal_threshold : 0.35,
+              emotion_threshold: cur.emotion_threshold != null ? cur.emotion_threshold : 0.2,
+              diary_enabled: cur.diary_enabled !== false,
+              evolve_enabled: cur.evolve_enabled !== false,
+              sleep_enabled: cur.sleep_enabled !== false,
+              episode_enabled: cur.episode_enabled !== false,
+            });
+          } catch (e) {
+            setMemCfgMsg("读取失败：" + (e && e.message ? e.message : String(e)));
+          }
+        };
+
+        const patchMemCfg = async (patch) => {
+          const next = { ...(memCfg || {}), ...patch };
+          setMemCfg(next);
+          try {
+            await call("/config", { method: "POST", body: JSON.stringify(patch) });
+            setMemCfgMsg(null);
+          } catch (e) {
+            setMemCfgMsg("保存失败：" + (e && e.message ? e.message : String(e)));
+          }
+        };
+
         const load = async (t, query) => {
           setBusy(true);
           setErr(null);
@@ -1820,6 +1959,7 @@ window.__ModuleLoader__.load({
         React.useEffect(() => {
           void load("all", "");
           void loadState();
+          void loadMemCfg();
         }, []);
 
         const fmt = (ts) => {
@@ -1841,6 +1981,143 @@ window.__ModuleLoader__.load({
           h("div", { style: S.desc },
             "她记得的所有东西。L0 是原话、L1 是事实、L2 是你的画像、L3 是发生过的事、L4 是里程碑和约定。",
           ),
+          h("div", { style: S.card },
+            h("div", { style: { ...S.label, marginBottom: 8 } }, "记忆开关"),
+            h("label", {
+              style: {
+                display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
+                padding: "10px 12px", borderRadius: 8,
+                border: "1.5px solid " + (memCfg && memCfg.extract ? "#4084ff" : "rgba(0,0,0,.10)"),
+                background: memCfg && memCfg.extract ? "rgba(64,132,255,.04)" : "#ffffff",
+                transition: "border-color .15s, background .15s",
+              },
+            },
+              h("input", {
+                type: "checkbox",
+                checked: !!(memCfg && memCfg.extract),
+                onChange: (ev) => void patchMemCfg({ extract: ev.target.checked }),
+                style: { marginTop: 2 },
+              }),
+              h("span", { style: { display: "flex", flexDirection: "column", gap: 3 } },
+                h("span", { style: { fontSize: 13, fontWeight: 500 } }, "自动提炼记忆（L1-L4）"),
+                h("span", { style: { ...S.muted, fontSize: 12 } },
+                  "开着：每轮用对话模型从聊天里提炼事实/画像/事件，多两次模型调用（花钱）。"),
+                h("span", { style: { ...S.muted, fontSize: 12 } },
+                  "关掉：聊天不再产生新的提炼记忆（原话 L0 仍按惊讶阈值记录），日记/自我认知照常。"),
+              ),
+            ),
+            h("div", { style: { marginTop: 14 } },
+              h("div", { style: { ...S.label, marginBottom: 8 } }, "她用不用这些能力（都烧 token）"),
+              h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } },
+                ...[
+                  ["diary_enabled", "写日记", "每天 23:00 把当天的事写成第一人称日记"],
+                  ["evolve_enabled", "演化自我认知", "每 30 轮悟一句「我发现自己……」"],
+                  ["episode_enabled", "事件总结", "长对话攒够后压成一条「这段时间发生了什么」"],
+                ].map(([key, label, desc]) =>
+                  h("label", {
+                    key: key,
+                    style: {
+                      display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
+                      padding: "10px 12px", borderRadius: 8,
+                      border: "1.5px solid " + (memCfg && memCfg[key] ? "#4084ff" : "rgba(0,0,0,.10)"),
+                      background: memCfg && memCfg[key] ? "rgba(64,132,255,.04)" : "#ffffff",
+                      transition: "border-color .15s, background .15s",
+                    },
+                  },
+                    h("input", {
+                      type: "checkbox",
+                      checked: !!(memCfg && memCfg[key]),
+                      onChange: (ev) => void patchMemCfg({ [key]: ev.target.checked }),
+                      style: { marginTop: 2, flexShrink: 0 },
+                    }),
+                    h("span", { style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0 } },
+                      h("span", { style: { fontSize: 13, fontWeight: memCfg && memCfg[key] ? 600 : 400 } }, label),
+                      h("span", { style: { ...S.muted, fontSize: 11 } }, desc),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            h("div", { style: { marginTop: 14 } },
+              h("div", { style: { ...S.label, marginBottom: 4 } }, "原文记多细（L0 惊讶阈值）"),
+              h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 8 } },
+                "她说的每句话都要和上文比一次「差多远」，过线才存原文。选一档，即时生效。"),
+              h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } },
+                ...[
+                  [0.15, "全都记", "连「嗯」「好的」都存，原话最全但最占地方"],
+                  [0.25, "宽松", "日常闲聊基本都记，只跳过重复的"],
+                  [0.35, "平衡（默认）", "跳过寒暄和重复，正常的都记"],
+                  [0.5, "严格", "只记有明显变化的话，细节会漏一些"],
+                  [0.7, "只记大事", "情绪重、有转折的才记，平时基本不留原话"],
+                ].map(([v, label, desc]) =>
+                  h("label", {
+                    key: "th" + v,
+                    style: {
+                      display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
+                      padding: "10px 12px", borderRadius: 8,
+                      border: "1.5px solid " + (memCfg && Math.abs(Number(memCfg.surprisal_threshold) - v) < 0.02 ? "#4084ff" : "rgba(0,0,0,.10)"),
+                      background: memCfg && Math.abs(Number(memCfg.surprisal_threshold) - v) < 0.02 ? "rgba(64,132,255,.04)" : "#ffffff",
+                      transition: "border-color .15s, background .15s",
+                    },
+                  },
+                    h("input", {
+                      type: "radio",
+                      name: "surprisal",
+                      checked: !!(memCfg && Math.abs(Number(memCfg.surprisal_threshold) - v) < 0.02),
+                      onChange: () => void patchMemCfg({ surprisal_threshold: v }),
+                      style: { marginTop: 2, flexShrink: 0 },
+                    }),
+                    h("span", { style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0 } },
+                      h("span", { style: { fontSize: 13, fontWeight: memCfg && Math.abs(Number(memCfg.surprisal_threshold) - v) < 0.02 ? 600 : 400 } },
+                        label + "（" + v + "）"),
+                      h("span", { style: { ...S.muted, fontSize: 11 } }, desc),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            h("div", { style: { marginTop: 14 } },
+              h("div", { style: { ...S.label, marginBottom: 4 } }, "情绪记多细（emotion_log）"),
+              h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 8 } },
+                "她有多容易被你的话带动情绪。太低会记一堆小事，太高什么都不记。"),
+              h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } },
+                ...[
+                  [0.1, "极度敏感", "连「嗯」「随便」都能记出情绪，库涨得最快"],
+                  [0.2, "敏感（默认）", "一点小情绪就记，日常起伏都留得住"],
+                  [0.3, "平衡", "有明确情绪才记，闲聊不占地方"],
+                  [0.5, "克制", "只有明显的高兴/难过/烦躁才记"],
+                  [0.7, "只记大情绪", "情绪很重才记，平时基本空白"],
+                ].map(([v, label, desc]) =>
+                  h("label", {
+                    key: "em" + v,
+                    style: {
+                      display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
+                      padding: "10px 12px", borderRadius: 8,
+                      border: "1.5px solid " + (memCfg && Math.abs(Number(memCfg.emotion_threshold) - v) < 0.02 ? "#4084ff" : "rgba(0,0,0,.10)"),
+                      background: memCfg && Math.abs(Number(memCfg.emotion_threshold) - v) < 0.02 ? "rgba(64,132,255,.04)" : "#ffffff",
+                      transition: "border-color .15s, background .15s",
+                    },
+                  },
+                    h("input", {
+                      type: "radio",
+                      name: "emotion_threshold",
+                      checked: !!(memCfg && Math.abs(Number(memCfg.emotion_threshold) - v) < 0.02),
+                      onChange: () => void patchMemCfg({ emotion_threshold: v }),
+                      style: { marginTop: 2, flexShrink: 0 },
+                    }),
+                    h("span", { style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0 } },
+                      h("span", { style: { fontSize: 13, fontWeight: memCfg && Math.abs(Number(memCfg.emotion_threshold) - v) < 0.02 ? 600 : 400 } },
+                        label + "（" + v + "）"),
+                      h("span", { style: { ...S.muted, fontSize: 11 } }, desc),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            memCfgMsg ? h("div", { style: { fontSize: 12, color: "#c0392b", marginTop: 6 } }, memCfgMsg) : null,
+          ),
+
+
 
           err ? h("div", { style: S.notice("error") }, err) : null,
 
@@ -2064,6 +2341,496 @@ window.__ModuleLoader__.load({
         );
       }
 
+      function QqSection() {
+        const [data, setData] = React.useState(null);
+        const [err, setErr] = React.useState(null);
+        const [draft, setDraft] = React.useState({});
+        const [saving, setSaving] = React.useState(false);
+        const [notice, setNotice] = React.useState(null);
+        const [fsOpen, setFsOpen] = React.useState(null);
+        const [fsData, setFsData] = React.useState(null);
+        const [fsErr, setFsErr] = React.useState(null);
+        const [arrInput, setArrInput] = React.useState({});
+        const [qqSessions, setQqSessions] = React.useState([]);
+        const [chatMap, setChatMap] = React.useState({ binding: {}, retired: [] });
+        const [sessionHistory, setSessionHistory] = React.useState({});   // chat -> {items, current}
+        const [historyOpen, setHistoryOpen] = React.useState(null);        // 展开的 chat
+        const [switchIdx, setSwitchIdx] = React.useState({});   // chat -> 输入框的值
+        const [qqBind, setQqBind] = React.useState(null);   // 正在选会话重绑的 chat
+        const [qqBusy, setQqBusy] = React.useState(false);
+        const [qqMsg, setQqMsg] = React.useState(null);
+
+        const browse = async (path) => {
+          setFsErr(null);
+          try {
+            const r = await call("/fs/list?path=" + encodeURIComponent(path || ""));
+            setFsData(r);
+          } catch (e) {
+            setFsErr(e && e.message ? e.message : String(e));
+          }
+        };
+
+        const load = async () => {
+          setErr(null);
+          try {
+            const r = await call("/qq/config");
+            setData(r);
+            try {
+              const s = await call("/qq/sessions");
+              setQqSessions((s && s.sessions) || []);
+              try {
+                const cm = await call("/qq/chat-map");
+                setChatMap({
+                  binding: (cm && cm.binding) || {},
+                  retired: (cm && cm.retired) || [],
+                });
+              } catch (e) { /* 忽略 */ }
+            } catch (e) { /* 会话列表失败不影响配置 */ }
+          } catch (e) {
+            setErr(e && e.message ? e.message : String(e));
+          }
+        };
+
+        React.useEffect(() => { void load(); }, []);
+
+        if (err) {
+          return h("div", { style: S.wrap },
+            h("div", { style: S.notice("error") }, "读取失败：" + err));
+        }
+        if (!data) {
+          return h("div", { style: S.wrap }, h("div", { style: S.muted }, "读取配置…"));
+        }
+
+        const setField = (key, value) => {
+          setDraft((d) => ({ ...(d || {}), [key]: value }));
+          setNotice(null);
+        };
+
+        const dirty = draft && Object.keys(draft).length > 0;
+
+        const save = async () => {
+          if (!dirty) return;
+          setSaving(true);
+          setNotice(null);
+          try {
+            const r = await call("/qq/config", { method: "POST", body: JSON.stringify(draft) });
+            if (r && r.ok) {
+              setNotice({ kind: "ok", text: "已保存，" + (r.changed || []).length + " 项，" + (r.restarting ? "正在重启生效…" : "需手动重启生效") });
+              setDraft({});
+              await load();
+            } else {
+              setNotice({ kind: "error", text: "保存失败：" + JSON.stringify(r) });
+            }
+          } catch (err) {
+            setNotice({ kind: "error", text: "保存失败：" + (err && err.message ? err.message : String(err)) });
+          } finally {
+            setSaving(false);
+          }
+        };
+
+        const curVal = (f) => {
+          if (draft && Object.prototype.hasOwnProperty.call(draft, f.key)) return draft[f.key];
+          if (f.type === "secret") return "";
+          return f.raw != null ? f.raw : f.display;
+        };
+
+        const control = (f) => {
+          const v = curVal(f);
+          if (f.type === "enum") {
+            // 卡片式单选（enumCard）
+            const opts = Object.entries(f.options || {});
+            return h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
+              ...opts.map(([k, label]) => {
+                const on = String(v) === String(k);
+                return h("label", {
+                  key: "enumCard-" + f.key + "-" + k,
+                  style: {
+                    display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
+                    padding: "6px 10px", borderRadius: 8, fontSize: 12,
+                    border: "1.5px solid " + (on ? "#4084ff" : "rgba(0,0,0,.10)"),
+                    background: on ? "rgba(64,132,255,.04)" : "#ffffff",
+                    transition: "border-color .15s, background .15s",
+                    fontWeight: on ? 600 : 400,
+                  },
+                },
+                  h("input", {
+                    type: "radio",
+                    name: "enum-" + f.key,
+                    checked: on,
+                    onChange: () => setField(f.key, k),
+                    style: { margin: 0, flexShrink: 0 },
+                  }),
+                  h("span", {}, label),
+                );
+              }),
+            );
+          }
+          if (f.type === "boolean") {
+            const on = v === true || v === "true";
+            return h("label", {
+              style: {
+                display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
+                padding: "4px 8px", borderRadius: 6, alignSelf: "flex-start",
+                border: "1.5px solid " + (on ? "#4084ff" : "rgba(0,0,0,.10)"),
+                background: on ? "rgba(64,132,255,.04)" : "#ffffff",
+              },
+            },
+              h("input", { type: "checkbox", checked: on, onChange: (ev) => setField(f.key, ev.target.checked) }),
+              h("span", { style: { fontSize: 12 } }, on ? "开" : "关"),
+            );
+          }
+          if (f.type === "number") {
+            return h("input", {
+              style: { ...S.input, padding: "4px 8px", fontSize: 12 },
+              type: "number",
+              value: v == null ? "" : String(v),
+              onChange: (ev) => setField(f.key, Number(ev.target.value) || 0),
+            });
+          }
+          if (f.type === "stringArray") {
+            const arr = Array.isArray(v) ? v : String(v || "").split("\n").filter(Boolean);
+            const addVal = arrInput[f.key] || "";
+            const doAdd = () => {
+              const x = addVal.trim();
+              if (!x) return;
+              setField(f.key, [...arr, x]);
+              setArrInput((m) => ({ ...m, [f.key]: "" }));
+            };
+            return h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+              arr.length
+                ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+                    ...arr.map((x, i) =>
+                      h("div", {
+                        key: "av" + i,
+                        style: {
+                          display: "flex", alignItems: "center", gap: 8,
+                          padding: "6px 10px", borderRadius: 8,
+                          border: "1.5px solid rgba(64,132,255,.35)", background: "rgba(64,132,255,.04)",
+                        },
+                      },
+                        h("span", { style: { flex: 1, fontSize: 12, wordBreak: "break-all" } }, String(x)),
+                        h("span", {
+                          style: { cursor: "pointer", opacity: 0.55, fontSize: 14, lineHeight: "16px", padding: "0 4px" },
+                          onClick: () => setField(f.key, arr.filter((_, j) => j !== i)),
+                        }, "×"),
+                      ),
+                    ),
+                  )
+                : h("div", { style: { ...S.muted, fontSize: 11 } }, "（空 = 不允许任何人）"),
+              h("div", { style: { display: "flex", gap: 6 } },
+                h("input", {
+                  style: { ...S.input, flex: 1, padding: "4px 8px", fontSize: 12 },
+                  placeholder: f.key === "groupAllowFrom" ? "群号（在群设置里能看到）" : "QQ 号",
+                  value: addVal,
+                  onChange: (ev) => setArrInput((m) => ({ ...m, [f.key]: ev.target.value })),
+                  onKeyDown: (ev) => { if (ev.key === "Enter") doAdd(); },
+                }),
+                h("button", { style: { ...S.btn(false), padding: "4px 10px", fontSize: 12 }, onClick: doAdd }, "加"),
+              ),
+            );
+          }
+          if (f.type === "dirpath") {
+            const open = fsOpen === f.key;
+            return h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+              h("div", { style: { display: "flex", gap: 6 } },
+                h("input", {
+                  style: { ...S.input, flex: 1, padding: "4px 8px", fontSize: 12, fontFamily: "monospace" },
+                  value: String(v == null ? "" : v),
+                  placeholder: "/home/ubuntu/qq-workspace",
+                  onChange: (ev) => setField(f.key, ev.target.value),
+                }),
+                h("button", {
+                  style: { ...S.btn(false), padding: "4px 10px", fontSize: 12, whiteSpace: "nowrap" },
+                  onClick: () => {
+                    const next = open ? null : f.key;
+                    setFsOpen(next);
+                    if (next) void browse(String(v || "/home/ubuntu"));
+                  },
+                }, open ? "收起" : "浏览…"),
+              ),
+              open ? h("div", {
+                style: {
+                  padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(0,0,0,.08)",
+                  background: "#fafafa", display: "flex", flexDirection: "column", gap: 6,
+                },
+              },
+                fsErr ? h("div", { style: { fontSize: 11, color: "#c0392b" } }, fsErr) : null,
+                fsData ? h("div", { style: { fontSize: 11, fontFamily: "monospace", wordBreak: "break-all" } }, fsData.path) : null,
+                fsData ? h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+                  fsData.parent ? h("button", {
+                    style: { ...S.btn(false), padding: "2px 8px", fontSize: 11 },
+                    onClick: () => void browse(fsData.parent),
+                  }, "↑ 上一级") : null,
+                  h("button", {
+                    style: { ...S.btn(true), padding: "2px 8px", fontSize: 11 },
+                    onClick: () => { setField(f.key, fsData.path); setFsOpen(null); },
+                  }, "✓ 选这个目录"),
+                ) : null,
+                fsData && fsData.dirs && fsData.dirs.length
+                  ? h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, maxHeight: 160, overflowY: "auto" } },
+                      ...fsData.dirs.map((d) =>
+                        h("div", {
+                          key: d.path,
+                          style: {
+                            cursor: "pointer", padding: "4px 8px", borderRadius: 6, fontSize: 11,
+                            border: "1px solid rgba(0,0,0,.06)", background: "#fff",
+                          },
+                          onClick: () => void browse(d.path),
+                        }, "📁 " + d.name),
+                      ),
+                    )
+                  : h("div", { style: { ...S.muted, fontSize: 11 } }, fsData ? "（没有子目录）" : "读取中…"),
+              ) : null,
+            );
+          }
+          if (f.type === "secret") {
+            return h("input", {
+              style: { ...S.input, padding: "4px 8px", fontSize: 12 },
+              type: "password",
+              placeholder: f.is_set ? "留空 = 不改" : "未设置",
+              value: String(v || ""),
+              onChange: (ev) => setField(f.key, ev.target.value),
+            });
+          }
+          return h("input", {
+            style: { ...S.input, padding: "4px 8px", fontSize: 12 },
+            value: String(v == null ? "" : v),
+            onChange: (ev) => setField(f.key, ev.target.value),
+          });
+        };
+
+        return h("div", { style: S.wrap },
+          h("div", { style: S.desc },
+            "QQ 通道（dsh-onebot-qq）的全部 " + data.total + " 项配置，改完点保存。"
+            + "文件：" + data.path + "（会自动备份 .bak-时间戳）",
+          ),
+
+          err ? h("div", { style: S.notice("error") }, err) : null,
+
+          // QQ 会话列表（每个聊天一行，各自独立开新会话）
+          h("div", { style: S.card },
+            h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 } },
+              h("span", { style: { ...S.label, margin: 0 } }, "QQ 会话"),
+              qqMsg ? h("span", { style: { fontSize: 11, color: qqMsg.startsWith("失败") ? "#c0392b" : "#2fa36b" } }, qqMsg) : null,
+            ),
+            h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 8 } },
+              "每个聊天各自一个上下文。开新会话只影响那一个，旧对话留在历史里（QQ 发 /session 切回）；记忆不受影响。"),
+            qqSessions.length
+              ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+                  ...qqSessions.map((x) => {
+                    const isGroup = x.kind === "group";
+                    const sizeKb = Math.round((x.size || 0) / 1024);
+                    const dt = new Date((x.mtime || 0) * 1000);
+                    const timeStr = dt.getFullYear() > 1970
+                      ? (dt.getMonth() + 1) + "-" + dt.getDate() + " " + String(dt.getHours()).padStart(2, "0") + ":" + String(dt.getMinutes()).padStart(2, "0")
+                      : "";
+                    return h("div", {
+                      key: x.chat,
+                      style: {
+                        display: "flex", alignItems: "center", gap: 10,
+                        padding: "8px 12px", borderRadius: 8,
+                        border: "1px solid rgba(0,0,0,.06)", background: "#fafafa",
+                      },
+                    },
+                      h("span", { style: { fontSize: 14 } }, isGroup ? "👥" : "💬"),
+                      h("div", { style: { flex: 1, display: "flex", flexDirection: "column", gap: 2, minWidth: 0 } },
+                        h("span", { style: { fontSize: 12, fontWeight: 500 } },
+                          (isGroup ? "群 " : "私聊 ") + x.target),
+                        h("span", { style: { fontSize: 11, color: "#9ca3af" } },
+                          sizeKb + "K" + (timeStr ? " · 最后活跃 " + timeStr : "")
+                          + (() => {
+                              const b = (chatMap.binding || {})[x.chat];
+                              if (!b) return " · 未绑定（下条消息新建）";
+                              const short = String(b).replace(/^onebot-(private|group)-\d+-?/, "") || "当前";
+                              return " · 当前：" + (short || "已绑定");
+                            })()),
+                      ),
+                      h("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" } },
+                        h("button", {
+                          style: { ...S.btn(true), padding: "4px 10px", fontSize: 12, whiteSpace: "nowrap" },
+                          disabled: qqBusy,
+                          onClick: async () => {
+                            setQqBusy(true);
+                            setQqMsg(null);
+                            try {
+                              const r = await call("/qq/new-session", {
+                                method: "POST",
+                                body: JSON.stringify({ chat: x.chat }),
+                              });
+                              setQqMsg(r && r.ok
+                                ? (isGroup ? "群 " : "私聊 ") + x.target + " 已排队"
+                                : "失败：" + JSON.stringify(r));
+                              if (r && r.ok) setTimeout(() => { void load(); }, 2500);
+                            } catch (e) {
+                              setQqMsg("失败：" + (e && e.message ? e.message : String(e)));
+                            } finally {
+                              setQqBusy(false);
+                            }
+                          },
+                        }, qqBusy ? "…" : "开新会话"),
+                        h("button", {
+                          style: { ...S.btn(false), padding: "4px 10px", fontSize: 12, whiteSpace: "nowrap" },
+                          disabled: qqBusy,
+                          onClick: async () => {
+                            if (historyOpen === x.chat) {
+                              setHistoryOpen(null);
+                              return;
+                            }
+                            setHistoryOpen(x.chat);
+                            try {
+                              const hh = await call("/qq/session-history?chat=" + encodeURIComponent(x.chat));
+                              setSessionHistory((m) => ({ ...m, [x.chat]: hh }));
+                            } catch (e) {
+                              setQqMsg("读历史失败：" + (e && e.message ? e.message : String(e)));
+                            }
+                          },
+                        }, historyOpen === x.chat ? "收起" : "历史"),
+                      ),
+                    );
+                  }),
+                )
+              : h("div", { style: { ...S.muted, fontSize: 12 } }, "没有找到 QQ 会话（还没人跟她聊过？）"),
+            historyOpen
+              ? (() => {
+                  const hh = sessionHistory[historyOpen];
+                  if (!hh) return h("div", { style: { ...S.muted, fontSize: 11, marginTop: 8 } }, "读取中…");
+                  const items = hh.items || [];
+                  const renderHistoryPanel = true;
+                  return h("div", { style: { marginTop: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(0,0,0,.06)", background: "#fff" } },
+                    h("div", { style: { fontSize: 11, color: "#6b7280", marginBottom: 6 } },
+                      historyOpen + " 的历史会话（点「绑到这个」切过去，会重启生效）"),
+                    items.length
+                      ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+                          ...items.map((it) => {
+                            const d2 = new Date((it.mtime || 0) * 1000);
+                            const ts = (d2.getMonth() + 1) + "-" + d2.getDate() + " " + String(d2.getHours()).padStart(2, "0") + ":" + String(d2.getMinutes()).padStart(2, "0");
+                            return h("div", {
+                              key: it.session,
+                              style: {
+                                display: "flex", alignItems: "center", gap: 8, fontSize: 11,
+                                padding: "5px 8px", borderRadius: 6,
+                                border: "1px solid " + (it.is_current ? "rgba(64,132,255,.4)" : "rgba(0,0,0,.06)"),
+                                background: it.is_current ? "rgba(64,132,255,.04)" : "#fafafa",
+                              },
+                            },
+                              h("span", { style: { flex: 1, fontFamily: "monospace", wordBreak: "break-all" } },
+                                it.session + (it.is_current ? "  ←当前" : "")),
+                              h("span", { style: { color: "#9ca3af", whiteSpace: "nowrap" } },
+                                Math.round(it.size / 1024) + "K · " + ts),
+                              it.is_current
+                                ? h("span", { style: { color: "#4084ff", whiteSpace: "nowrap" } }, "使用中")
+                                : h("button", {
+                                    style: { ...S.btn(false), padding: "2px 8px", fontSize: 11, whiteSpace: "nowrap" },
+                                    disabled: qqBusy,
+                                    onClick: async () => {
+                                      setQqBusy(true);
+                                      setQqMsg(null);
+                                      try {
+                                        const r = await call("/qq/bind", {
+                                          method: "POST",
+                                          body: JSON.stringify({ chat: historyOpen, session: it.session }),
+                                        });
+                                        setQqMsg(r && r.ok ? "已绑定，重启中…" : "失败：" + JSON.stringify(r));
+                                        setHistoryOpen(null);
+                                        setSessionHistory((m) => ({ ...m, [historyOpen]: null }));
+                                        setTimeout(() => { void load(); }, 5000);
+                                      } catch (e) {
+                                        setQqMsg("失败：" + (e && e.message ? e.message : String(e)));
+                                      } finally {
+                                        setQqBusy(false);
+                                      }
+                                    },
+                                  }, "绑到这个"),
+                            );
+                          }),
+                        )
+                      : h("div", { style: { ...S.muted, fontSize: 11 } }, "没有历史会话"),
+                  );
+                })()
+              : null,
+            qqSessions.length > 1
+              ? h("div", { style: { display: "flex", justifyContent: "flex-end", marginTop: 10 } },
+                  h("button", {
+                    style: {
+                      ...S.btn(false), padding: "4px 12px", fontSize: 12,
+                      color: "#c0392b", borderColor: "rgba(192,57,43,.3)",
+                    },
+                    disabled: qqBusy,
+                    onClick: async () => {
+                      if (!(window.confirm || confirm)("把所有 " + qqSessions.length + " 个会话都开新的？\n（旧对话都留在历史里，记忆不受影响）")) return;
+                      setQqBusy(true);
+                      setQqMsg(null);
+                      try {
+                        const r = await call("/qq/new-session", {
+                          method: "POST",
+                          body: JSON.stringify({ chat: "all" }),
+                        });
+                        setQqMsg(r && r.ok ? "全部 " + (r.count || 0) + " 个已排队" : "失败：" + JSON.stringify(r));
+                        if (r && r.ok) setTimeout(() => { void load(); }, 3000);
+                      } catch (e) {
+                        setQqMsg("失败：" + (e && e.message ? e.message : String(e)));
+                      } finally {
+                        setQqBusy(false);
+                      }
+                    },
+                  }, "全部重置"),
+                )
+              : null,
+          ),
+
+          ...(data.groups || []).map((g) =>
+            h("div", { key: g.id, style: S.card },
+              h("div", { style: { ...S.label, marginBottom: 10 } }, g.title),
+              h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+                ...g.fields.map((f) =>
+                  h("div", {
+                    key: f.key,
+                    style: { display: "flex", flexDirection: "column", gap: 4, minWidth: 0 },
+                  },
+                    h("div", { style: { display: "flex", alignItems: "center", gap: 6 } },
+                      h("span", { style: { fontSize: 12, fontWeight: 500 } }, f.label),
+                      f.is_set ? h("span", { style: { fontSize: 10, color: "#2fa36b" } }, "已配") : null,
+                    ),
+                    control(f),
+                    f.hint ? h("div", { style: { ...S.muted, fontSize: 11 } }, f.hint) : null,
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // 保存按钮（固定在屏幕右侧中间，跟其他页签一致）
+          h("div", {
+            key: "qq-dirty-save",
+            style: {
+              position: "fixed", right: 24, top: "50%", transform: "translateY(-50%)",
+              display: "flex", flexDirection: "column", alignItems: "stretch", gap: 8,
+              background: "#ffffff", padding: "12px 16px", borderRadius: 12,
+              border: "1px solid rgba(0,0,0,.08)", boxShadow: "0 8px 24px rgba(0,0,0,.12)",
+              zIndex: 9999, minWidth: 160,
+            },
+          },
+            notice ? h("div", {
+              style: {
+                fontSize: 11, lineHeight: 1.4, textAlign: "center", maxWidth: 180,
+                color: notice.kind === "error" ? "#c0392b" : "#2fa36b",
+                wordBreak: "break-word",
+              },
+            }, notice.text) : null,
+            dirty ? h("div", { style: { fontSize: 11, color: "#f59e0b", textAlign: "center" } }, Object.keys(draft).length + " 项未保存") : null,
+            h("button", {
+              style: { ...S.btn(true), opacity: dirty ? 1 : 0.5, cursor: dirty ? "pointer" : "default" },
+              disabled: saving || !dirty,
+              onClick: () => void save(),
+            }, saving ? "保存中…" : "保存改动"),
+            h("button", {
+              style: { ...S.btn(false), fontSize: 11, padding: "4px 10px" },
+              onClick: () => { setDraft({}); setNotice(null); },
+            }, "撤销改动"),
+          ),
+        );
+      }
+
       function PersonaSection() {
         const [userProfile, setUserProfile] = React.useState("");
         const [profileMsg, setProfileMsg] = React.useState(null);
@@ -2072,7 +2839,14 @@ window.__ModuleLoader__.load({
         const [profileFields, setProfileFields] = React.useState({
           name: "", job: "", schedule: "", work: "", food: "", likes: "", taboos: "", note: "",
         });
-        const setPf = (k, v) => setProfileFields((f) => ({ ...f, [k]: v }));
+        // 画像是否已成功加载（防止「加载失败 → 全空 → 保存覆盖」）
+        const [profileLoaded, setProfileLoaded] = React.useState(false);
+        // 画像字段是否被用户改过（没改过就不覆盖，避免保存别的东西时清空画像）
+        const [profileDirty, setProfileDirty] = React.useState(false);
+        const setPf = (k, v) => {
+          setProfileFields((f) => ({ ...f, [k]: v }));
+          setProfileDirty(true);
+        };
         const [loading, setLoading] = React.useState(true);
         const [error, setError] = React.useState("");
         const [limits, setLimits] = React.useState({ constitution: 15000, self_model: 4000 });
@@ -2085,6 +2859,9 @@ window.__ModuleLoader__.load({
           think_cn: false,
           think_ds: false,
           ai_flavor_on: true,
+          self_call_in_speech: false,
+          _newTaboo: "",
+          taboo_off: "",
           ai_flavor: "允许 2% 语法错误、7% 主谓宾省略、7% 聊跑题；口癖 50% 概率出现且单独一条；允许「？？？」这类网络标点，概率 2%。",
         });
         const setId = (k, v) => setIdFields((f) => ({ ...f, [k]: v }));
@@ -2107,6 +2884,7 @@ window.__ModuleLoader__.load({
                 think_cn: !!parsed.think_cn,
                 think_ds: !!parsed.think_ds,
                 ai_flavor_on: parsed.ai_flavor_on !== false,
+                self_call_in_speech: parsed.self_call_in_speech === true,
                 ai_flavor: parsed.ai_flavor || "允许 2% 语法错误、7% 主谓宾省略、7% 聊跑题；口癖 50% 概率出现且单独一条；允许「？？？」这类网络标点，概率 2%。",
               });
             } catch { /* ignore */ }
@@ -2150,16 +2928,57 @@ window.__ModuleLoader__.load({
                   taboos: sec("雷区").replace(/^[-*]\s*/gm, "").trim(),
                   note: sec("备注"),
                 });
+                setProfileLoaded(true);
+                setProfileDirty(false);
               }
             } catch { /* ignore */ }
           })();
         }, []);
         React.useEffect(() => { load(); }, [load]);
 
+        const buildProfile = () => {
+          const f = profileFields;
+          const relLine = relations.length ? "## 我们的关系\n- 他是我" + relations.join("、") + "\n\n" : "";
+          const basic = [
+            f.name ? "- 称呼：" + f.name : "",
+            f.job ? "- 职业：" + f.job : "",
+            f.schedule ? "- 作息：" + f.schedule : "",
+          ].filter(Boolean).join("\n");
+          const life = [
+            f.work ? "- 工作：" + f.work : "",
+            f.food ? "- 饮食：" + f.food : "",
+          ].filter(Boolean).join("\n");
+          const likeLine = f.likes ? "## 喜欢\n- 喜欢：" + f.likes + "\n\n" : "";
+          const taboo = f.taboos ? "## 雷区\n" + f.taboos.split("\n").filter((x) => x.trim()).map((x) => "- " + x.trim()).join("\n") + "\n\n" : "";
+          const note = f.note ? "## 备注\n" + f.note + "\n" : "";
+          return [
+            relLine,
+            basic ? "## 基本信息\n" + basic + "\n\n" : "",
+            life ? "## 生活\n" + life + "\n\n" : "",
+            likeLine,
+            taboo,
+            note,
+          ].join("").trim();
+        };
+
         const save = async () => {
+          // 防误清空：画像没加载成功，或新内容是空但原来有内容 → 拦下
+          const built = buildProfile();
+          if (!profileLoaded) {
+            setNotice({ kind: "error", text: "画像还没加载成功，先别保存（防止清空）。刷新页面试试。" });
+            return;
+          }
+          if (!built.trim() && userProfile.trim()) {
+            setNotice({ kind: "error", text: "画像会变成空的，已拦下。真要清空请点「清空画像」。" });
+            return;
+          }
           setSaving(true);
           setNotice(null);
           try {
+            // 只在用户真的改过画像时才保存画像（否则保存 taboo 等会误清空画像）
+            if (profileDirty) {
+              await call("/persona/user", { method: "POST", body: JSON.stringify({ user_profile: built }) });
+            }
             const res = await call("/persona", {
               method: "POST",
               body: JSON.stringify({
@@ -2172,6 +2991,7 @@ window.__ModuleLoader__.load({
             setSaved({ constitution: res.constitution || "", self_model: res.self_model || "", self_image: res.self_image || "" });
             setDraft({ constitution: res.constitution || "", self_model: res.self_model || "", self_image: res.self_image || "" });
             if (res.limits) setLimits(res.limits);
+            setProfileDirty(false);
             setNotice({ kind: "ok", text: "已保存。插件下次刷新就带上，不用重启。" });
           } catch (err) {
             setNotice({ kind: "error", text: "保存失败：" + (err && err.message ? err.message : String(err)) });
@@ -2311,41 +3131,6 @@ window.__ModuleLoader__.load({
               }),
             ),
             h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 2 } },
-              h("button", {
-                style: S.btn(true),
-                onClick: async () => {
-                  setProfileMsg(null);
-                  try {
-                    const f = profileFields;
-                    const relLine = relations.length ? "## 我们的关系\n- 他是我" + relations.join("、") + "\n\n" : "";
-                    const basic = [
-                      f.name ? "- 称呼：" + f.name : "",
-                      f.job ? "- 职业：" + f.job : "",
-                      f.schedule ? "- 作息：" + f.schedule : "",
-                    ].filter(Boolean).join("\n");
-                    const life = [
-                      f.work ? "- 工作：" + f.work : "",
-                      f.food ? "- 饮食：" + f.food : "",
-                    ].filter(Boolean).join("\n");
-                    const likeLine = f.likes ? "## 喜欢\n- 喜欢：" + f.likes + "\n\n" : "";
-                    const taboo = f.taboos ? "## 雷区\n" + f.taboos.split("\n").filter((x) => x.trim()).map((x) => "- " + x.trim()).join("\n") + "\n\n" : "";
-                    const note = f.note ? "## 备注\n" + f.note + "\n" : "";
-                    const full = [
-                      relLine,
-                      basic ? "## 基本信息\n" + basic + "\n\n" : "",
-                      life ? "## 生活\n" + life + "\n\n" : "",
-                      likeLine,
-                      taboo,
-                      note,
-                    ].join("").trim();
-                    await call("/persona/user", { method: "POST", body: JSON.stringify({ text: full }) });
-                    setUserProfile(full);
-                    setProfileMsg("已保存 ✓（" + full.length + " 字符）");
-                  } catch (e) {
-                    setProfileMsg("保存失败：" + (e && e.message ? e.message : String(e)));
-                  }
-                },
-              }, "保存画像"),
               profileMsg ? h("span", { style: { fontSize: 12, color: profileMsg.includes("失败") ? "#c0392b" : "#2fa36b" } }, profileMsg)
                 : h("span", { style: S.muted }, userProfile.length + " 字符"),
             ),
@@ -2365,6 +3150,27 @@ window.__ModuleLoader__.load({
                   h("input", { style: S.input, value: idFields.self_call, placeholder: "例：本澜", onChange: (ev) => setId("self_call", ev.target.value) }),
                   h("span", { style: { fontSize: 11, color: "var(--dsw-color-text-secondary, #9ca3af)" } },
                     "有多个用逗号或顿号分隔，如：本澜、澜澜、咱澜"),
+                  h("label", {
+                    style: {
+                      display: "flex", alignItems: "flex-start", gap: 6, cursor: "pointer", marginTop: 4,
+                      padding: "8px 10px", borderRadius: 8,
+                      border: "1.5px solid " + (idFields.self_call_in_speech === true ? "#4084ff" : "rgba(0,0,0,.10)"),
+                      background: idFields.self_call_in_speech === true ? "rgba(64,132,255,.04)" : "#ffffff",
+                      transition: "border-color .15s, background .15s",
+                    },
+                  },
+                    h("input", {
+                      type: "checkbox",
+                      checked: idFields.self_call_in_speech === true,
+                      onChange: (ev) => setId("self_call_in_speech", ev.target.checked),
+                      style: { marginTop: 1 },
+                    }),
+                    h("span", { style: { display: "flex", flexDirection: "column", gap: 1 } },
+                      h("span", { style: { fontSize: 12 } }, "说话时带自称"),
+                      h("span", { style: { fontSize: 11, color: "var(--dsw-color-text-secondary, #9ca3af)" } },
+                        "默认关（日常用「我」，更自然）"),
+                    ),
+                  ),
                 ),
                 h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
                   h("span", { style: { ...S.muted, fontSize: 12 } }, "怎么叫老大"),
@@ -2383,11 +3189,20 @@ window.__ModuleLoader__.load({
                   placeholder: "例：像发微信，最多 3 句、80 字以内，只发对话，不写动作旁白。",
                   onChange: (ev) => setId("speaking", ev.target.value),
                 }),
-                h("label", { style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer", marginTop: 4 } },
+                h("label", {
+                  style: {
+                    display: "flex", alignItems: "flex-start", gap: 6, cursor: "pointer", marginTop: 4,
+                    padding: "8px 10px", borderRadius: 8,
+                    border: "1.5px solid " + (idFields.ai_flavor_on !== false ? "#4084ff" : "rgba(0,0,0,.10)"),
+                    background: idFields.ai_flavor_on !== false ? "rgba(64,132,255,.04)" : "#ffffff",
+                    transition: "border-color .15s, background .15s",
+                  },
+                },
                   h("input", {
                     type: "checkbox",
                     checked: idFields.ai_flavor_on !== false,
                     onChange: (ev) => setId("ai_flavor_on", ev.target.checked),
+                    style: { marginTop: 1 },
                   }),
                   h("span", { style: { fontSize: 12 } }, "去 AI 味（默认开启）"),
                 ),
@@ -2400,13 +3215,72 @@ window.__ModuleLoader__.load({
                 }),
               ),
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 10 } },
-                h("span", { style: { ...S.muted, fontSize: 12 } }, "不能做的事"),
-                h("textarea", {
-                  style: { ...S.input, minHeight: 60, resize: "vertical", fontFamily: "inherit" },
-                  value: idFields.taboo,
-                  placeholder: "例：不写动作和旁白、不客服腔、别硬编记忆（每行一条）",
-                  onChange: (ev) => setId("taboo", ev.target.value),
-                }),
+                h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+                  h("span", { style: { ...S.muted, fontSize: 12 } }, "不能做的事"),
+                  h("span", { style: { fontSize: 11, color: "#9ca3af" } }, "（勾上 = 生效，取消勾 = 暂时不管）"),
+                ),
+                (() => {
+                  const items = String(idFields.taboo || "").split("\n").map((s) => s.trim()).filter(Boolean);
+                  const setItems = (arr) => setId("taboo", arr.join("\n"));
+                  return h("div", {},
+                    items.length ? h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } },
+                      ...items.map((it, i) => {
+                        const offList = String(idFields.taboo_off || "").split("\n").map((s) => s.trim()).filter(Boolean);
+                        const on = !offList.includes(it);
+                        const toggleOn = () => {
+                          const next = on ? [...offList, it] : offList.filter((x) => x !== it);
+                          setId("taboo_off", next.join("\n"));
+                        };
+                        return h("label", {
+                          key: "tb" + i,
+                          style: {
+                            display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, cursor: "pointer",
+                            padding: "8px 10px", borderRadius: 8,
+                            border: "1.5px solid " + (on ? "#4084ff" : "rgba(0,0,0,.10)"),
+                            background: on ? "rgba(64,132,255,.04)" : "#ffffff",
+                            transition: "border-color .15s, background .15s",
+                            height: "100%", boxSizing: "border-box",
+                          },
+                        },
+                          h("input", {
+                            type: "checkbox",
+                            checked: on,
+                            onChange: (ev) => { ev.stopPropagation(); toggleOn(); },
+                            style: { marginTop: 2, flexShrink: 0 },
+                          }),
+                          h("span", { style: { flex: 1, lineHeight: "18px" } }, it),
+                          h("span", {
+                            style: { cursor: "pointer", opacity: 0.55, padding: "0 4px", fontSize: 14, lineHeight: "18px", flexShrink: 0 },
+                            onClick: (ev) => { ev.preventDefault(); ev.stopPropagation(); setItems(items.filter((_, j) => j !== i)); },
+                          }, "×"),
+                        );
+                      }),
+                    ) : h("div", { style: { ...S.muted, fontSize: 12 } }, "还没加（空着就是没有额外限制）"),
+                    h("div", { style: { display: "flex", gap: 6, marginTop: 8 } },
+                      h("input", {
+                        style: { ...S.input, flex: 1 },
+                        placeholder: "加一条（例如：不讨好、不卑微）",
+                        value: idFields._newTaboo || "",
+                        onChange: (ev) => setId("_newTaboo", ev.target.value),
+                        onKeyDown: (ev) => {
+                          if (ev.key === "Enter" && (idFields._newTaboo || "").trim()) {
+                            setItems([...items, idFields._newTaboo.trim()]);
+                            setId("_newTaboo", "");
+                          }
+                        },
+                      }),
+                      h("button", {
+                        style: { ...S.btn(false), fontSize: 12 },
+                        onClick: () => {
+                          if ((idFields._newTaboo || "").trim()) {
+                            setItems([...items, idFields._newTaboo.trim()]);
+                            setId("_newTaboo", "");
+                          }
+                        },
+                      }, "加"),
+                    ),
+                  );
+                })(),
               ),
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 10 } },
                 h("span", { style: { ...S.muted, fontSize: 12 } }, "她的形象（可替换）"),
@@ -2420,11 +3294,20 @@ window.__ModuleLoader__.load({
                   "外观、穿戴、身体特征。想换成猫娘、龙娘随便什么形象，只改这里。"),
               ),
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 10 } },
-                h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
+                h("label", {
+                  style: {
+                    display: "flex", alignItems: "flex-start", gap: 6, cursor: "pointer",
+                    padding: "8px 10px", borderRadius: 8,
+                    border: "1.5px solid " + (!!idFields.think_cn ? "#4084ff" : "rgba(0,0,0,.10)"),
+                    background: !!idFields.think_cn ? "rgba(64,132,255,.04)" : "#ffffff",
+                    transition: "border-color .15s, background .15s",
+                  },
+                },
                   h("input", {
                     type: "checkbox",
                     checked: !!idFields.think_cn,
                     onChange: (ev) => setId("think_cn", ev.target.checked),
+                    style: { marginTop: 1 },
                   }),
                   h("span", { style: { fontSize: 12 } }, "思考链用中文"),
                 ),
@@ -2432,11 +3315,20 @@ window.__ModuleLoader__.load({
                   "勾上会把「思考链用中文」写进人格注入。注意：中文比英文更耗 token。"),
               ),
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 10 } },
-                h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
+                h("label", {
+                  style: {
+                    display: "flex", alignItems: "flex-start", gap: 6, cursor: "pointer",
+                    padding: "8px 10px", borderRadius: 8,
+                    border: "1.5px solid " + (!!idFields.think_ds ? "#4084ff" : "rgba(0,0,0,.10)"),
+                    background: !!idFields.think_ds ? "rgba(64,132,255,.04)" : "#ffffff",
+                    transition: "border-color .15s, background .15s",
+                  },
+                },
                   h("input", {
                     type: "checkbox",
                     checked: !!idFields.think_ds,
                     onChange: (ev) => setId("think_ds", ev.target.checked),
+                    style: { marginTop: 1 },
                   }),
                   h("span", { style: { fontSize: 12 } }, "思考链按 DeepSeek V3.2 风格"),
                 ),
@@ -2472,10 +3364,16 @@ window.__ModuleLoader__.load({
             ),
           ),
 
-          notice ? h("div", { style: S.notice(notice.kind) }, notice.text) : null,
-
-          h("div", { style: S.footer },
-            h("button", { type: "button", style: S.btn(false), onClick: cancel, disabled: saving }, "取消"),
+          h("div", {
+            style: {
+              position: "fixed", right: 24, top: "50%", transform: "translateY(-50%)",
+              display: "flex", flexDirection: "column", alignItems: "stretch", gap: 8,
+              background: "#ffffff", padding: "12px 16px", borderRadius: 12,
+              border: "1px solid rgba(0,0,0,.08)", boxShadow: "0 8px 24px rgba(0,0,0,.12)", zIndex: 9999,
+              minWidth: 140,
+            },
+          },
+            notice ? h("div", { style: { fontSize: 12, color: notice.kind === "error" ? "#c0392b" : "#2fa36b", textAlign: "center" } }, notice.text) : null,
             h("button", { type: "button", style: S.btn(true), onClick: save, disabled: saving },
               saving ? "保存中…" : "保存"),
           ),
@@ -2496,7 +3394,7 @@ window.__ModuleLoader__.load({
               name: "settings.section",
               id: "dsh-remembers",
               order: 32,
-              label: () => "记忆服务",
+              label: () => "记忆服务 API 设置",
             },
             SettingsSection,
           ));
@@ -2526,6 +3424,15 @@ window.__ModuleLoader__.load({
               label: () => "主动消息",
             },
             ProactiveSection,
+          ));
+          slots.inject("settings.section", () => slots.register(
+            {
+              name: "settings.section",
+              id: "dsh-remembers-qq",
+              order: 365,
+              label: () => "QQ 通道",
+            },
+            QqSection,
           ));
           slots.inject("settings.section", () => slots.register(
             {

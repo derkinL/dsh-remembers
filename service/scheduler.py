@@ -172,7 +172,19 @@ class Scheduler:
             pool = cfg.get("silentActions" if mode == "silent" else "talkActions") or []
             if not pool:
                 pool = cfg.get("silentActions") or ["随便待会儿"]
-            return random.choice(pool)
+            # 动作可以是字符串（= 启用），也可以是 {text, enabled} 对象
+            texts = []
+            for a in pool:
+                if isinstance(a, dict):
+                    if a.get("enabled", True):
+                        txt = str(a.get("text") or "").strip()
+                        if txt:
+                            texts.append(txt)
+                elif isinstance(a, str) and a.strip():
+                    texts.append(a)
+            if not texts:
+                return "随便待会儿"
+            return random.choice(texts)
         except Exception:
             return "随便待会儿"
 

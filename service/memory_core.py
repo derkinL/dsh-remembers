@@ -744,7 +744,7 @@ class MemoryStore:
         if row is None:
             return {
                 "mood": "normal", "mood_updated": 0.0, "intimacy": 0.0,
-                "last_interaction": 0.0, "diary": "", "diary_date": "",
+                "last_interaction": 0.0,
                 "dnd_start": 23, "dnd_end": 8,
             }
         return {
@@ -752,8 +752,6 @@ class MemoryStore:
             "mood_updated": float(row["mood_updated"] or 0.0),
             "intimacy": float(row["intimacy"] or 0.0),
             "last_interaction": float(row["last_interaction"] or 0.0),
-            "diary": row["diary"] or "",
-            "diary_date": row["diary_date"] or "",
             "dnd_start": int(row["dnd_start"] or 23),
             "dnd_end": int(row["dnd_end"] or 8),
             "activity": row["activity"] or "",
@@ -778,15 +776,13 @@ class MemoryStore:
         next_intimacy = max(0.0, min(1000.0, next_intimacy))
         self.conn.execute(
             """UPDATE state SET mood=?, mood_updated=?, intimacy=?, last_interaction=?,
-                               diary=?, diary_date=?, dnd_start=?, dnd_end=?,
+                               dnd_start=?, dnd_end=?,
                                game_score=?, game_plays=?, activity=?, valence=?, arousal=? WHERE id=1""",
             (
                 next_mood,
                 now if mood is not None else cur["mood_updated"],
                 next_intimacy,
                 now,
-                cur["diary"] if diary is None else str(diary),
-                cur["diary_date"] if diary_date is None else str(diary_date),
                 cur["dnd_start"] if dnd_start is None else int(dnd_start),
                 cur["dnd_end"] if dnd_end is None else int(dnd_end),
                 cur.get("game_score", 0) if game_score is None else int(game_score),
@@ -983,24 +979,49 @@ class MemoryStore:
 
     # -- 学说话 / 亲和度 / 任务 / 便签 / 睡眠 --------------------------------
 
-    def slang_add(self, phrase: str, n: int = 1) -> None:
+    def slang_add(self, phrase: str, n: int = 1, meaning: str = "",
+                  example: str = "", source: str = "chat",
+                  memory_id: int | None = None) -> None:
+        """记一个词/短语。只收短语（<=12 字），整句和测试文本丢弃。"""
+        import re as _re
         phrase = str(phrase).strip()[:20]
-        if not phrase:
+        if not phrase or len(phrase) > 12:
+            return
+        # 整句/测试文本/图片占位 → 不要
+        if _re.search(r"(测试|重启后|\[图片|^（|^\()", phrase):
+            return
+        if _re.search(r"[。？！]$", phrase):
             return
         now = time.time()
         self.conn.execute(
-            "INSERT INTO slang(phrase, count, last_seen) VALUES (?,?,?) "
-            "ON CONFLICT(phrase) DO UPDATE SET count = count + ?, last_seen = ?",
-            (phrase, n, now, n, now),
+            "INSERT INTO slang(phrase, count, last_seen, meaning, example, source, memory_id) "
+            "VALUES (?,?,?,?,?,?,?) "
+            "ON CONFLICT(phrase) DO UPDATE SET count = count + ?, last_seen = ?, "
+            "  meaning = CASE WHEN ? != '' THEN ? ELSE meaning END, "
+            "  example = CASE WHEN ? != '' THEN ? ELSE example END",
+            (phrase, n, now, str(meaning)[:120], str(example)[:160], str(source)[:20], memory_id,
+             n, now, str(meaning), str(meaning)[:120], str(example), str(example)[:160]),
         )
         self.conn.commit()
 
-    def slang_list(self, limit: int = 15) -> list[dict]:
-        rows = self.conn.execute(
-            "SELECT phrase, count FROM slang ORDER BY count DESC, last_seen DESC LIMIT ?",
-            (max(1, min(int(limit), 50)),),
-        ).fetchall()
-        return [{"phrase": r["phrase"], "count": int(r["count"])} for r in rows]
+    def slang_set_meaning(self, phrase: str, meaning: str, example: str = "") -> None:
+        self.conn.execute(
+            "UPDATE slang SET meaning=?, example=? WHERE phrase=?",
+            (str(meaning)[:120], str(example)[:160], str(phrase)),
+        )
+        self.conn.commit()
+
+    def slang_list(self, limit: int = 15, only_repeated: bool = False) -> list[dict]:
+        sql = "SELECT phrase, count, meaning, example, source FROM slang"
+        if only_repeated:
+            sql += " WHERE count >= 2 OR source = 'taught'"
+        sql += " ORDER BY count DESC, last_seen DESC LIMIT ?"
+        rows = self.conn.execute(sql, (max(1, min(int(limit), 50)),)).fetchall()
+        return [{
+            "phrase": r["phrase"], "count": int(r["count"]),
+            "meaning": r["meaning"] or "", "example": r["example"] or "",
+            "source": r["source"] or "chat",
+        } for r in rows]
 
     def affinity_get(self, user_id: str) -> float:
         r = self.conn.execute("SELECT score FROM affinity WHERE user_id=?", (str(user_id),)).fetchone()
@@ -1368,16 +1389,17 @@ class MemoryStore:
     # -- 情感层：情绪轨迹 ------------------------------------------------------
 
     def emotion_log_add(self, valence: float, arousal: float, label: str = "",
-                        trigger: str = "", source: str = "chat") -> int:
+                        trigger: str = "", source: str = "chat",
+                        memory_id: int | None = None) -> int:
         cur = self.conn.execute(
-            "INSERT INTO emotion_log(ts, valence, arousal, label, trigger, source) VALUES (?,?,?,?,?,?)",
-            (time.time(), float(valence), float(arousal), str(label)[:40], str(trigger)[:200], str(source)[:20]),
+            "INSERT INTO emotion_log(ts, valence, arousal, label, trigger, source, memory_id) VALUES (?,?,?,?,?,?,?)",
+            (time.time(), float(valence), float(arousal), str(label)[:40], str(trigger)[:200], str(source)[:20], memory_id),
         )
         self.conn.commit()
         return int(cur.lastrowid)
 
     def emotion_log_list(self, limit: int = 50, days: int = 0) -> list[dict]:
-        sql = "SELECT id, ts, valence, arousal, label, trigger, source FROM emotion_log"
+        sql = "SELECT id, ts, valence, arousal, label, trigger, source, memory_id FROM emotion_log"
         args: list = []
         if days and days > 0:
             sql += " WHERE ts >= ?"
@@ -1389,6 +1411,7 @@ class MemoryStore:
             "id": int(r["id"]), "ts": float(r["ts"]),
             "valence": float(r["valence"]), "arousal": float(r["arousal"]),
             "label": r["label"], "trigger": r["trigger"], "source": r["source"],
+            "memory_id": int(r["memory_id"]) if r["memory_id"] else None,
         } for r in rows]
 
 

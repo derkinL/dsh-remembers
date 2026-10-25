@@ -133,6 +133,7 @@ def _rebuild(cfg: dict) -> dict:
         enabled=_pick_flag(cfg, "extract", "CMEM_EXTRACT"),
         max_facts=int(_pick(cfg, "extract_max_facts", "CMEM_EXTRACT_MAX_FACTS", "6")),
         neighbor_k=int(_pick(cfg, "extract_neighbors", "CMEM_EXTRACT_NEIGHBORS", "5")),
+        emotion_threshold=float(_pick(cfg, "emotion_threshold", "CMEM_EMOTION_THRESHOLD", "0.2")),
     ), embedder=embedder)
     gate = SurprisalGate(
         embedder=embedder,
@@ -339,8 +340,6 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, store.task_list())
         elif path == "/notes":
             self._json(200, store.note_list())
-        elif path == "/sleep":
-            self._json(200, store.sleep_list())
         elif path == "/diary":
             self._json(200, store.diary_list())
         elif path == "/profile":
@@ -352,8 +351,30 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/log":
             limit = int((query.get("limit") or ["50"])[0])
             self._guard(lambda: self._json(200, {"ok": True, "items": self._recent_log(limit)}))
+        elif path == "/qq/session-history":
+            self._guard(lambda: self._get_qq_session_history())
+        elif path == "/qq/chat-map":
+            self._guard(lambda: self._get_qq_chat_map())
+        elif path == "/qq/sessions":
+            self._guard(lambda: self._get_qq_sessions())
+        elif path == "/fs/list":
+            self._guard(lambda: self._get_fs_list())
+        elif path == "/qq/config":
+            self._guard(lambda: self._get_qq_config())
         elif path == "/state":
             st = store.get_state()
+            try:
+                st["emotion_recent"] = store.emotion_log_list(limit=3, days=7)
+            except Exception:
+                st["emotion_recent"] = []
+            try:
+                st["affinity"] = float(store.affinity_get("owner") or 0)
+            except Exception:
+                st["affinity"] = 0.0
+            try:
+                st["slang_learned"] = store.slang_list(limit=6, only_repeated=True)
+            except Exception:
+                st["slang_learned"] = []
             hour = None
             try:
                 raw_hour = (query.get("hour") or [None])[0]
@@ -471,6 +492,14 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._post_bili_comment())
         elif path == "/public/toggle":
             self._guard(lambda: self._public_toggle())
+        elif path == "/qq/config":
+            self._guard(lambda: self._post_qq_config())
+        elif path == "/qq/bind":
+            self._guard(lambda: self._post_qq_bind())
+        elif path == "/qq/cmd":
+            self._guard(lambda: self._post_qq_cmd())
+        elif path == "/qq/new-session":
+            self._guard(lambda: self._post_qq_new_session())
         elif path == "/bili/thought":
             self._guard(lambda: self._bili_thought())
         elif path == "/bili/cfg":
@@ -501,8 +530,6 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._complete_task())
         elif path == "/notes":
             self._guard(lambda: self._post_note())
-        elif path == "/sleep":
-            self._guard(lambda: self._post_sleep())
         elif path == "/activity":
             self._guard(lambda: self._log_activity())
         elif path == "/diary":
@@ -801,6 +828,402 @@ class Handler(BaseHTTPRequestHandler):
         ],
     }
 
+    # ---- QQ 通道配置（只读展示 dsh-onebot 的 29 项）----------------------
+    QQ_SCHEMA = [
+        {"id": "connection", "title": "连接", "fields": [
+            {"key": "mode", "label": "连接模式", "type": "enum",
+             "options": {"reverse": "反向（NapCat 连插件）", "forward": "正向（插件连 NapCat）"},
+             "default": "reverse", "hint": "reverse 时监听下方地址与端口；forward 时连接下方服务器地址。"},
+            {"key": "host", "label": "反向 WS 监听地址", "type": "string", "default": "127.0.0.1",
+             "hint": "仅 reverse 模式生效。"},
+            {"key": "port", "label": "反向 WS 监听端口", "type": "number", "default": 8643,
+             "hint": "仅 reverse 模式生效。主套 8643 / 第二套 8644。"},
+            {"key": "url", "label": "正向 WS 服务器地址", "type": "string", "default": "ws://127.0.0.1:3001",
+             "hint": "仅 forward 模式生效。"},
+            {"key": "accessToken", "label": "访问令牌", "type": "secret", "default": "",
+             "hint": "与 NapCat 侧一致的鉴权令牌（这里只显示设没设）。"},
+            {"key": "botQQ", "label": "机器人 QQ 号", "type": "string", "default": "",
+             "hint": "这个实例用的机器人账号。"},
+            {"key": "workspacePath", "label": "QQ 会话的工作目录", "type": "dirpath", "default": "",
+             "hint": "她的文件操作都在这个目录里。改了只对新会话生效（/workspace 设过的不受影响）。"},
+        ]},
+        {"id": "permissions", "title": "权限", "fields": [
+            {"key": "requireMention", "label": "群聊必须 @ 机器人", "type": "boolean", "default": False,
+             "hint": "开着 = 群里必须 @ 她才回；关着 = 群里说什么都回（会很吵）。"},
+            {"key": "adminUsers", "label": "管理员用户", "type": "stringArray", "default": [],
+             "hint": "能用 /new /session 等斜杠命令的 QQ 号。"},
+            {"key": "dmPolicy", "label": "私聊策略", "type": "enum",
+             "options": {"open": "开放（仅管理员）", "allowlist": "白名单", "disabled": "禁用"},
+             "default": "open", "hint": "私聊谁能触发她。"},
+            {"key": "groupPolicy", "label": "群聊策略", "type": "enum",
+             "options": {"open": "开放", "allowlist": "白名单", "disabled": "禁用"},
+             "default": "open", "hint": "群聊接不接。想在群里用就设 allowlist + 填群号。"},
+            {"key": "allowAllUsers", "label": "允许所有用户", "type": "boolean", "default": False,
+             "hint": "关着 = 只有管理员能触发她。"},
+            {"key": "allowFrom", "label": "允许和谁聊天（QQ 号）", "type": "stringArray", "default": [],
+             "hint": "只有这些 QQ 号能私聊她。私聊策略选「白名单」时才生效。"},
+            {"key": "groupAllowFrom", "label": "允许在哪些群聊天（群号）", "type": "stringArray", "default": [],
+             "hint": "她只在这些群里说话。群聊策略选「白名单」时才生效。"},
+        ]},
+        {"id": "behavior", "title": "行为", "fields": [
+            {"key": "interimMessages", "label": "中间消息", "type": "boolean", "default": False,
+             "hint": "回合进行中发流式中间消息（之前为防重复已关）。"},
+            {"key": "interimRecall", "label": "自动撤回中间消息", "type": "boolean", "default": False,
+             "hint": "配合中间消息用。"},
+            {"key": "interimRecallMs", "label": "中间消息保留（毫秒）", "type": "number", "default": 90000,
+             "hint": "到时间自动撤回。"},
+            {"key": "sendErrorNotice", "label": "发送错误通知", "type": "boolean", "default": True,
+             "hint": "出错时在聊天里提示。"},
+            {"key": "unknownCommand", "label": "未知命令处理", "type": "enum",
+             "options": {"intercept": "拦截", "passthrough": "透传"},
+             "default": "intercept", "hint": "不认识的 /xxx 怎么处理。"},
+            {"key": "rateLimitPerMinute", "label": "每分钟消息上限", "type": "number", "default": 20,
+             "hint": "防刷屏。"},
+            {"key": "newMessagePolicy", "label": "任务中新消息", "type": "enum",
+             "options": {"queue": "排队", "steer": "插话"},
+             "default": "queue", "hint": "她正在跑任务时你又发消息：排队等她做完，还是插进去。"},
+            {"key": "autoSteerPolicy", "label": "自动插话资格", "type": "enum",
+             "options": {"admin": "仅管理员", "all": "所有成员"},
+             "default": "admin", "hint": "插话模式下谁能插。"},
+            {"key": "deferredTimeoutMs", "label": "等回复超时（毫秒）", "type": "number", "default": 180000,
+             "hint": "超时提示并登记补发；0 = 关闭。"},
+        ]},
+        {"id": "diagnostics", "title": "诊断", "fields": [
+            {"key": "actionAuditEnabled", "label": "主动写审计", "type": "boolean", "default": True,
+             "hint": "每次主动发送记一行到 qq-actions.log。"},
+            {"key": "traceEnabled", "label": "决策追踪", "type": "boolean", "default": False,
+             "hint": "把入站/出站决策写 qq-trace.jsonl，排查用。"},
+            {"key": "recordInbound", "label": "入站录制", "type": "boolean", "default": False,
+             "hint": "收到的消息录到 qq-inbox.jsonl（可离线回放）。"},
+            {"key": "inboxRedact", "label": "录制脱敏", "type": "boolean", "default": True,
+             "hint": "录制时把号码打码。关掉会存明文，注意隐私。"},
+            {"key": "injectEnabled", "label": "事件注入", "type": "boolean", "default": False,
+             "hint": "轮询 qq-inject.jsonl 喂进真实管线。⚠ 面板的「开新会话」按钮依赖它。"},
+            {"key": "injectDryRun", "label": "注入 dry-run", "type": "boolean", "default": True,
+             "hint": "拦截注入回合的出站发送。⚠ 开着的话注入的话发不出去。"},
+        ]},
+    ]
+
+    def _get_fs_list(self) -> None:
+        """列目录（给工作区选择器用）。"""
+        import os as _os
+        import urllib.parse as _up
+        qs = _up.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+        raw = (qs.get("path") or [""])[0] or _os.environ.get("HOME", "/home/ubuntu")
+        path = _os.path.abspath(_os.path.expanduser(raw))
+        if not _os.path.isdir(path):
+            self._json(400, {"ok": False, "error": "不是目录: " + path})
+            return
+        dirs = []
+        try:
+            for name in sorted(_os.listdir(path)):
+                full = _os.path.join(path, name)
+                if _os.path.isdir(full) and not name.startswith("."):
+                    dirs.append({"name": name, "path": full})
+        except PermissionError:
+            self._json(403, {"ok": False, "error": "没有权限读取: " + path})
+            return
+        except Exception as e:
+            self._json(500, {"ok": False, "error": str(e)})
+            return
+        parent = _os.path.dirname(path)
+        self._json(200, {
+            "ok": True, "path": path,
+            "parent": parent if parent != path else None,
+            "dirs": dirs[:200],
+        })
+
+    def _qq_workspace_dir(self) -> str:
+        """从 cordis.patch.yml 读 workspacePath，推出会话目录名。"""
+        import os as _os
+        import re as _re
+        import yaml as _yaml
+        home = _os.environ.get("HOME", "/home/ubuntu")
+        if home.rstrip("/") == "/home/ubuntu":
+            cfg = "/home/ubuntu/.dsh/profiles/web/cordis.patch.yml"
+        else:
+            cfg = _os.path.join(home, "profiles/qq2/cordis.patch.yml")
+        ws = ""
+        try:
+            data = _yaml.safe_load(open(cfg, encoding="utf-8"))
+            for item in data or []:
+                if isinstance(item, dict) and item.get("id") == "dsh-onebot":
+                    ws = str((item.get("config") or {}).get("workspacePath") or "")
+                    break
+        except Exception:
+            pass
+        if not ws:
+            ws = "/home/ubuntu/qq-workspace"
+        # /home/ubuntu/qq-duan → --home-ubuntu-qq-duan--
+        slug = ws.rstrip("/").replace("/", "-")
+        if slug.startswith("-"):
+            slug = "-" + slug          # 保留开头的单横线，前面再加一个 → --
+        # DSH_HOME：主套 /home/ubuntu/.dsh，第二套 /home/ubuntu/dsh2
+        dsh_home = _os.environ.get("DSH_HOME", "")
+        if not dsh_home:
+            dsh_home = _os.path.join(home, ".dsh") if home.rstrip("/") == "/home/ubuntu" else home
+        return _os.path.join(dsh_home, "sessions/" + slug + "--")
+
+    def _qq_sessions_root(self) -> str:
+        """当前实例的 sessions 根目录。"""
+        import os as _os
+        home = _os.environ.get("HOME", "/home/ubuntu")
+        dsh_home = _os.environ.get("DSH_HOME", "")
+        if not dsh_home:
+            dsh_home = _os.path.join(home, ".dsh") if home.rstrip("/") == "/home/ubuntu" else home
+        return _os.path.join(dsh_home, "sessions")
+
+    def _qq_media_dir(self) -> str:
+        import os as _os
+        home = _os.environ.get("HOME", "/home/ubuntu")
+        if home.rstrip("/") == "/home/ubuntu":
+            return "/home/ubuntu/.dsh/media/onebot"
+        return _os.path.join(home, "media/onebot2")
+
+    def _qq_session_history(self, chat: str) -> dict:
+        """读文件列出某个 chat 的全部会话（不发 QQ 消息）。"""
+        import json as _json
+        import os as _os
+        import re as _re
+
+        kind, _, target = chat.partition(":")
+        if kind not in ("private", "group") or not target.isdigit():
+            return {"ok": False, "error": "chat 格式不对"}
+
+        base = self._qq_workspace_dir()
+        prefix = "onebot-" + kind + "-" + target
+        items = []
+        if _os.path.isdir(base):
+            for name in _os.listdir(base):
+                if not name.startswith(prefix):
+                    continue
+                # 精确匹配：prefix 或 prefix-<后缀>
+                rest = name[len(prefix):]
+                if rest and not _re.fullmatch(r"-[a-z0-9]+", rest):
+                    continue
+                path = _os.path.join(base, name)
+                try:
+                    mtime = _os.stat(path).st_mtime
+                    size = sum(
+                        _os.path.getsize(_os.path.join(path, f))
+                        for f in _os.listdir(path)
+                        if _os.path.isfile(_os.path.join(path, f))
+                    )
+                except Exception:
+                    continue
+                items.append({"session": name, "size": size, "mtime": mtime})
+
+        items.sort(key=lambda x: -x["mtime"])
+
+        # 当前绑定 + 已退役
+        mdir = self._qq_media_dir()
+        binding = {}
+        retired = []
+        try:
+            with open(_os.path.join(mdir, "chat-sessions.json"), encoding="utf-8") as f:
+                raw = _json.load(f) or {}
+            for k, v in raw.items():
+                binding[k] = str(v.get("session") or "") if isinstance(v, dict) else str(v or "")
+        except Exception:
+            pass
+        try:
+            with open(_os.path.join(mdir, "retired-sessions.json"), encoding="utf-8") as f:
+                retired = _json.load(f) or []
+        except Exception:
+            pass
+
+        cur = binding.get(chat, "")
+        for it in items:
+            it["is_current"] = (it["session"] == cur)
+            it["is_retired"] = (it["session"] in retired)
+
+        return {"ok": True, "chat": chat, "current": cur, "items": items}
+
+    def _get_qq_session_history(self) -> None:
+        import urllib.parse as _up
+        qs = _up.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+        chat = (qs.get("chat") or [""])[0]
+        self._json(200, self._qq_session_history(chat))
+
+    def _post_qq_bind(self) -> None:
+        """把某个 chat 绑到指定会话：改 chat-sessions.json + 从 retired 移除 + 重启。"""
+        import json as _json
+        import os as _os
+        import re as _re
+        import shutil as _shutil
+        import subprocess as _sp
+        import threading as _th
+        import time as _t2
+
+        body = self._body()
+        chat = str(body.get("chat") or "").strip()
+        session = str(body.get("session") or "").strip()
+        if not _re.fullmatch(r"(private|group):\d{5,15}", chat):
+            self._json(400, {"ok": False, "error": "chat 格式不对"})
+            return
+        if not _re.fullmatch(r"onebot-(private|group)-\d+(-[a-z0-9]+)?", session):
+            self._json(400, {"ok": False, "error": "session 格式不对"})
+            return
+        # 会话必须真的存在
+        base = self._qq_workspace_dir()
+        if not _os.path.isdir(_os.path.join(base, session)):
+            self._json(404, {"ok": False, "error": "会话目录不存在: " + session})
+            return
+
+        mdir = self._qq_media_dir()
+        map_path = _os.path.join(mdir, "chat-sessions.json")
+        ret_path = _os.path.join(mdir, "retired-sessions.json")
+        stamp = _t2.strftime("%Y%m%d%H%M%S")
+
+        # 1. 改映射
+        mapping = {}
+        try:
+            with open(map_path, encoding="utf-8") as f:
+                mapping = _json.load(f) or {}
+        except Exception:
+            pass
+        try:
+            _shutil.copyfile(map_path, map_path + ".bak-" + stamp)
+        except Exception:
+            pass
+        mapping[chat] = session
+        with open(map_path, "w", encoding="utf-8") as f:
+            _json.dump(mapping, f, ensure_ascii=False, indent=2)
+
+        # 2. 从 retired 移除（否则插件不肯 resume）
+        removed = False
+        try:
+            with open(ret_path, encoding="utf-8") as f:
+                retired = _json.load(f) or []
+            if session in retired:
+                retired = [x for x in retired if x != session]
+                with open(ret_path, "w", encoding="utf-8") as f:
+                    _json.dump(retired, f, ensure_ascii=False, indent=2)
+                removed = True
+        except Exception:
+            pass
+
+        # 3. 重启让 registry 重新读映射
+        def _later():
+            _t2.sleep(1.5)
+            try:
+                _sp.run(["sudo", "-n", "systemctl", "restart", "dsh-web"], timeout=60, capture_output=True)
+            except Exception:
+                pass
+
+        _th.Thread(target=_later, daemon=True).start()
+
+        self._json(200, {
+            "ok": True, "chat": chat, "session": session,
+            "unretired": removed, "restarting": True,
+            "note": "已绑定，1.5 秒后自动重启 dsh-web 生效",
+        })
+
+    def _get_qq_sessions(self) -> None:
+        """列出 QQ 的所有会话（每个 chat 一条，取最新的那个）。"""
+        import os as _os
+        import re as _re
+        home = _os.environ.get("HOME", "/home/ubuntu")
+        base = self._qq_workspace_dir()
+        if not _os.path.isdir(base):
+            self._json(200, {"ok": True, "sessions": [], "base": base, "note": "会话目录不存在"})
+            return
+
+        best = {}   # chatKey -> info
+        for name in _os.listdir(base):
+            m = _re.match(r"^onebot-(private|group)-(\d+)(?:-[a-z0-9]+)?$", name)
+            if not m:
+                continue
+            kind, target = m.group(1), m.group(2)
+            key = kind + ":" + target
+            path = _os.path.join(base, name)
+            try:
+                st = _os.stat(path)
+                total = 0
+                for f in _os.listdir(path):
+                    fp = _os.path.join(path, f)
+                    if _os.path.isfile(fp):
+                        total += _os.path.getsize(fp)
+                mtime = st.st_mtime
+            except Exception:
+                continue
+            prev = best.get(key)
+            if prev is None or mtime > prev["mtime"]:
+                best[key] = {
+                    "chat": key, "kind": kind, "target": target,
+                    "dir": name, "size": total, "mtime": mtime,
+                }
+
+        items = sorted(best.values(), key=lambda x: -x["mtime"])
+        self._json(200, {"ok": True, "sessions": items, "base": base})
+
+    def _get_qq_config(self) -> None:
+        """读 cordis.patch.yml 的 dsh-onebot 配置，套上 schema 返回。"""
+        import os as _os
+        import yaml
+        home = _os.environ.get("HOME", "/home/ubuntu")
+        if home.rstrip("/") == "/home/ubuntu":
+            cfg_path = "/home/ubuntu/.dsh/profiles/web/cordis.patch.yml"
+        else:
+            cfg_path = _os.path.join(home, "profiles/qq2/cordis.patch.yml")
+
+        cur = {}
+        try:
+            data = yaml.safe_load(open(cfg_path, encoding="utf-8"))
+            for item in data or []:
+                if isinstance(item, dict) and item.get("id") == "dsh-onebot":
+                    cur = dict(item.get("config") or {})
+                    break
+        except Exception as e:
+            self._json(500, {"ok": False, "error": "读配置失败：" + str(e), "path": cfg_path})
+            return
+
+        groups = []
+        for g in self.QQ_SCHEMA:
+            fields = []
+            for f in g["fields"]:
+                key = f["key"]
+                raw = cur.get(key)
+                is_set = key in cur
+                val = raw if is_set else f.get("default")
+                if f.get("type") == "secret":
+                    display = "已设置" if (is_set and raw) else "未设置"
+                elif isinstance(val, list):
+                    display = "、".join(str(x) for x in val) if val else "（空）"
+                elif isinstance(val, bool):
+                    display = "开" if val else "关"
+                elif f.get("type") == "enum":
+                    display = (f.get("options") or {}).get(str(val), str(val))
+                else:
+                    display = str(val) if val not in (None, "") else "（空）"
+                fields.append({
+                    "key": key, "label": f["label"], "type": f.get("type"),
+                    "display": display, "is_set": is_set, "raw": raw if f.get("type") != "secret" else None,
+                    "hint": f.get("hint", ""), "options": f.get("options"),
+                })
+            groups.append({"id": g["id"], "title": g["title"], "fields": fields})
+
+        self._json(200, {
+            "ok": True, "path": cfg_path,
+            "configured": len(cur), "total": sum(len(g["fields"]) for g in self.QQ_SCHEMA),
+            "groups": groups,
+        })
+
+    @staticmethod
+    def _norm_actions(lst):
+        """动作统一成 [{text, enabled}]，兼容旧的纯字符串数组。"""
+        out = []
+        for it in (lst or []):
+            if isinstance(it, dict):
+                txt = str(it.get("text") or "").strip()
+                en = it.get("enabled") is not False
+            else:
+                txt = str(it or "").strip()
+                en = True
+            if txt:
+                out.append({"text": txt, "enabled": en})
+        return out
+
     def _load_proactive(self) -> dict:
         import json as _json
         data = dict(self.PROACTIVE_DEFAULTS)
@@ -809,6 +1232,9 @@ class Handler(BaseHTTPRequestHandler):
                 data.update(_json.load(f))
         except Exception:
             pass
+        # 统一动作格式（旧数据是纯字符串）
+        for k in ("silentActions", "talkActions"):
+            data[k] = self._norm_actions(data.get(k))
         return data
 
     def _get_proactive(self) -> dict:
@@ -825,6 +1251,22 @@ class Handler(BaseHTTPRequestHandler):
         for key in ("startHour", "endHour", "minGapMinutes", "maxGapMinutes", "silentRatio"):
             if key in body:
                 cur[key] = int(body[key])
+        # 动作清单（前端发 [{text, enabled}]）—— 之前漏了，导致动作编辑器改了不生效
+        for key in ("silentActions", "talkActions"):
+            if key in body and isinstance(body[key], list):
+                cleaned = []
+                for it in body[key]:
+                    if isinstance(it, dict):
+                        txt = str(it.get("text") or "").strip()
+                    else:
+                        txt = str(it or "").strip()
+                    if not txt:
+                        continue
+                    cleaned.append({
+                        "text": txt,
+                        "enabled": (it.get("enabled") is not False) if isinstance(it, dict) else True,
+                    })
+                cur[key] = cleaned
         try:
             with open(self.PROACTIVE_FILE, "w", encoding="utf-8") as f:
                 _json.dump(cur, f, ensure_ascii=False, indent=2)
@@ -876,13 +1318,17 @@ class Handler(BaseHTTPRequestHandler):
         cfg = self._load_proactive()
         key = "silentActions" if mode == "silent" else "talkActions"
         items = list(cfg.get(key) or [])
-        if action in items:
+
+        def _action_text(a):
+            return str(a.get("text") or "") if isinstance(a, dict) else str(a or "")
+
+        if any(_action_text(a).strip() == action for a in items):
             self._json(200, {"ok": True, "skipped": True, "reason": "already have it", "count": len(items)})
             return
         if len(items) >= 15:
             self._json(400, {"ok": False, "error": "太多了（先删几条再加）", "count": len(items)})
             return
-        items.append(action)
+        items.append({"text": action, "enabled": True})
         cfg[key] = items
         with open(self.PROACTIVE_FILE, "w", encoding="utf-8") as f:
             _json.dump(cfg, f, ensure_ascii=False, indent=2)
@@ -1171,7 +1617,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def _set_user_profile(self) -> None:
         body = self._body()
-        text = str(body.get("text") or "").strip()
+        # 后端终极防护：新值为空但原值有内容 → 拒绝（除非 force=true）
+        try:
+            new_val = str(body.get("user_profile") or "")
+            old_val = str(store.get_user_profile() or "")
+            if not new_val.strip() and old_val.strip() and not body.get("force"):
+                self._json(400, {
+                    "ok": False,
+                    "error": "拒绝清空：原画像有 " + str(len(old_val)) + " 字符，要清空请传 force=true",
+                })
+                return
+        except Exception:
+            pass
+
+        # 兼容两种字段名（前端发 user_profile，旧版发 text）
+        raw = body.get("user_profile")
+        if raw is None:
+            raw = body.get("text")
+        text = str(raw or "").strip()
         store.set_user_profile(text)
         self._json(200, {"ok": True, "chars": len(text)})
 
@@ -1379,6 +1842,12 @@ class Handler(BaseHTTPRequestHandler):
             with _lock:
                 for x in picked:
                     store.browsed_add(x["title"], x["url"])
+                if picked:
+                    try:
+                        store.log_activity("bili", "刷B站：" + "、".join(
+                            str(x["title"])[:18] for x in picked[:3]))
+                    except Exception:
+                        pass
             if not picked:
                 return {"ok": True, "source": "popular", "items": [], "note": "热门也刷完了（翻了 %d 页）" % len(used_pages)}
             return {"ok": True, "source": "popular", "items": picked, "pages": used_pages}
@@ -1413,6 +1882,12 @@ class Handler(BaseHTTPRequestHandler):
         with _lock:
             for it in items:
                 store.browsed_add(it["title"], it["url"])
+            if items:
+                try:
+                    store.log_activity("bili", "刷B站：" + "、".join(
+                        str(x["title"])[:18] for x in items[:3]))
+                except Exception:
+                    pass
         self._json(200, {"ok": True, "items": items})
 
     def _scan_seen(self) -> None:
@@ -1541,7 +2016,19 @@ class Handler(BaseHTTPRequestHandler):
     def _post_slang(self) -> None:
         body = self._body()
         with _lock:
-            store.slang_add(str(body.get("phrase") or ""), int(body.get("count") or 1))
+            _ph = str(body.get("phrase") or "").strip()
+            _mn = str(body.get("meaning") or "").strip()
+            _ex = str(body.get("example") or "").strip()
+            _src = str(body.get("source") or "chat").strip()
+            # 用户教的、且没给解释 → 让 LLM 生成词义和例句
+            if _ph and not _mn and _src == "taught":
+                try:
+                    _info = extractor.label_slang(_ph, str(body.get("context") or ""))
+                    _mn = str(_info.get("meaning") or "")
+                    _ex = str(_info.get("example") or "")
+                except Exception:
+                    pass
+            store.slang_add(_ph, int(body.get("count") or 1), _mn, _ex, _src)
         self._json(200, {"ok": True})
 
     def _post_affinity(self) -> None:
@@ -1553,6 +2040,385 @@ class Handler(BaseHTTPRequestHandler):
         with _lock:
             score = store.affinity_bump(uid, float(body.get("delta") or 1.0))
         self._json(200, {"ok": True, "user_id": uid, "score": score})
+
+    def _post_qq_config(self) -> None:
+        """改 dsh-onebot 配置：行级替换，保留原文件的注释和结构。"""
+        import os as _os
+        import re as _re
+        import shutil as _shutil
+        import time as _time
+
+        home = _os.environ.get("HOME", "/home/ubuntu")
+        if home.rstrip("/") == "/home/ubuntu":
+            cfg_path = "/home/ubuntu/.dsh/profiles/web/cordis.patch.yml"
+        else:
+            cfg_path = _os.path.join(home, "profiles/qq2/cordis.patch.yml")
+
+        body = self._body()
+        if not isinstance(body, dict) or not body:
+            self._json(400, {"ok": False, "error": "空的改动"})
+            return
+
+        try:
+            with open(cfg_path, encoding="utf-8") as f:
+                lines = f.read().split("\n")
+        except Exception as e:
+            self._json(500, {"ok": False, "error": "读文件失败：" + str(e)})
+            return
+
+        # 定位 dsh-onebot 的 config 块
+        start = -1
+        for i, ln in enumerate(lines):
+            if _re.match(r"^-\s*id:\s*dsh-onebot\s*$", ln):
+                start = i
+                break
+        if start < 0:
+            self._json(404, {"ok": False, "error": "找不到 dsh-onebot 段"})
+            return
+
+        cfg_start = -1
+        for i in range(start, min(start + 30, len(lines))):
+            if _re.match(r"^\s+config:\s*$", lines[i]):
+                cfg_start = i
+                break
+        if cfg_start < 0:
+            self._json(404, {"ok": False, "error": "找不到 config 段"})
+            return
+
+        # config 块范围：缩进 > config 行 的连续行
+        cfg_indent = len(lines[cfg_start]) - len(lines[cfg_start].lstrip())
+        cfg_end = cfg_start + 1
+        while cfg_end < len(lines):
+            ln = lines[cfg_end]
+            if not ln.strip():
+                cfg_end += 1
+                continue
+            ind = len(ln) - len(ln.lstrip())
+            if ind <= cfg_indent:
+                break
+            cfg_end += 1
+
+        def render_val(typ, v):
+            if typ == "boolean":
+                return "true" if v else "false"
+            if typ == "number":
+                return str(int(v)) if float(v) == int(float(v)) else str(v)
+            if typ == "stringArray":
+                arr = v if isinstance(v, list) else [x for x in str(v).split("\n") if x.strip()]
+                arr = [str(x).strip() for x in arr if str(x).strip()]
+                if not arr:
+                    return "[]"
+                return "\n" + "\n".join(
+                    " " * (cfg_indent + 4) + "- " + _json_dumps_str(str(x)) for x in arr
+                )
+            # string / enum / secret：单行字符串，尽量不带引号
+            s = str(v)
+            if _re.fullmatch(r"[A-Za-z0-9_./:\-]+", s) and s not in ("true", "false", "null"):
+                return s
+            return _json_dumps_str(s)
+
+        import json as _json
+        def _json_dumps_str(x):
+            return _json.dumps(x, ensure_ascii=False)
+
+        changed = []
+        new_lines = list(lines)
+
+        # 从后往前改，避免行号错乱
+        for key, raw_val in body.items():
+            # 找类型
+            typ = "string"
+            for g in self.QQ_SCHEMA:
+                for f in g["fields"]:
+                    if f["key"] == key:
+                        typ = f.get("type") or "string"
+                        break
+            # secret 留空 = 不改
+            if typ == "secret" and (raw_val is None or str(raw_val).strip() == ""):
+                continue
+
+            rendered = render_val(typ, raw_val)
+            pat = _re.compile(r"^(\s+)" + _re.escape(key) + r":.*$")
+            found = -1
+            for i in range(cfg_start + 1, cfg_end):
+                if pat.match(new_lines[i]):
+                    found = i
+                    break
+
+            def make_block(ind):
+                if rendered.startswith("\n"):
+                    return (ind + key + ":" + rendered).split("\n")
+                return (ind + key + ": " + rendered).split("\n")
+
+            if found >= 0:
+                indent = pat.match(new_lines[found]).group(1)
+                # 多行值（列表）要删掉旧的后续行
+                j = found + 1
+                while j < cfg_end and new_lines[j].strip().startswith("- "):
+                    j += 1
+                block = make_block(indent)
+                new_lines[found:j] = block
+                cfg_end += len(block) - (j - found)
+                changed.append(key + "(改)")
+            else:
+                # 追加到 cfg_end 前
+                indent = " " * (cfg_indent + 2)
+                block = make_block(indent)
+                new_lines[cfg_end:cfg_end] = block
+                cfg_end += len(block)
+                changed.append(key + "(新增)")
+
+        # 备份 + 写入
+        try:
+            _shutil.copyfile(cfg_path, cfg_path + ".bak-" + _time.strftime("%Y%m%d%H%M%S"))
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(new_lines))
+        except Exception as e:
+            self._json(500, {"ok": False, "error": "写文件失败：" + str(e)})
+            return
+
+        # 自动重启 dsh-web（延迟 2 秒，让响应先回）
+        restart_ok = False
+        try:
+            import subprocess as _sp
+            import threading as _th
+            import time as _t2
+
+            def _later():
+                _t2.sleep(2.0)
+                try:
+                    _sp.run(["sudo", "-n", "systemctl", "restart", "dsh-web"],
+                            timeout=60, capture_output=True)
+                except Exception:
+                    pass
+
+            _th.Thread(target=_later, daemon=True).start()
+            restart_ok = True
+        except Exception:
+            restart_ok = False
+
+        self._json(200, {
+            "ok": True,
+            "changed": changed,
+            "path": cfg_path,
+            "restarting": restart_ok,
+            "note": "已写入，2 秒后自动重启 dsh-web 生效。" if restart_ok else "已写入，需手动重启 dsh-web。",
+        })
+
+    def _post_qq_cmd(self) -> None:
+        """往某个 QQ 聊天注入一条斜杠命令（/session、/session N 等）。"""
+        import json as _json
+        import os as _os
+        import re as _re
+        import time as _time
+
+        body = self._body()
+        chat = str(body.get("chat") or "").strip()
+        cmd = str(body.get("cmd") or "").strip()
+        if not _re.fullmatch(r"(private|group):\d{5,15}", chat):
+            self._json(400, {"ok": False, "error": "chat 格式不对"})
+            return
+        if not cmd.startswith("/"):
+            self._json(400, {"ok": False, "error": "cmd 必须以 / 开头"})
+            return
+
+        home = _os.environ.get("HOME", "/home/ubuntu")
+        if home.rstrip("/") == "/home/ubuntu":
+            inject = "/home/ubuntu/.dsh/media/onebot/qq-inject.jsonl"
+            cfg = "/home/ubuntu/.dsh/profiles/web/cordis.patch.yml"
+        else:
+            inject = _os.path.join(home, "media/onebot2/qq-inject.jsonl")
+            cfg = _os.path.join(home, "profiles/qq2/cordis.patch.yml")
+
+        owner = ""
+        try:
+            with open(cfg, encoding="utf-8") as f:
+                for ln in f:
+                    m = _re.search(r'^\s*-\s*"(\d{5,15})"', ln)
+                    if m:
+                        owner = m.group(1)
+                        break
+        except Exception:
+            pass
+        if not owner:
+            self._json(400, {"ok": False, "error": "找不到主人 QQ"})
+            return
+
+        kind, _, target = chat.partition(":")
+        now = int(_time.time())
+        if kind == "group":
+            ev = {
+                "post_type": "message", "message_type": "group", "sub_type": "normal",
+                "message_id": int(_time.time() * 1000),
+                "group_id": int(target), "user_id": int(owner),
+                "message": cmd, "raw_message": cmd, "time": now, "self_id": 0,
+                "silent": False,
+                "sender": {"user_id": int(owner), "nickname": "控制台"},
+            }
+        else:
+            ev = {
+                "post_type": "message", "message_type": "private", "sub_type": "friend",
+                "message_id": int(_time.time() * 1000),
+                "user_id": int(target),
+                "message": cmd, "raw_message": cmd, "time": now, "self_id": 0,
+                "silent": False,
+                "sender": {"user_id": int(target), "nickname": "控制台"},
+            }
+
+        with open(inject, "a", encoding="utf-8") as f:
+            f.write(_json.dumps(ev, ensure_ascii=False) + "\n")
+        self._json(200, {"ok": True, "chat": chat, "cmd": cmd, "inject": inject,
+                         "note": "已排队，几秒后 QQ 那边会应答"})
+
+    def _get_qq_chat_map(self) -> None:
+        """读 chat-sessions.json + retired-sessions.json，报告绑定状态。"""
+        import json as _json
+        import os as _os
+
+        home = _os.environ.get("HOME", "/home/ubuntu")
+        if home.rstrip("/") == "/home/ubuntu":
+            mdir = "/home/ubuntu/.dsh/media/onebot"
+        else:
+            mdir = _os.path.join(home, "media/onebot2")
+
+        m = {}
+        retired = []
+        try:
+            with open(_os.path.join(mdir, "chat-sessions.json"), encoding="utf-8") as f:
+                m = _json.load(f) or {}
+        except Exception:
+            pass
+        try:
+            with open(_os.path.join(mdir, "retired-sessions.json"), encoding="utf-8") as f:
+                retired = _json.load(f) or []
+        except Exception:
+            pass
+
+        # 简化：value 可能是字符串或 {session:...}
+        binding = {}
+        for k, v in m.items():
+            if isinstance(v, dict):
+                binding[k] = str(v.get("session") or "")
+            else:
+                binding[k] = str(v or "")
+
+        self._json(200, {"ok": True, "binding": binding, "retired": retired})
+
+    def _post_qq_new_session(self) -> None:
+        """让 QQ 那条会话开新的：往 inject 队列写一条 /new（以管理员身份）。"""
+        import json as _json
+        import os as _os
+        import time as _time
+
+        body = self._body()
+        chat = str(body.get("chat") or "").strip()   # "private:xxx" / "group:xxx" / "all"
+        # 严格校验：只接受 all / private:数字 / group:数字，拒绝一切其他值
+        if chat and chat != "all":
+            import re as _re_chk
+            if not _re_chk.fullmatch(r"(private|group):\d{5,15}", chat):
+                self._json(400, {"ok": False, "error": "chat 格式不对，应为 private:<QQ> / group:<群号> / all"})
+                return
+
+        home = _os.environ.get("HOME", "/home/ubuntu")
+        # 按实例定位 inject 文件和主人 QQ
+        if home.rstrip("/") == "/home/ubuntu":
+            inject = "/home/ubuntu/.dsh/media/onebot/qq-inject.jsonl"
+            cfg = "/home/ubuntu/.dsh/profiles/web/cordis.patch.yml"
+        else:
+            inject = _os.path.join(home, "media/onebot2/qq-inject.jsonl")
+            cfg = _os.path.join(home, "profiles/qq2/cordis.patch.yml")
+
+        # 主人 QQ：从 cordis.patch.yml 的 allowFrom 抓第一个
+        owner = ""
+        try:
+            with open(cfg, encoding="utf-8") as f:
+                for ln in f:
+                    m = __import__("re").search(r'^\s*-\s*"(\d{5,15})"', ln)
+                    if m:
+                        owner = m.group(1)
+                        break
+        except Exception:
+            pass
+        if not owner:
+            self._json(400, {"ok": False, "error": "找不到主人 QQ（allowFrom 为空）"})
+            return
+
+        if not _os.path.isdir(_os.path.dirname(inject)):
+            self._json(400, {"ok": False, "error": "inject 目录不存在: " + _os.path.dirname(inject)})
+            return
+
+        now = int(_time.time())
+
+        # 全部重置：遍历所有会话，每个写一条
+        if chat == "all":
+            import re as _re2
+            base = _os.path.join(home, ".dsh/sessions/--home-ubuntu-qq-workspace--")
+            seen = set()
+            targets = []
+            if _os.path.isdir(base):
+                for name in sorted(_os.listdir(base)):
+                    m = _re2.match(r"^onebot-(private|group)-(\d+)(?:-[a-z0-9]+)?$", name)
+                    if m:
+                        k = m.group(1) + ":" + m.group(2)
+                        if k not in seen:
+                            seen.add(k)
+                            targets.append(k)
+            written = 0
+            with open(inject, "a", encoding="utf-8") as f:
+                for ck in targets:
+                    k2, _, tg2 = ck.partition(":")
+                    if k2 == "group" and tg2.isdigit():
+                        ev2 = {
+                            "post_type": "message", "message_type": "group", "sub_type": "normal",
+                            "message_id": int(_time.time() * 1000) + written,
+                            "group_id": int(tg2), "user_id": int(owner),
+                            "message": "/new", "raw_message": "/new", "time": now, "self_id": 0,
+                            "silent": False,
+                            "sender": {"user_id": int(owner), "nickname": "控制台"},
+                        }
+                    else:
+                        ev2 = {
+                            "post_type": "message", "message_type": "private", "sub_type": "friend",
+                            "message_id": int(_time.time() * 1000) + written,
+                            "user_id": int(tg2 if tg2.isdigit() else owner),
+                            "message": "/new", "raw_message": "/new", "time": now, "self_id": 0,
+                            "silent": False,
+                            "sender": {"user_id": int(tg2 if tg2.isdigit() else owner), "nickname": "控制台"},
+                        }
+                    f.write(_json.dumps(ev2, ensure_ascii=False) + "\n")
+                    written += 1
+            self._json(200, {
+                "ok": True, "chat": "all", "count": written,
+                "targets": targets, "inject": inject,
+                "note": "已排队 " + str(written) + " 个会话，几秒内逐个生效",
+            })
+            return
+
+        kind, _, target = chat.partition(":")
+        if kind == "group" and target.isdigit():
+            ev = {
+                "post_type": "message", "message_type": "group", "sub_type": "normal",
+                "message_id": int(_time.time() * 1000),
+                "group_id": int(target), "user_id": int(owner),
+                "message": "/new", "raw_message": "/new", "time": now, "self_id": 0,
+                "silent": False,
+                "sender": {"user_id": int(owner), "nickname": "控制台"},
+            }
+        else:
+            uid = target.isdigit() and target or owner
+            ev = {
+                "post_type": "message", "message_type": "private", "sub_type": "friend",
+                "message_id": int(_time.time() * 1000),
+                "user_id": int(uid),
+                "message": "/new", "raw_message": "/new", "time": now, "self_id": 0,
+                "silent": False,
+                "sender": {"user_id": int(uid), "nickname": "控制台"},
+            }
+        with open(inject, "a", encoding="utf-8") as f:
+            f.write(_json.dumps(ev, ensure_ascii=False) + "\n")
+        self._json(200, {"ok": True, "inject": inject, "owner": owner,
+                         "chat": chat or ("private:" + owner),
+                         "note": "已排队，几秒内生效"})
 
     def _post_task(self) -> None:
         body = self._body()
@@ -1577,16 +2443,6 @@ class Handler(BaseHTTPRequestHandler):
             )
         self._json(200, {"ok": True, **data})
 
-    def _post_sleep(self) -> None:
-        body = self._body()
-        text = extractor.sleep_consolidate(str(body.get("date") or ""))
-        if not text:
-            self._json(503, {"ok": False, "error": "llm unavailable"})
-            return
-        date = str(body.get("date") or time.strftime("%Y-%m-%d"))
-        with _lock:
-            data = store.sleep_add(date, text)
-        self._json(200, {"ok": True, **data})
 
     def _log_activity(self) -> None:
         """记一条活动日志（她真的做过什么）。"""
@@ -1625,6 +2481,10 @@ class Handler(BaseHTTPRequestHandler):
             acts = [a for a in store.list_activities(200) if float(a.get("ts") or 0) >= today_start]
         except Exception:
             acts = []
+        cfg = _load_config()
+        if not bool(cfg.get("diary_enabled", True)):
+            self._json(200, {"ok": True, "skipped": "disabled"})
+            return
         text = extractor.write_diary(
             user_text,
             assistant_text="",
@@ -1658,6 +2518,10 @@ class Handler(BaseHTTPRequestHandler):
                 user_text = "\n".join(str(r["text"])[:300] for r in rows)
             except Exception:
                 user_text = ""
+        cfg = _load_config()
+        if not bool(cfg.get("evolve_enabled", True)):
+            self._json(200, {"ok": True, "skipped": "disabled"})
+            return
         line = extractor.evolve(user_text, assistant_text)
         if not line:
             self._json(503, {"ok": False, "error": "llm unavailable"})
@@ -1678,6 +2542,10 @@ class Handler(BaseHTTPRequestHandler):
         只要求配了 LLM，不看 extract 开关——逐条抽取按轮算钱，episode 按段算。
         没配 LLM 时返回 503，插件侧静默跳过：这条链路不能影响对话本身。
         """
+        cfg = _load_config()
+        if not bool(cfg.get("episode_enabled", True)):
+            self._json(200, {"ok": True, "skipped": "disabled"})
+            return
         body = self._body()
         turns = body.get("turns")
         if not isinstance(turns, list) or not turns:
@@ -1710,6 +2578,10 @@ class Handler(BaseHTTPRequestHandler):
                 "embed_key_env": bool(os.environ.get("CMEM_EMBED_KEY")),
                 "extract": _pick_flag(cfg, "extract", "CMEM_EXTRACT"),
                 "surprisal_threshold": float(_pick(cfg, "surprisal_threshold", "CMEM_SURPRISAL_THRESHOLD", "0.35")),
+                "emotion_threshold": float(_pick(cfg, "emotion_threshold", "CMEM_EMOTION_THRESHOLD", "0.2")),
+                "diary_enabled": bool(cfg.get("diary_enabled", True)),
+                "evolve_enabled": bool(cfg.get("evolve_enabled", True)),
+                "episode_enabled": bool(cfg.get("episode_enabled", True)),
             },
             "status": {
                 "llm_enabled": llm.enabled,
@@ -1744,9 +2616,17 @@ class Handler(BaseHTTPRequestHandler):
 
         if "extract" in body:
             cfg["extract"] = bool(body["extract"])
+        for _f in ("diary_enabled", "evolve_enabled", "episode_enabled"):
+            if _f in body:
+                cfg[_f] = bool(body[_f])
         if "surprisal_threshold" in body:
             try:
                 cfg["surprisal_threshold"] = max(0.0, min(1.0, float(body["surprisal_threshold"])))
+            except (TypeError, ValueError):
+                pass
+        if "emotion_threshold" in body:
+            try:
+                cfg["emotion_threshold"] = max(0.0, min(1.0, float(body["emotion_threshold"])))
             except (TypeError, ValueError):
                 pass
 

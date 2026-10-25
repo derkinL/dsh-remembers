@@ -182,7 +182,59 @@ function renderState(state) {
   }
   lines.push(mood + "。");
 
-  // 2) 在干嘛
+  // 2) 最近的几件让她有情绪的事（情感情节）
+  const recent = Array.isArray(state.emotion_recent) ? state.emotion_recent : [];
+  if (recent.length) {
+    const moodWord = (v, label) => {
+      if (label) return label;
+      if (v > 0.4) return "挺开心";
+      if (v > 0.1) return "还不错";
+      if (v < -0.4) return "很难过";
+      if (v < -0.1) return "有点低落";
+      return "";
+    };
+    const items = [];
+    for (const e of recent) {
+      const v = Number(e.valence) || 0;
+      const w = moodWord(v, String(e.label || "").trim());
+      const trig = String(e.trigger || "").trim();
+      if (!trig) continue;
+      const ts = Number(e.ts || 0) * 1000;
+      const day = ts ? (() => {
+        const d = new Date(ts);
+        const now = new Date();
+        const diff = Math.floor((now.setHours(0,0,0,0) - new Date(d).setHours(0,0,0,0)) / 86400000);
+        return diff === 0 ? "今天" : diff === 1 ? "昨天" : diff === 2 ? "前天" : `${diff}天前`;
+      })() : "";
+      items.push(`· ${day}${w ? "（" + w + "）" : ""}${trig.slice(0, 40)}`);
+    }
+    if (items.length) {
+      lines.push("【最近让你有情绪的事】（别生硬复述，自然带出来）");
+      lines.push(...items);
+    }
+  }
+
+  // 3) 学会的词（带词义和用法）
+  const words = Array.isArray(state.slang_learned) ? state.slang_learned : [];
+  if (words.length) {
+    lines.push("【记住的词】（老大说过的，你知道什么意思，可以学着他用）");
+    for (const w of words.slice(0, 6)) {
+      const ph = String(w.phrase || "").trim();
+      if (!ph) continue;
+      const mn = String(w.meaning || "").trim();
+      const ex = String(w.example || "").trim();
+      let row = `· 「${ph}」`;
+      if (mn) row += ` = ${mn}`;
+      if (ex) row += `；用法例：${ex}`;
+      lines.push(row);
+    }
+  }
+
+  // 4) 和老大熟到什么程度（互动累计）
+  const aff = Number(state.affinity) || 0;
+  if (aff > 0) lines.push(`和老大累计聊过 ${Math.round(aff)} 轮。`);
+
+  // 4) 在干嘛
   if (state.activity) lines.push(`你在：${state.activity}。`);
 
   // 3) 关系阶段
@@ -981,7 +1033,58 @@ async function scanSeen() {
         output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
         execute: async (args) => post("/notes", { text: args.text, author: args.author || "本澜" }),
       }));
-      log("companion_tools_registered", { count: 3 });
+      registerTool(defineTool({
+        name: "learn_word",
+        description:
+          "老大教你一个新词/梗/黑话时，用它记下来。"
+          + "什么时候用：他说「记住这个词 X」「X 是这个意思」「你知道 X 吗」或者明显在解释一个你不懂的词。"
+          + "记完你就懂什么意思、什么时候用；以后可以学着他讲，别乱用在不对的场合。"
+          + "只记词本身（<=12 字），别把整句话塞进来。",
+        parameters: {
+          phrase: { type: "string", required: true, description: "那个词/短语，尽量短" },
+          meaning: { type: "string", description: "什么意思。不确定就留空，会自动查" },
+          context: { type: "string", description: "当时的上下文，帮他判断词义" },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async (args) => post("/slang", {
+          phrase: args.phrase,
+          meaning: args.meaning || "",
+          context: args.context || "",
+          source: "taught",
+          count: 2,
+        }),
+      }));
+      registerTool(defineTool({
+        name: "read_diary",
+        description:
+          "翻你自己的日记本。不传日期 = 最近几篇；传 date（YYYY-MM-DD）= 那一天写的那篇。"
+          + "什么时候用：老大问起以前的事、你想回忆某天心情、或者聊到某个话题想看看当时怎么想的。"
+          + "注意：日记是你自己写的，别当成别人的记录复述，可以自然提一句「我那天写……」",
+        parameters: {
+          date: { type: "string", description: "哪一天（YYYY-MM-DD）。不传就返回最近几篇" },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async (args) => {
+          const qs = args?.date ? "?date=" + encodeURIComponent(String(args.date)) : "";
+          return get("/diary" + qs);
+        },
+      }));
+      registerTool(defineTool({
+        name: "read_activities",
+        description:
+          "查你某天真实干了什么（时间线：聊天/刷B站/玩游戏/被唤醒做的事），带精确时间。"
+          + "什么时候用：想回忆某天具体做了些什么、老大问「你那天干嘛了」、或者在日记里看到一句话想追细节。"
+          + "不传日期 = 今天；传 date（YYYY-MM-DD）= 那一天。",
+        parameters: {
+          date: { type: "string", description: "哪一天（YYYY-MM-DD）。不传就是今天" },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async (args) => {
+          const qs = args?.date ? "?date=" + encodeURIComponent(String(args.date)) : "";
+          return get("/activity" + qs);
+        },
+      }));
+      log("companion_tools_registered", { count: 6 });
     } catch (error) {
       log("companion_tools_skipped", { reason: "register 失败", error: String(error?.message ?? error) });
     }
@@ -1127,11 +1230,25 @@ function renderPersona(data, maxChars) {
   // 【铁律】说话方式 + 不能做的事 + 思考链
   const rules = [];
   const speaking = String(identityObj.speaking ?? "").trim();
-  const taboo = String(identityObj.taboo ?? "").trim();
+  const tabooRaw = String(identityObj.taboo ?? "").trim();
+  const tabooOff = String(identityObj.taboo_off ?? "")
+    .split("\n").map((s) => s.trim()).filter(Boolean);
+  // 过滤掉「取消勾选」的条目（它们在 taboo_off 里）
+  const taboo = tabooRaw
+    .split("\n")
+    .map((s) => s.trim())
+    .filter((s) => s && !tabooOff.includes(s))
+    .join("\n");
   if (speaking) rules.push(speaking);
   if (taboo) {
     // 直接推原文，不去重（用户要能看出原文哪出问题）
     rules.push(taboo);
+  }
+  if (identityObj.self_call_in_speech !== true) {
+    const sc = String(identityObj.self_call ?? "").trim();
+    rules.push(
+      "你是有自称的" + (sc ? "（" + sc + "）" : "") + "，但说话时请不要带自称——日常用「我」来指代自己。"
+    );
   }
   if (identityObj.think_cn) rules.push("思考链（reasoning）用中文写，不要用英文推理。");
   if (identityObj.think_ds) rules.push("思考链按 DeepSeek V3.2 的风格：先拆开问题看关键点，分条想清楚，再落到结论；推理要简洁直接，别绕圈。");
