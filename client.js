@@ -1528,6 +1528,7 @@ window.__ModuleLoader__.load({
         const [biliTools, setBiliTools] = React.useState(null);
         const [biliForm, setBiliForm] = React.useState({});
         const [savedAt, setSavedAt] = React.useState(null);
+        const [biliProactive, setBiliProactive] = React.useState(null);
         const [ownerName, setOwnerName] = React.useState("");
         const [ownerMsg, setOwnerMsg] = React.useState(null);
         const [qr, setQr] = React.useState(null);
@@ -1561,6 +1562,15 @@ window.__ModuleLoader__.load({
               });
             } catch { setBiliCfg(null); }
             try { setBiliTools(await call("/bili/tools")); } catch { setBiliTools(null); }
+            try {
+              const p = await call("/proactive");
+              setBiliProactive({
+                biliShareToOwner: p.biliShareToOwner !== false,
+                biliShareToGroup: p.biliShareToGroup === true,
+                biliComment: p.biliComment !== false,
+                biliMentionOwner: p.biliMentionOwner !== false,
+              });
+            } catch { setBiliProactive({ biliShareToOwner: true, biliShareToGroup: false, biliComment: true, biliMentionOwner: true }); }
           } catch (e) {
             setErr(e && e.message ? e.message : String(e));
             setSt(null);
@@ -1781,6 +1791,43 @@ window.__ModuleLoader__.load({
             ),
           ),
 
+          biliProactive ? h("div", { style: S.card },
+            h("div", { style: S.label }, "她刷完 B 站能做什么"),
+            h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
+              "这几个开关决定她刷完 B 站后能做什么。关掉的不写进提示词。"),
+            h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } },
+              ...[
+                ["biliShareToOwner", "分享给 QQ 主人", "看到有意思的发给你", true],
+                ["biliShareToGroup", "分享到群里", "默认关", false],
+                ["biliComment", "写评论", "评论区留言", true],
+                ["biliMentionOwner", "评论/分享时 @主人", "带上你", true],
+              ].map(([key, label, hint]) => {
+                const on = biliProactive[key];
+                return h("label", {
+                  key: "bp-" + key,
+                  style: {
+                    display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
+                    padding: "10px 12px", borderRadius: 8, height: "100%", boxSizing: "border-box",
+                    border: "1.5px solid " + (on ? "#4084ff" : "rgba(0,0,0,.10)"),
+                    background: on ? "rgba(64,132,255,.04)" : "#ffffff",
+                    transition: "border-color .15s, background .15s",
+                  },
+                },
+                  h("input", {
+                    type: "checkbox",
+                    checked: on,
+                    onChange: () => setBiliProactive({ ...biliProactive, [key]: !on }),
+                    style: { marginTop: 3, flexShrink: 0 },
+                  }),
+                  h("span", { style: { display: "flex", flexDirection: "column", minWidth: 0 } },
+                    h("span", { style: { fontSize: 13, fontWeight: on ? 600 : 400 } }, label),
+                    h("span", { style: { ...S.muted, fontSize: 12 } }, hint),
+                  ),
+                );
+              }),
+            ),
+          ) : null,
+
           biliTools ? h("div", { style: S.card },
             h("div", { style: S.label }, "她能用的 B 站工具"),
             h("div", { style: { ...S.muted, marginBottom: 8 } },
@@ -1836,6 +1883,9 @@ window.__ModuleLoader__.load({
               try {
                 if (ownerMid.trim() !== (ownerInit.current || "")) {
                   await call("/bili/owner", { method: "POST", body: JSON.stringify({ mid: ownerMid.trim(), name: ownerName.trim() }) });
+                  if (biliProactive) {
+                    await call("/proactive", { method: "POST", body: JSON.stringify(biliProactive) });
+                  }
                   ownerInit.current = ownerMid.trim();
                 }
               } catch (e) { /* UID 失败不影响主配置 */ }
@@ -2536,25 +2586,31 @@ window.__ModuleLoader__.load({
           if (f.type === "enum") {
             // 卡片式单选（enumCard）
             const opts = Object.entries(f.options || {});
+            const big = true;   // 所有 enum 卡片统一大号
             return h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
               ...opts.map(([k, label]) => {
                 const on = String(v) === String(k);
                 return h("label", {
                   key: "enumCard-" + f.key + "-" + k,
                   style: {
-                    display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
-                    padding: "6px 10px", borderRadius: 8, fontSize: 12,
+                    display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
+                    padding: big ? "12px 16px" : "6px 10px", borderRadius: 8,
+                    fontSize: big ? 14 : 12,
                     border: "1.5px solid " + (on ? "#4084ff" : "rgba(0,0,0,.10)"),
                     background: on ? "rgba(64,132,255,.04)" : "#ffffff",
                     transition: "border-color .15s, background .15s",
                     fontWeight: on ? 600 : 400,
+                    flex: big ? "1 1 auto" : undefined,
                   },
                 },
                   h("input", {
                     type: "radio",
                     name: "enum-" + f.key,
                     checked: on,
-                    onChange: () => setField(f.key, k),
+                    onChange: () => setField(
+                      f.key,
+                      f.key === "requireMention" ? (k === "true") : k
+                    ),
                     style: { margin: 0, flexShrink: 0 },
                   }),
                   h("span", {}, label),
@@ -2878,20 +2934,51 @@ window.__ModuleLoader__.load({
           ...(data.groups || []).map((g) =>
             h("div", { key: g.id, style: S.card },
               h("div", { style: { ...S.label, marginBottom: 10 } }, g.title),
-              h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
-                ...g.fields.map((f) =>
-                  h("div", {
+              h("div", { style: {
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 10, alignItems: "start",
+              } },
+                ...g.fields.map((f) => {
+                  // 「允许在哪些群聊天」只在「在特定群聊天」时出现，且不显示标题和说明（选了就懂）
+                  const isGroupWhite = f.key === "groupAllowFrom";
+                  if (isGroupWhite) {
+                    const gp = (draft && Object.prototype.hasOwnProperty.call(draft, "groupPolicy"))
+                      ? draft.groupPolicy
+                      : "open";
+                    if (String(gp) !== "allowlist") return null;
+                  }
+
+                  // 「管理员用户」跟着「只允许管理员私聊」走
+                  if (f.key === "adminUsers") {
+                    const dp = (draft && Object.prototype.hasOwnProperty.call(draft, "dmPolicy"))
+                      ? draft.dmPolicy
+                      : "open";
+                    if (String(dp) !== "open") return null;
+                  }
+
+                  // 「允许和谁聊天」跟着「只允许特定人私聊」走
+                  if (f.key === "allowFrom") {
+                    const dp = (draft && Object.prototype.hasOwnProperty.call(draft, "dmPolicy"))
+                      ? draft.dmPolicy
+                      : "open";
+                    if (String(dp) !== "allowlist") return null;
+                  }
+                  return h("div", {
                     key: f.key,
-                    style: { display: "flex", flexDirection: "column", gap: 4, minWidth: 0 },
+                    style: {
+                      display: "flex", flexDirection: "column", gap: 4, minWidth: 0,
+                      gridColumn: f.col === "full" ? "1 / -1" : undefined,
+                    },
                   },
-                    h("div", { style: { display: "flex", alignItems: "center", gap: 6 } },
+                    isGroupWhite ? null : h("div", { style: { display: "flex", alignItems: "center", gap: 6 } },
                       h("span", { style: { fontSize: 12, fontWeight: 500 } }, f.label),
                       f.is_set ? h("span", { style: { fontSize: 10, color: "#2fa36b" } }, "已配") : null,
                     ),
                     control(f),
-                    f.hint ? h("div", { style: { ...S.muted, fontSize: 11 } }, f.hint) : null,
-                  ),
-                ),
+                    (!isGroupWhite && f.hint) ? h("div", { style: { ...S.muted, fontSize: 11 } }, f.hint) : null,
+                  );
+                }),
               ),
             ),
           ),
