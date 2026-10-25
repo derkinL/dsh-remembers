@@ -319,7 +319,7 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/bili/status":
             self._json(200, self._bili_status())
         elif path == "/bili/feed":
-            self._json(200, self._bili_feed())
+            self._json(200, self._bili_feed((query.get("thought") or [""])[0]))
         elif path == "/bili/debrief":
             bv = (query.get("bv") or [""])[0]
             self._json(200, self._bili_debrief(bv))
@@ -808,7 +808,9 @@ class Handler(BaseHTTPRequestHandler):
         "maxGapMinutes": 180,     # 两次唤醒之间的最大间隔（分钟）
         "silentRatio": 40,        # 静默概率（%），其余允许发消息
         "talkEnabled": True,      # 允许发消息（关掉=全部静默）
-        "minChatBeforeWake": 5,   # 距上次唤醒至少聊几句才唤醒（冷却）
+        "minChatBeforeWake": 0,   # 0 = 不限制（2026-10-25 关闭这个门槛）
+        "wakePreset": "normal",   # 唤醒预设：cold / normal / warm / custom
+        "wakeActionCount": 3,     # 唤醒时抽几条动作给她选（1=只给一条）
         # ---- 她的主动性（可开关，勾了才注入 system prompt）----
         "autoScheduleEnabled": True,
         "autoSchedulePrompt": (
@@ -1273,6 +1275,12 @@ class Handler(BaseHTTPRequestHandler):
         for key in ("startHour", "endHour", "minGapMinutes", "maxGapMinutes", "silentRatio"):
             if key in body:
                 cur[key] = int(body[key])
+        # 唤醒预设（cold/normal/warm/custom）
+        if "wakePreset" in body:
+            wp = str(body["wakePreset"] or "").strip()
+            if wp in ("cold", "normal", "warm", "custom"):
+                cur["wakePreset"] = wp
+
         # 主动性开关 + 提示词
         for key in ("autoScheduleEnabled", "autoShareEnabled"):
             if key in body:
@@ -1792,7 +1800,7 @@ class Handler(BaseHTTPRequestHandler):
 
         self._json(200, self._bili_status())
 
-    def _bili_feed(self) -> dict:
+    def _bili_feed(self, thought: str = "") -> dict:
         """她刷 B 站选题：优先用登录账号的 feed（带偏好），失败退回热门。
         会排除已经看过/记过的视频，避免每次都刷到同几个。"""
         import re as _re
@@ -1831,6 +1839,10 @@ class Handler(BaseHTTPRequestHandler):
                 with _lock:
                     for t_ in picked:
                         store.browsed_add(t_, "")
+                    try:
+                        store.log_activity("bili", "刷B站：" + "、".join(x[:18] for x in picked), thought)
+                    except Exception:
+                        pass
                 return {"ok": True, "source": "bili-feed", "items": picked}
             # 偏好池里没新的了 → 热门兜底（多样化）
         # 退回热门（翻页找新的，热门也排除已看过）
@@ -1875,7 +1887,7 @@ class Handler(BaseHTTPRequestHandler):
                 if picked:
                     try:
                         store.log_activity("bili", "刷B站：" + "、".join(
-                            str(x["title"])[:18] for x in picked[:3]))
+                            str(x["title"])[:18] for x in picked[:3]), thought)
                     except Exception:
                         pass
             if not picked:
