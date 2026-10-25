@@ -672,23 +672,30 @@ class MemoryStore:
 
     def get_persona(self) -> dict[str, Any]:
         row = self.conn.execute(
-            "SELECT constitution, self_model, updated_at, self_updated_at FROM persona WHERE id=1",
+            "SELECT constitution, self_model, self_image, identity, updated_at, self_updated_at FROM persona WHERE id=1",
         ).fetchone()
         if row is None:   # schema 里插了 id=1，这里只做防御
-            return {"constitution": "", "self_model": "", "updated_at": 0.0, "self_updated_at": 0.0}
+            return {"constitution": "", "self_model": "", "self_image": "", "identity": "",
+                    "updated_at": 0.0, "self_updated_at": 0.0}
         return {
             "constitution": row["constitution"] or "",
             "self_model": row["self_model"] or "",
+            "self_image": row["self_image"] or "",
+            "identity": row["identity"] or "",
             "updated_at": float(row["updated_at"] or 0.0),
             "self_updated_at": float(row["self_updated_at"] or 0.0),
         }
 
     def set_persona(self, constitution: str | None = None,
-                    self_model: str | None = None) -> dict[str, Any]:
+                    self_model: str | None = None,
+                    self_image: str | None = None,
+                    identity: str | None = None) -> dict[str, Any]:
         """设置页入口：两半都能改。传 None = 这一半不动。"""
         current = self.get_persona()
         next_constitution = current["constitution"] if constitution is None else str(constitution)
         next_self = current["self_model"] if self_model is None else str(self_model)
+        next_image = current.get("self_image", "") if self_image is None else str(self_image)
+        next_identity = current.get("identity", "") if identity is None else str(identity)
         if len(next_constitution) > self.CONSTITUTION_MAX:
             raise ValueError(f"宪法区超过上限 {self.CONSTITUTION_MAX} 字符（现在 {len(next_constitution)}）")
         if len(next_self) > self.SELF_MODEL_MAX:
@@ -696,10 +703,12 @@ class MemoryStore:
 
         now = time.time()
         self.conn.execute(
-            "UPDATE persona SET constitution=?, self_model=?, updated_at=?, self_updated_at=? WHERE id=1",
+            "UPDATE persona SET constitution=?, self_model=?, self_image=?, identity=?, updated_at=?, self_updated_at=? WHERE id=1",
             (
                 next_constitution,
                 next_self,
+                next_image,
+                next_identity,
                 now if constitution is not None else current["updated_at"],
                 now if self_model is not None else current["self_updated_at"],
             ),

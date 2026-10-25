@@ -2078,8 +2078,16 @@ window.__ModuleLoader__.load({
         const [limits, setLimits] = React.useState({ constitution: 15000, self_model: 4000 });
         const [saving, setSaving] = React.useState(false);
         const [notice, setNotice] = React.useState(null);
-        const [saved, setSaved] = React.useState({ constitution: "", self_model: "" });
-        const [draft, setDraft] = React.useState({ constitution: "", self_model: "" });
+        const [saved, setSaved] = React.useState({ constitution: "", self_model: "", self_image: "", identity: "" });
+        const [draft, setDraft] = React.useState({ constitution: "", self_model: "", self_image: "", identity: "" });
+        const [idFields, setIdFields] = React.useState({
+          name: "", self_call: "", user_call: "", personality: "", speaking: "", taboo: "", free: "",
+          think_cn: false,
+          think_ds: false,
+          ai_flavor_on: true,
+          ai_flavor: "允许 2% 语法错误、7% 主谓宾省略、7% 聊跑题；口癖 50% 概率出现且单独一条；允许「？？？」这类网络标点，概率 2%。",
+        });
+        const setId = (k, v) => setIdFields((f) => ({ ...f, [k]: v }));
 
         const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
 
@@ -2088,8 +2096,20 @@ window.__ModuleLoader__.load({
           setError("");
           try {
             const data = await call("/persona");
-            setSaved({ constitution: data.constitution || "", self_model: data.self_model || "" });
-            setDraft({ constitution: data.constitution || "", self_model: data.self_model || "" });
+            setSaved({ constitution: data.constitution || "", self_model: data.self_model || "", self_image: data.self_image || "", identity: data.identity || "" });
+            setDraft({ constitution: data.constitution || "", self_model: data.self_model || "", self_image: data.self_image || "", identity: data.identity || "" });
+            try {
+              const parsed = data.identity ? JSON.parse(data.identity) : {};
+              setIdFields({
+                name: parsed.name || "", self_call: parsed.self_call || "", user_call: parsed.user_call || "",
+                personality: parsed.personality || "", speaking: parsed.speaking || "",
+                taboo: parsed.taboo || "", free: parsed.free || "",
+                think_cn: !!parsed.think_cn,
+                think_ds: !!parsed.think_ds,
+                ai_flavor_on: parsed.ai_flavor_on !== false,
+                ai_flavor: parsed.ai_flavor || "允许 2% 语法错误、7% 主谓宾省略、7% 聊跑题；口癖 50% 概率出现且单独一条；允许「？？？」这类网络标点，概率 2%。",
+              });
+            } catch { /* ignore */ }
             if (data.limits) setLimits(data.limits);
             setNotice(null);
           } catch (err) {
@@ -2145,10 +2165,12 @@ window.__ModuleLoader__.load({
               body: JSON.stringify({
                 constitution: draft.constitution,
                 self_model: draft.self_model,
+                self_image: draft.self_image,
+                identity: JSON.stringify(idFields),
               }),
             });
-            setSaved({ constitution: res.constitution || "", self_model: res.self_model || "" });
-            setDraft({ constitution: res.constitution || "", self_model: res.self_model || "" });
+            setSaved({ constitution: res.constitution || "", self_model: res.self_model || "", self_image: res.self_image || "" });
+            setDraft({ constitution: res.constitution || "", self_model: res.self_model || "", self_image: res.self_image || "" });
             if (res.limits) setLimits(res.limits);
             setNotice({ kind: "ok", text: "已保存。插件下次刷新就带上，不用重启。" });
           } catch (err) {
@@ -2159,7 +2181,7 @@ window.__ModuleLoader__.load({
         };
 
         const cancel = () => {
-          setDraft({ constitution: saved.constitution, self_model: saved.self_model });
+          setDraft({ constitution: saved.constitution, self_model: saved.self_model, self_image: saved.self_image });
           setNotice(null);
         };
 
@@ -2245,7 +2267,7 @@ window.__ModuleLoader__.load({
                 }, "添加"),
               ),
 
-              h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+              h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 } },
                 h("div", {},
                   h("div", { style: { ...S.muted, fontSize: 11 } }, "他的称呼"),
                   h("input", { style: S.input, placeholder: "老大（他让我这么叫）", value: profileFields.name, onChange: (ev) => setPf("name", ev.target.value) }),
@@ -2331,19 +2353,107 @@ window.__ModuleLoader__.load({
 
           h("div", { style: S.card },
 
-            h(Field, {
-              label: "身份与约定",
-              hint: "只写不动的部分：她是谁、怎么称呼你、哪些事不能让步。越短越压得住，别写成小说。",
-            },
-              h("textarea", {
-                style: textareaStyle,
-                value: draft.constitution,
-                spellCheck: false,
-                placeholder: "例：你叫阿澜，26 岁，住在她楼下的旧公寓。你叫对方「姐」。\n\n不管聊到哪一步，你都不会说自己是 AI，也不会劝她去做她明明做不到的事。",
-                onChange: (ev) => set({ constitution: ev.target.value }),
-              }),
-              h("div", { style: S.muted },
-                draft.constitution.length + " / " + limits.constitution + " 字符"),
+            h("div", { style: S.card },
+              h("div", { style: { ...S.label, marginBottom: 8 } }, "身份（逐项填）"),
+              h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+                h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+                  h("span", { style: { ...S.muted, fontSize: 12 } }, "名字"),
+                  h("input", { style: S.input, value: idFields.name, placeholder: "例：沧澜", onChange: (ev) => setId("name", ev.target.value) }),
+                ),
+                h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+                  h("span", { style: { ...S.muted, fontSize: 12 } }, "自称"),
+                  h("input", { style: S.input, value: idFields.self_call, placeholder: "例：本澜", onChange: (ev) => setId("self_call", ev.target.value) }),
+                  h("span", { style: { fontSize: 11, color: "var(--dsw-color-text-secondary, #9ca3af)" } },
+                    "有多个用逗号或顿号分隔，如：本澜、澜澜、咱澜"),
+                ),
+                h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+                  h("span", { style: { ...S.muted, fontSize: 12 } }, "怎么叫老大"),
+                  h("input", { style: S.input, value: idFields.user_call, placeholder: "例：老大", onChange: (ev) => setId("user_call", ev.target.value) }),
+                ),
+                h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+                  h("span", { style: { ...S.muted, fontSize: 12 } }, "脾气"),
+                  h("input", { style: S.input, value: idFields.personality, placeholder: "例：饭饭是本体，被叫大肥鱼会炸毛", onChange: (ev) => setId("personality", ev.target.value) }),
+                ),
+              ),
+              h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 10 } },
+                h("span", { style: { ...S.muted, fontSize: 12 } }, "说话方式"),
+                h("textarea", {
+                  style: { ...S.input, minHeight: 60, resize: "vertical", fontFamily: "inherit" },
+                  value: idFields.speaking,
+                  placeholder: "例：像发微信，最多 3 句、80 字以内，只发对话，不写动作旁白。",
+                  onChange: (ev) => setId("speaking", ev.target.value),
+                }),
+                h("label", { style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer", marginTop: 4 } },
+                  h("input", {
+                    type: "checkbox",
+                    checked: idFields.ai_flavor_on !== false,
+                    onChange: (ev) => setId("ai_flavor_on", ev.target.checked),
+                  }),
+                  h("span", { style: { fontSize: 12 } }, "去 AI 味（默认开启）"),
+                ),
+                h("textarea", {
+                  style: { ...S.input, minHeight: 60, resize: "vertical", fontFamily: "inherit", opacity: idFields.ai_flavor_on === false ? 0.5 : 1 },
+                  value: idFields.ai_flavor,
+                  placeholder: "人味瑕疵清单，可以改",
+                  onChange: (ev) => setId("ai_flavor", ev.target.value),
+                  disabled: idFields.ai_flavor_on === false,
+                }),
+              ),
+              h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 10 } },
+                h("span", { style: { ...S.muted, fontSize: 12 } }, "不能做的事"),
+                h("textarea", {
+                  style: { ...S.input, minHeight: 60, resize: "vertical", fontFamily: "inherit" },
+                  value: idFields.taboo,
+                  placeholder: "例：不写动作和旁白、不客服腔、别硬编记忆（每行一条）",
+                  onChange: (ev) => setId("taboo", ev.target.value),
+                }),
+              ),
+              h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 10 } },
+                h("span", { style: { ...S.muted, fontSize: 12 } }, "她的形象（可替换）"),
+                h("textarea", {
+                  style: { ...S.input, minHeight: 60, resize: "vertical", fontFamily: "inherit" },
+                  value: draft.self_image,
+                  placeholder: "例：圆尾巴、蓝白发、女仆围裙的鲸鱼娘。尾巴尖会跟着情绪动。",
+                  onChange: (ev) => set({ self_image: ev.target.value }),
+                }),
+                h("span", { style: { fontSize: 11, color: "var(--dsw-color-text-secondary, #9ca3af)" } },
+                  "外观、穿戴、身体特征。想换成猫娘、龙娘随便什么形象，只改这里。"),
+              ),
+              h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 10 } },
+                h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
+                  h("input", {
+                    type: "checkbox",
+                    checked: !!idFields.think_cn,
+                    onChange: (ev) => setId("think_cn", ev.target.checked),
+                  }),
+                  h("span", { style: { fontSize: 12 } }, "思考链用中文"),
+                ),
+                h("span", { style: { fontSize: 11, color: "var(--dsw-color-text-secondary, #9ca3af)" } },
+                  "勾上会把「思考链用中文」写进人格注入。注意：中文比英文更耗 token。"),
+              ),
+              h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 10 } },
+                h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
+                  h("input", {
+                    type: "checkbox",
+                    checked: !!idFields.think_ds,
+                    onChange: (ev) => setId("think_ds", ev.target.checked),
+                  }),
+                  h("span", { style: { fontSize: 12 } }, "思考链按 DeepSeek V3.2 风格"),
+                ),
+                h("span", { style: { fontSize: 11, color: "var(--dsw-color-text-secondary, #9ca3af)" } },
+                  "勾上会让模型按 V3.2 的思路走：先拆关键点、分条想清楚、再落结论。"),
+              ),
+              h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 10 } },
+                h("span", { style: { ...S.muted, fontSize: 12 } }, "其他自由发挥"),
+                h("textarea", {
+                  style: { ...S.input, minHeight: 60, resize: "vertical", fontFamily: "inherit" },
+                  value: idFields.free,
+                  placeholder: "例：其余按你的性子来，有情绪起伏。",
+                  onChange: (ev) => setId("free", ev.target.value),
+                }),
+              ),
+              h("div", { style: { ...S.muted, fontSize: 11, marginTop: 6 } },
+                "这些会每轮注入。形象和更长的人设放下面两个框。"),
             ),
 
             h(Field, {

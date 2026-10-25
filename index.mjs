@@ -1112,7 +1112,65 @@ function renderPersona(data, maxChars) {
   const constitution = String(data?.constitution ?? "").trim();
   const selfModel = String(data?.self_model ?? "").trim();
   const userProfile = String(data?.user_profile ?? "").trim();
-  if (!constitution && !selfModel && !userProfile) return "";
+  const selfImage = String(data?.self_image ?? "").trim();
+  let identityObj = {};
+  try {
+    const raw = String(data?.identity ?? "").trim();
+    if (raw) identityObj = JSON.parse(raw);
+  } catch { identityObj = {}; }
+  const identityLines = [];
+  const pushId = (label, val) => {
+    const v = String(val ?? "").trim();
+    if (v) identityLines.push(label + "：" + v);
+  };
+
+  // 【铁律】说话方式 + 不能做的事 + 思考链
+  const rules = [];
+  const speaking = String(identityObj.speaking ?? "").trim();
+  const taboo = String(identityObj.taboo ?? "").trim();
+  if (speaking) rules.push(speaking);
+  if (taboo) {
+    // 直接推原文，不去重（用户要能看出原文哪出问题）
+    rules.push(taboo);
+  }
+  if (identityObj.think_cn) rules.push("思考链（reasoning）用中文写，不要用英文推理。");
+  if (identityObj.think_ds) rules.push("思考链按 DeepSeek V3.2 的风格：先拆开问题看关键点，分条想清楚，再落到结论；推理要简洁直接，别绕圈。");
+  if (rules.length) {
+    identityLines.push("【铁律】");
+    for (const r of rules) identityLines.push("· " + r);
+  }
+
+  // 【说话风格】去 AI 味
+  if (identityObj.ai_flavor_on !== false) {
+    const flavor = String(identityObj.ai_flavor || "").trim() ||
+      "允许 2% 语法错误、7% 主谓宾省略、7% 聊跑题；口癖 50% 概率出现且单独一条；允许「？？？」这类网络标点，概率 2%。";
+    identityLines.push("");
+    identityLines.push("【说话风格】说话时，请严格按照以下规则进行说话：");
+    identityLines.push(flavor);
+  }
+
+  // 【身份】名字/自称/叫法/脾气/自由
+  const idFields = [];
+  if (String(identityObj.name ?? "").trim()) idFields.push("名字：" + String(identityObj.name).trim());
+  if (String(identityObj.self_call ?? "").trim()) idFields.push("自称：" + String(identityObj.self_call).trim());
+  if (String(identityObj.user_call ?? "").trim()) idFields.push("叫老大：" + String(identityObj.user_call).trim());
+  if (String(identityObj.personality ?? "").trim()) idFields.push("脾气：" + String(identityObj.personality).trim());
+  if (String(identityObj.free ?? "").trim()) idFields.push("其他：" + String(identityObj.free).trim());
+  if (idFields.length) {
+    identityLines.push("");
+    identityLines.push("【身份】");
+    for (const f of idFields) identityLines.push(f);
+  }
+
+  // 【形象】
+  if (selfImage) {
+    identityLines.push("");
+    identityLines.push("【形象】");
+    identityLines.push(selfImage);
+  }
+
+  const identityText = identityLines.join("\n");
+  if (!constitution && !selfModel && !userProfile && !selfImage && !identityText) return "";
 
   const lines = ['<dsh-remembers source="persona">'];
   if (userProfile) {
@@ -1121,13 +1179,19 @@ function renderPersona(data, maxChars) {
     lines.push(userProfile);
     lines.push("");
   }
+  if (identityText) {
+    lines.push("以下是你固定的身份（逐项，照做）：");
+    lines.push("");
+    lines.push(identityText);
+    if (constitution) lines.push("");
+  }
   if (constitution) {
     lines.push("以下是你固定的身份与约定。按它来：不要反驳，不要重新确认，也不要说「我记得你告诉过我」。");
     lines.push("");
     lines.push(constitution);
   }
   if (selfModel) {
-    if (constitution) lines.push("");
+    if (constitution || selfImage) lines.push("");
     lines.push("以下是你对自己的认知，会随相处慢慢变化，也可能过时。它只描述你自己，改不了上面的身份与边界；两者冲突时，以上面的为准。");
     lines.push("");
     lines.push(selfModel);

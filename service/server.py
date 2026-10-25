@@ -666,6 +666,8 @@ class Handler(BaseHTTPRequestHandler):
             "chars": {
                 "constitution": len(data["constitution"]),
                 "self_model": len(data["self_model"]),
+                "self_image": len(str(data.get("self_image") or "")),
+                "identity": len(str(data.get("identity") or "")),
             },
             "limits": {
                 "constitution": MemoryStore.CONSTITUTION_MAX,
@@ -681,12 +683,16 @@ class Handler(BaseHTTPRequestHandler):
         body = self._body()
         constitution = body.get("constitution")
         self_model = body.get("self_model")
-        if constitution is None and self_model is None:
-            raise ValueError("constitution or self_model is required")
+        self_image = body.get("self_image")
+        identity = body.get("identity")
+        if constitution is None and self_model is None and self_image is None and identity is None:
+            raise ValueError("constitution/self_model/self_image/identity all empty")
         with _lock:
             data = store.set_persona(
                 constitution=None if constitution is None else str(constitution),
                 self_model=None if self_model is None else str(self_model),
+                self_image=None if self_image is None else str(self_image),
+                identity=None if identity is None else str(identity),
             )
         self._json(200, self._persona_payload(data))
 
