@@ -1123,12 +1123,80 @@ class MemoryStore:
             for r in rows
         ]
 
-    def meme_pack_stats(self) -> list[dict]:
-        """按图库包统计：每包多少张。"""
+    def _packs_file(self) -> str:
+        import os as _os
+        d = _os.environ.get("CMEM_DATA_DIR", ".")
+        return _os.path.join(d, "meme-packs.json")
+
+    def meme_packs_list(self) -> list[dict]:
+        """图库包列表（JSON 文件 + 每包数量）。"""
+        import json as _json
+        import os as _os
+        defaults = [
+            {"id": "dafeiyu", "name": "大肥鱼"},
+            {"id": "user", "name": "用户表情包"},
+            {"id": "found", "name": "大肥鱼叼回来的"},
+        ]
+        packs = defaults
+        try:
+            f = self._packs_file()
+            if _os.path.exists(f):
+                with open(f, encoding="utf-8") as fh:
+                    data = _json.load(fh)
+                if isinstance(data, list) and data:
+                    packs = data
+        except Exception:
+            pass
         rows = self.conn.execute(
-            "SELECT COALESCE(pack, 'dafeiyu') AS p, COUNT(*) AS n FROM meme GROUP BY p ORDER BY n DESC"
+            "SELECT COALESCE(pack, 'dafeiyu') AS p, COUNT(*) AS n FROM meme GROUP BY p"
         ).fetchall()
-        return [{"pack": r["p"], "count": int(r["n"])} for r in rows]
+        counts = {r["p"]: int(r["n"]) for r in rows}
+        out = []
+        for pk in packs:
+            pid = str(pk.get("id") or "")
+            if not pid:
+                continue
+            out.append({"pack": pid, "name": str(pk.get("name") or pid), "count": counts.get(pid, 0)})
+        # 库里存在但列表里没有的包，也带上
+        known = {x["pack"] for x in out}
+        for pid, n in counts.items():
+            if pid not in known and n > 0:
+                out.append({"pack": pid, "name": pid, "count": n})
+        return out
+
+    def meme_pack_stats(self) -> list[dict]:
+        return self.meme_packs_list()
+
+    def meme_pack_add(self, pid: str, name: str) -> dict:
+        """新建图库包。"""
+        import json as _json
+        import os as _os
+        pid = str(pid or "").strip()
+        name = str(name or "").strip() or pid
+        if not pid:
+            return {"ok": False, "error": "id required"}
+        packs = self.meme_packs_list()
+        # 只保留 id/name
+        arr = [{"id": x["pack"], "name": x["name"]} for x in packs]
+        if any(x["id"] == pid for x in arr):
+            return {"ok": False, "error": "already exists"}
+        arr.append({"id": pid, "name": name})
+        f = self._packs_file()
+        _os.makedirs(_os.path.dirname(f), exist_ok=True)
+        with open(f, "w", encoding="utf-8") as fh:
+            _json.dump(arr, fh, ensure_ascii=False, indent=2)
+        return {"ok": True, "id": pid, "name": name}
+
+    def meme_pack_remove(self, pid: str) -> dict:
+        """删图库包（只删列表，不动图）。"""
+        import json as _json
+        import os as _os
+        pid = str(pid or "").strip()
+        arr = [{"id": x["pack"], "name": x["name"]} for x in self.meme_packs_list() if x["pack"] != pid]
+        f = self._packs_file()
+        with open(f, "w", encoding="utf-8") as fh:
+            _json.dump(arr, fh, ensure_ascii=False, indent=2)
+        return {"ok": True, "removed": pid}
 
     def meme_mark_used(self, file: str) -> None:
         self.conn.execute("UPDATE meme SET used_count = used_count + 1, updated = ? WHERE file = ?",

@@ -434,6 +434,16 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(self._set_self_model)
         elif path == "/extract":
             self._guard(self._extract)
+        elif path == "/memes/packs/add":
+            body = self._body()
+            with _lock:
+                r = store.meme_pack_add(str(body.get("id") or ""), str(body.get("name") or ""))
+            self._json(200 if r.get("ok") else 400, r)
+        elif path == "/memes/packs/remove":
+            body = self._body()
+            with _lock:
+                r = store.meme_pack_remove(str(body.get("id") or ""))
+            self._json(200, r)
         elif path == "/memes":
             self._guard(lambda: self._post_meme())
         elif path == "/memes/used":

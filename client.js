@@ -631,6 +631,8 @@ window.__ModuleLoader__.load({
         const [editing, setEditing] = React.useState(null);
         const [pack, setPack] = React.useState("");
         const [packs, setPacks] = React.useState([]);
+        const [view, setView] = React.useState("list");
+        const [newPack, setNewPack] = React.useState(null);
 
         const startEdit = (m) => {
           setEditing({ file: m.file, emotion: m.emotion || "", caption: m.caption || "", keywords: m.keywords || "" });
@@ -672,8 +674,8 @@ window.__ModuleLoader__.load({
         }, []);
 
         React.useEffect(() => {
-          void load();
-        }, [pack]);
+          if (view === "detail") void load();
+        }, [pack, view]);
 
         const upload = (ev) => {
           const file = ev.target.files && ev.target.files[0];
@@ -710,6 +712,93 @@ window.__ModuleLoader__.load({
 
         const EMO = { happy: "开心", angry: "生气", sad: "难过", shy: "害羞", confused: "疑惑", daily: "日常" };
 
+        const addPack = async () => {
+          if (!newPack || !newPack.id.trim()) return;
+          setBusy(true);
+          try {
+            await call("/memes/packs/add", {
+              method: "POST",
+              body: JSON.stringify({ id: newPack.id.trim(), name: (newPack.name || newPack.id).trim() }),
+            });
+            setNewPack(null);
+            await loadPacks();
+          } catch (err) {
+            setMsg("新建失败：" + (err && err.message ? err.message : String(err)));
+          } finally {
+            setBusy(false);
+          }
+        };
+
+        // ===== 图库列表视图 =====
+        if (view === "list") {
+          return h("div", { style: S.wrap },
+            h("div", { style: S.desc },
+              "她的表情包库，按图库分。点一个图库进去看里面的图。",
+            ),
+            h("div", { style: { display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" } },
+              h("button", {
+                style: { ...S.btn(true), padding: "6px 14px", fontSize: 13 },
+                onClick: () => setNewPack({ id: "", name: "" }),
+              }, "新建图库包"),
+              h("button", {
+                style: { ...S.btn(false), padding: "6px 14px", fontSize: 13 },
+                onClick: () => void loadPacks(),
+              }, "刷新"),
+            ),
+            msg ? h("div", { style: S.muted }, msg) : null,
+            h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: 12 } },
+              packs.map((pk) =>
+                h("div", {
+                  key: pk.pack,
+                  onClick: () => { setPack(pk.pack); setView("detail"); },
+                  onMouseEnter: (e) => {
+                    e.currentTarget.style.transform = "translateY(-3px)";
+                    e.currentTarget.style.boxShadow = "0 8px 18px rgba(0,0,0,.06)";
+                  },
+                  onMouseLeave: (e) => {
+                    e.currentTarget.style.transform = "";
+                    e.currentTarget.style.boxShadow = "";
+                  },
+                  style: {
+                    border: "1px solid var(--dsw-color-border-subtle, rgba(0,0,0,.08))",
+                    borderRadius: 12, padding: 14, cursor: "pointer",
+                    background: "var(--dsw-color-bg, #fff)",
+                    transition: "transform .16s ease, box-shadow .16s ease",
+                    display: "flex", flexDirection: "column", gap: 6,
+                  },
+                },
+                  h("div", { style: { fontSize: 15, fontWeight: 600 } }, pk.name),
+                  h("div", { style: { ...S.muted, fontSize: 12 } }, pk.count + " 张"),
+                ),
+              ),
+            ),
+            newPack ? h("div", {
+              style: { position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
+              onClick: (ev) => { if (ev.target === ev.currentTarget) setNewPack(null); },
+            },
+              h("div", { style: { background: "var(--dsw-color-bg, #fff)", borderRadius: 12, padding: 20, width: 340, display: "flex", flexDirection: "column", gap: 10 } },
+                h("div", { style: { fontSize: 15, fontWeight: 600 } }, "新建图库包"),
+                h("input", {
+                  placeholder: "图库 ID（英文/数字，如 my_pack）",
+                  value: newPack.id,
+                  onChange: (ev) => setNewPack({ ...newPack, id: ev.target.value }),
+                  style: { ...S.input },
+                }),
+                h("input", {
+                  placeholder: "显示名（如：我的收藏）",
+                  value: newPack.name,
+                  onChange: (ev) => setNewPack({ ...newPack, name: ev.target.value }),
+                  style: { ...S.input },
+                }),
+                h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+                  h("button", { style: S.btn(false), onClick: () => setNewPack(null) }, "取消"),
+                  h("button", { style: S.btn(true), onClick: () => void addPack() }, "创建"),
+                ),
+              ),
+            ) : null,
+          );
+        }
+
         const PACKS_DEF = [
           { id: "dafeiyu", name: "大肥鱼" },
           { id: "user", name: "用户表情包" },
@@ -721,8 +810,16 @@ window.__ModuleLoader__.load({
         };
 
         return h("div", { style: S.wrap },
+          h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" } },
+            h("button", {
+              style: { ...S.btn(false), padding: "5px 12px", fontSize: 13 },
+              onClick: () => { setView("list"); setPack(""); },
+            }, "← 图库列表"),
+            h("span", { style: { ...S.muted, fontSize: 12 } },
+              "当前图库：" + (packs.find((p) => p.pack === pack)?.name || pack || "全部") + " · " + list.length + " 张"),
+          ),
           h("div", { style: S.desc },
-            "表情包库：" + list.length + " 张" + (pack ? "" : "") + "。上传后自动识别情绪和描述（视觉模型），她就能按情绪找图。",
+            "上传后自动识别情绪和描述（视觉模型），她就能按情绪找图。",
           ),
           h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 } },
             h("button", {
@@ -754,20 +851,18 @@ window.__ModuleLoader__.load({
             list.map((m) => h("div", {
               key: m.file,
               onMouseEnter: (e) => {
-                e.currentTarget.style.transform = "translateY(-4px) scale(1.02)";
-                e.currentTarget.style.boxShadow = "0 10px 24px rgba(0,0,0,.13)";
-                e.currentTarget.style.borderColor = "rgba(64,132,255,.35)";
+                e.currentTarget.style.transform = "translateY(-3px)";
+                e.currentTarget.style.boxShadow = "0 8px 18px rgba(0,0,0,.06)";
               },
               onMouseLeave: (e) => {
                 e.currentTarget.style.transform = "";
                 e.currentTarget.style.boxShadow = "";
-                e.currentTarget.style.borderColor = "";
               },
               style: {
                 border: "1px solid var(--dsw-color-border-subtle, rgba(0,0,0,.08))",
                 borderRadius: 10, padding: 6, display: "flex", flexDirection: "column", gap: 4,
                 background: "var(--dsw-color-bg, #fff)",
-                transition: "transform .16s ease, box-shadow .16s ease, border-color .16s ease",
+                transition: "transform .16s ease, box-shadow .16s ease",
                 willChange: "transform",
               },
             },
