@@ -1347,14 +1347,59 @@ window.__ModuleLoader__.load({
 
           h("div", { style: S.card },
             h("div", { style: S.desc }, "唤醒规则"),
-            h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+            h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
+              "选一套预设，下面的参数自动套上并锁定。要自己调就点「自定义」解锁。"),
+
+            h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 } },
+              ...[
+                ["cold", "冷漠", "一天 2-3 次", { startHour: 10, endHour: 21, minGapMinutes: 240, maxGapMinutes: 480, silentRatio: 70, wakeActionCount: 1 }],
+                ["normal", "普通", "一天 5-8 次", { startHour: 8, endHour: 23, minGapMinutes: 30, maxGapMinutes: 180, silentRatio: 40, wakeActionCount: 3 }],
+                ["warm", "热情", "一天 10+ 次", { startHour: 8, endHour: 24, minGapMinutes: 15, maxGapMinutes: 60, silentRatio: 20, wakeActionCount: 5 }],
+              ].map(([key, label, hint, params]) => {
+                const on = (cfg.wakePreset || "normal") === key;
+                return h("div", {
+                  key: "wp-" + key,
+                  onClick: () => setCfg({ ...cfg, ...params, wakePreset: key }),
+                  style: {
+                    cursor: "pointer", padding: "10px 12px", borderRadius: 8,
+                    border: "1.5px solid " + (on ? "#4084ff" : "rgba(0,0,0,.10)"),
+                    background: on ? "rgba(64,132,255,.04)" : "#fff",
+                    transition: "border-color .15s, background .15s",
+                  },
+                },
+                  h("div", { style: { fontSize: 13, fontWeight: on ? 600 : 500 } }, label),
+                  h("div", { style: { ...S.muted, fontSize: 11, marginTop: 2 } }, hint),
+                );
+              }),
+            ),
+
+            h("div", {
+              onClick: () => setCfg({ ...cfg, wakePreset: (cfg.wakePreset === "custom" ? "normal" : "custom") }),
+              style: {
+                display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
+                padding: "8px 12px", borderRadius: 8, marginBottom: 12,
+                border: "1.5px solid " + ((cfg.wakePreset === "custom") ? "#f59e0b" : "rgba(0,0,0,.10)"),
+                background: (cfg.wakePreset === "custom") ? "rgba(245,158,11,.05)" : "#fafafa",
+              },
+            },
+              h("span", { style: { fontSize: 14 } }, (cfg.wakePreset === "custom") ? "🔓" : "🔒"),
+              h("span", { style: { fontSize: 12, fontWeight: 500 } },
+                (cfg.wakePreset === "custom") ? "自定义（已解锁，可改下面参数）" : "自定义（点这里解锁）"),
+            ),
+
+            h("div", { style: {
+              display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12,
+              pointerEvents: (cfg.wakePreset === "custom") ? "auto" : "none",
+              opacity: (cfg.wakePreset === "custom") ? 1 : 0.55,
+              transition: "opacity .15s",
+            } },
               num("startHour", "开始小时（0-23）", "几点之前不唤醒"),
               num("endHour", "结束小时（0-23）", "到几点就不再唤醒"),
               num("minGapMinutes", "最小间隔（分钟）", "两次唤醒之间至少隔多久"),
               num("maxGapMinutes", "最大间隔（分钟）", "两次唤醒之间最多隔多久"),
-              num("minChatBeforeWake", "聊几句才唤醒（0=不限制）", "距上次唤醒至少聊这么多句才给下一次唤醒机会，避免刚聊完又戳她"),
             ),
             h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+              num("wakeActionCount", "唤醒时给几个选项", "抽几条动作让她挑，1=只给一条"),
               num("silentRatio", "静默概率（%）", "醒来后不打扰你的比例"),
             ),
           ),
