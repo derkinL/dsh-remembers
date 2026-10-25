@@ -807,12 +807,16 @@ async function scanSeen() {
         name: "bili_feed",
         description:
           "刷一下 B 站看有什么。返回几条视频标题和链接。"
-          + "刷完看到有意思的，写个便签（write_note）记一句你的想法——别只当没看见。"
+          + "调这个之前/之后，把你对刷到的内容的真实想法写进 thought 参数（会跟着活动记下来）。"
+          + "刷完看到有意思的，写个便签（write_note）记一句——别只当没看见。"
           + "不用每次都刷，闲着的时候看看。",
-        parameters: {},
+        parameters: {
+          thought: { type: "string", description: "你刷完的真实想法（一两句，随手写，不用正式）" },
+        },
         output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
-        execute: async () => {
-          const r = await get("/bili/feed");
+        execute: async (args) => {
+          const qs = args?.thought ? "?thought=" + encodeURIComponent(String(args.thought)) : "";
+          const r = await get("/bili/feed" + qs);
           return r || { ok: false, error: "unavailable" };
         },
       }));
