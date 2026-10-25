@@ -98,6 +98,17 @@ window.__ModuleLoader__.load({
 
       // -- 样式（对齐 DSH 的设置页观感） -------------------------------------
 
+      // 全局按钮反馈（hover 变淡、按下缩放）
+      if (typeof document !== "undefined" && !document.getElementById("dsh-mem-btn-style")) {
+        const _st = document.createElement("style");
+        _st.id = "dsh-mem-btn-style";
+        _st.textContent =
+          "button{transition:background .12s ease,border-color .12s ease,transform .1s ease,opacity .12s ease}" +
+          "button:active{transform:scale(.97)}" +
+          "button:disabled{opacity:.55;cursor:not-allowed}";
+        document.head.appendChild(_st);
+      }
+
       const S = {
         wrap: { display: "flex", flexDirection: "column", gap: 16, maxWidth: 720 },
         desc: { fontSize: 13, lineHeight: 1.6, color: "var(--dsw-color-text-secondary, #6b7280)" },
@@ -633,6 +644,7 @@ window.__ModuleLoader__.load({
         const [packs, setPacks] = React.useState([]);
         const [view, setView] = React.useState("list");
         const [newPack, setNewPack] = React.useState(null);
+        const [editPack, setEditPack] = React.useState(null);
 
         const startEdit = (m) => {
           setEditing({ file: m.file, emotion: m.emotion || "", caption: m.caption || "", keywords: m.keywords || "" });
@@ -750,10 +762,10 @@ window.__ModuleLoader__.load({
               packs.map((pk) =>
                 h("div", {
                   key: pk.pack,
-                  onClick: () => { setPack(pk.pack); setView("detail"); },
+                  onClick: () => { setPack(pk.pack === "all" ? "" : pk.pack); setView("detail"); },
                   onMouseEnter: (e) => {
-                    e.currentTarget.style.transform = "translateY(-3px)";
-                    e.currentTarget.style.boxShadow = "0 8px 18px rgba(0,0,0,.06)";
+                    e.currentTarget.style.transform = "translateY(-2px)";
+                    e.currentTarget.style.boxShadow = "0 5px 14px rgba(0,0,0,.12)";
                   },
                   onMouseLeave: (e) => {
                     e.currentTarget.style.transform = "";
@@ -761,14 +773,31 @@ window.__ModuleLoader__.load({
                   },
                   style: {
                     border: "1px solid var(--dsw-color-border-subtle, rgba(0,0,0,.08))",
-                    borderRadius: 12, padding: 14, cursor: "pointer",
+                    borderRadius: 12, overflow: "hidden", cursor: "pointer",
                     background: "var(--dsw-color-bg, #fff)",
-                    transition: "transform .16s ease, box-shadow .16s ease",
-                    display: "flex", flexDirection: "column", gap: 6,
+                    display: "flex", flexDirection: "row", alignItems: "center", gap: 12, padding: 12,
+                    transition: "transform .12s ease, box-shadow .12s ease",
                   },
                 },
-                  h("div", { style: { fontSize: 15, fontWeight: 600 } }, pk.name),
-                  h("div", { style: { ...S.muted, fontSize: 12 } }, pk.count + " 张"),
+                  h("div", {
+                    style: {
+                      flex: "none", width: 96, height: 96, borderRadius: 10,
+                      backgroundColor: "var(--dsw-color-bg-secondary, #f3f4f6)",
+                      backgroundImage: pk.cover
+                        ? "url(" + serviceUrl() + "/memes/file/" + encodeURIComponent(pk.cover) + ")"
+                        : "none",
+                      backgroundSize: "cover",
+                      backgroundPosition: "center 28%",
+                      backgroundRepeat: "no-repeat",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 22,
+                      color: "var(--dsw-color-text-secondary, #9ca3af)",
+                    },
+                  }, pk.cover ? null : (pk.pack === "all" ? "🗂️" : "🐟")),
+                  h("div", { style: { display: "flex", flexDirection: "column", gap: 4, minWidth: 0 } },
+                    h("div", { style: { fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, pk.name),
+                    h("div", { style: { fontSize: 12, color: "var(--dsw-color-text-secondary, #6b7280)" } }, pk.count + " 张"),
+                  ),
                 ),
               ),
             ),
@@ -816,32 +845,48 @@ window.__ModuleLoader__.load({
               onClick: () => { setView("list"); setPack(""); },
             }, "← 图库列表"),
             h("span", { style: { ...S.muted, fontSize: 12 } },
-              "当前图库：" + (packs.find((p) => p.pack === pack)?.name || pack || "全部") + " · " + list.length + " 张"),
+              "当前图库：" + (packs.find((p) => p.pack === pack)?.name || pack || "全部表情包") + " · " + list.length + " 张"),
+            h("button", {
+              style: { ...S.btn(false), padding: "5px 12px", fontSize: 12, marginLeft: "auto" },
+              onClick: () => {
+                const pid = pack || "all";
+                const cur = packs.find((x) => x.pack === pid);
+                setEditPack({ id: pid, name: cur ? cur.name : (pid === "all" ? "全部表情包" : pid), cover: cur ? cur.cover : "" });
+              },
+            }, "编辑图库"),
+            (pack && pack !== "all") ? h("button", {
+              style: { ...S.btn(false), padding: "5px 12px", fontSize: 12, color: "#e5484d" },
+              onClick: async () => {
+                if (!window.confirm("删除图库「" + (packs.find((p) => p.pack === pack)?.name || pack) + "」？（里面的图不会删，只是藏起来）")) return;
+                try {
+                  await call("/memes/packs/remove", { method: "POST", body: JSON.stringify({ id: pack }) });
+                  setPack(""); setView("list");
+                  await loadPacks();
+                } catch (err) {
+                  setMsg("删除失败：" + (err && err.message ? err.message : String(err)));
+                }
+              },
+            }, "删除图库") : null,
           ),
           h("div", { style: S.desc },
             "上传后自动识别情绪和描述（视觉模型），她就能按情绪找图。",
           ),
-          h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 } },
-            h("button", {
-              style: { ...S.btn(pack === ""), padding: "5px 12px", fontSize: 13 },
-              onClick: () => setPack(""),
-            }, "全部 " + list.length),
-            PACKS_DEF.map((pd) =>
-              h("button", {
-                key: pd.id,
-                style: { ...S.btn(pack === pd.id), padding: "5px 12px", fontSize: 13 },
-                onClick: () => setPack(pd.id),
-              }, pd.name + " " + packCount(pd.id)),
-            ),
-          ),
           h("div", { style: S.row },
-            h("input", {
-              type: "file",
-              accept: "image/*",
-              onChange: upload,
-              disabled: busy,
-              style: { fontSize: 13 },
-            }),
+            h("label", {
+              style: {
+                ...S.btn(true), padding: "6px 14px", fontSize: 13, cursor: busy ? "not-allowed" : "pointer",
+                display: "inline-block", opacity: busy ? 0.6 : 1,
+              },
+            },
+              busy ? "正在上传…" : "新增表情包",
+              h("input", {
+                type: "file",
+                accept: "image/*",
+                onChange: upload,
+                disabled: busy,
+                style: { display: "none" },
+              }),
+            ),
             busy ? h("span", { style: S.muted }, "正在上传 + 识别…") : null,
           ),
           msg ? h("div", { style: S.muted }, msg) : null,
@@ -897,6 +942,69 @@ window.__ModuleLoader__.load({
               ),
             )),
           ),
+          editPack ? h("div", {
+            style: { position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
+            onClick: (ev) => { if (ev.target === ev.currentTarget) setEditPack(null); },
+          },
+            h("div", { style: { background: "var(--dsw-color-bg, #fff)", borderRadius: 12, padding: 20, width: 460, maxHeight: "80vh", display: "flex", flexDirection: "column", gap: 12 } },
+              h("div", { style: { fontSize: 15, fontWeight: 600 } }, "编辑图库"),
+              h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+                h("span", { style: { ...S.muted, fontSize: 12 } }, "名称"),
+                h("input", {
+                  value: editPack.name,
+                  onChange: (ev) => setEditPack({ ...editPack, name: ev.target.value }),
+                  style: { ...S.input },
+                }),
+              ),
+              h("div", { style: { display: "flex", flexDirection: "column", gap: 4, flex: 1, minHeight: 0 } },
+                h("span", { style: { ...S.muted, fontSize: 12 } }, "封面（从图库里选一张，点一下选中）"),
+                h("div", {
+                  style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(72px, 1fr))", gap: 6, overflowY: "auto", maxHeight: 320, padding: 2 },
+                },
+                  list.map((m) =>
+                    h("div", {
+                      key: m.file,
+                      onClick: () => setEditPack({ ...editPack, cover: m.file }),
+                      style: {
+                        height: 72, borderRadius: 8, cursor: "pointer", overflow: "hidden",
+                        border: editPack.cover === m.file ? "2px solid #4084ff" : "1px solid rgba(0,0,0,.08)",
+                        backgroundImage: "url(" + serviceUrl() + "/memes/file/" + encodeURIComponent(m.file) + ")",
+                        backgroundSize: "cover",
+                        backgroundPosition: "center 28%",
+                      },
+                    }),
+                  ),
+                ),
+              ),
+              h("div", { style: { display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center" } },
+                h("button", {
+                  style: { ...S.btn(false), padding: "4px 10px", fontSize: 12 },
+                  onClick: () => setEditPack({ ...editPack, cover: "" }),
+                }, "恢复默认封面"),
+                h("div", { style: { display: "flex", gap: 8 } },
+                  h("button", { style: S.btn(false), onClick: () => setEditPack(null) }, "取消"),
+                  h("button", {
+                    style: S.btn(true),
+                    onClick: async () => {
+                      setBusy(true);
+                      try {
+                        await call("/memes/packs/update", {
+                          method: "POST",
+                          body: JSON.stringify({ id: editPack.id, name: editPack.name, cover: editPack.cover }),
+                        });
+                        setEditPack(null);
+                        await loadPacks();
+                      } catch (err) {
+                        setMsg("保存失败：" + (err && err.message ? err.message : String(err)));
+                      } finally {
+                        setBusy(false);
+                      }
+                    },
+                  }, "保存"),
+                ),
+              ),
+            ),
+          ) : null,
           editing ? h("div", {
             style: {
               position: "fixed", inset: 0, background: "rgba(0,0,0,.35)",

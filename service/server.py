@@ -439,6 +439,15 @@ class Handler(BaseHTTPRequestHandler):
             with _lock:
                 r = store.meme_pack_add(str(body.get("id") or ""), str(body.get("name") or ""))
             self._json(200 if r.get("ok") else 400, r)
+        elif path == "/memes/packs/update":
+            body = self._body()
+            with _lock:
+                r = store.meme_pack_update(
+                    str(body.get("id") or ""),
+                    str(body.get("name") or ""),
+                    None if "cover" not in body else str(body.get("cover") or ""),
+                )
+            self._json(200 if r.get("ok") else 400, r)
         elif path == "/memes/packs/remove":
             body = self._body()
             with _lock:
