@@ -77,10 +77,19 @@ def _save_config(cfg: dict) -> None:
 
 
 def _pick(cfg: dict, key: str, env_name: str, default: str = "") -> str:
-    """config.json 优先于环境变量：界面上改过的值应该盖掉启动时的 env。"""
+    """config.json 优先于环境变量：界面上改过的值应该盖掉启动时的 env。
+
+    注意：数字/布尔也要认（之前只认 str，导致 surprisal_threshold 存 0.33
+    读回还是默认 0.35）。
+    """
     value = cfg.get(key)
-    if isinstance(value, str) and value.strip():
-        return value.strip()
+    if value is not None:
+        if isinstance(value, bool):
+            return "1" if value else "0"
+        if isinstance(value, (int, float)):
+            return str(value)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
     return os.environ.get(env_name, default)
 
 
