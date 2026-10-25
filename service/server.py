@@ -829,6 +829,11 @@ class Handler(BaseHTTPRequestHandler):
         "biliMaxGapMinutes": 240,      # 两次刷之间最多隔多久
         "biliBrowseLimit": 3,          # 每次刷几条（存进"见闻"）
         "biliBrowsePerDay": 3,         # 每天最多刷几次
+        # 刷完能做什么（前端卡片控制）
+        "biliShareToOwner": True,      # 分享给 QQ 主人
+        "biliShareToGroup": False,     # 分享到群里（默认关）
+        "biliComment": True,           # 写评论
+        "biliMentionOwner": True,      # 评论/分享时 @主人
         # 她独处时能做的事（随机抽一条作为这轮的状态提示）
         "silentActions": [
             "自己上网逛逛（B 站热门、新闻、梗），看到有意思的记下来",
@@ -871,23 +876,34 @@ class Handler(BaseHTTPRequestHandler):
             {"key": "workspacePath", "label": "QQ 会话的工作目录", "type": "dirpath", "default": "",
              "hint": "她的文件操作都在这个目录里。改了只对新会话生效（/workspace 设过的不受影响）。"},
         ]},
-        {"id": "permissions", "title": "权限", "fields": [
-            {"key": "requireMention", "label": "群聊必须 @ 机器人", "type": "boolean", "default": False,
-             "hint": "开着 = 群里必须 @ 她才回；关着 = 群里说什么都回（会很吵）。"},
-            {"key": "adminUsers", "label": "管理员用户", "type": "stringArray", "default": [],
+                {"id": "groupChat", "title": "群聊", "fields": [
+            {"key": "requireMention", "label": "群聊触发方式", "type": "enum", "col": "full",
+             "options": {"true": "群聊必须 @ 机器人", "false": "回复所有群聊信息"},
+             "default": False, "hint": "必须 @ 才回比较安静；回复所有消息会很吵。"},
+            {"key": "groupPolicy", "label": "群聊策略", "type": "enum", "col": "full",
+             "options": {
+               "open": "允许在所有群聊天",
+               "allowlist": "在特定群聊天",
+               "disabled": "禁止在群里聊天",
+             },
+             "default": "open", "hint": "选「在特定群聊天」时，下面会出现群号输入框。"},
+            {"key": "groupAllowFrom", "label": "允许在哪些群聊天（群号）", "type": "stringArray", "col": "full", "default": [],
+             "hint": "她只在这些群里说话。群聊策略选「在特定群聊天」时才生效。"},
+        ]},
+        {"id": "dmChat", "title": "私聊", "fields": [
+            {"key": "dmPolicy", "label": "谁能私聊她", "type": "enum", "col": "full",
+             "options": {
+               "open": "只允许管理员私聊",
+               "allowlist": "只允许特定人私聊",
+               "disabled": "禁止私聊",
+             },
+             "default": "open", "hint": "选「只允许特定人私聊」时，下面会出现 QQ 号输入框。"},
+            {"key": "adminUsers", "label": "管理员用户", "type": "stringArray", "col": "full", "default": [],
              "hint": "能用 /new /session 等斜杠命令的 QQ 号。"},
-            {"key": "dmPolicy", "label": "私聊策略", "type": "enum",
-             "options": {"open": "开放（仅管理员）", "allowlist": "白名单", "disabled": "禁用"},
-             "default": "open", "hint": "私聊谁能触发她。"},
-            {"key": "groupPolicy", "label": "群聊策略", "type": "enum",
-             "options": {"open": "开放", "allowlist": "白名单", "disabled": "禁用"},
-             "default": "open", "hint": "群聊接不接。想在群里用就设 allowlist + 填群号。"},
-            {"key": "allowAllUsers", "label": "允许所有用户", "type": "boolean", "default": False,
+            {"key": "allowAllUsers", "label": "允许所有用户", "type": "boolean", "col": "full", "default": False,
              "hint": "关着 = 只有管理员能触发她。"},
-            {"key": "allowFrom", "label": "允许和谁聊天（QQ 号）", "type": "stringArray", "default": [],
+            {"key": "allowFrom", "label": "允许和谁聊天（QQ 号）", "type": "stringArray", "col": "full", "default": [],
              "hint": "只有这些 QQ 号能私聊她。私聊策略选「白名单」时才生效。"},
-            {"key": "groupAllowFrom", "label": "允许在哪些群聊天（群号）", "type": "stringArray", "default": [],
-             "hint": "她只在这些群里说话。群聊策略选「白名单」时才生效。"},
         ]},
         {"id": "behavior", "title": "行为", "fields": [
             {"key": "interimMessages", "label": "中间消息", "type": "boolean", "default": False,
@@ -1224,6 +1240,7 @@ class Handler(BaseHTTPRequestHandler):
                     "key": key, "label": f["label"], "type": f.get("type"),
                     "display": display, "is_set": is_set, "raw": raw if f.get("type") != "secret" else None,
                     "hint": f.get("hint", ""), "options": f.get("options"),
+                    "col": f.get("col"),   # left / right，前端用来分列
                 })
             groups.append({"id": g["id"], "title": g["title"], "fields": fields})
 
@@ -1269,7 +1286,7 @@ class Handler(BaseHTTPRequestHandler):
         import json as _json
         body = self._body()
         cur = self._load_proactive()
-        for key in ("enabled", "talkEnabled"):
+        for key in ("enabled", "talkEnabled", "biliShareToOwner", "biliShareToGroup", "biliComment", "biliMentionOwner"):
             if key in body:
                 cur[key] = bool(body[key])
         for key in ("startHour", "endHour", "minGapMinutes", "maxGapMinutes", "silentRatio"):
