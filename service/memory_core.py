@@ -766,7 +766,7 @@ class MemoryStore:
         if next_mood not in self.MOODS:
             next_mood = "normal"
         next_intimacy = cur["intimacy"] if intimacy is None else float(intimacy)
-        next_intimacy = max(0.0, min(100.0, next_intimacy))
+        next_intimacy = max(0.0, min(1000.0, next_intimacy))
         self.conn.execute(
             """UPDATE state SET mood=?, mood_updated=?, intimacy=?, last_interaction=?,
                                diary=?, diary_date=?, dnd_start=?, dnd_end=?,
@@ -816,9 +816,9 @@ class MemoryStore:
 
     STAGES = [
         (0, "陌生", "刚认识，客气一点，别太黏"),
-        (20, "熟悉", "认识一阵了，会聊会闹，偶尔主动"),
-        (50, "亲密", "很熟了，会撒娇会闹，经常主动找他"),
-        (80, "依赖", "离不开他了，黏人，主动得很勤"),
+        (200, "熟悉", "认识一阵了，会聊会闹，偶尔主动"),
+        (500, "亲密", "很熟了，会撒娇会闹，经常主动找他"),
+        (800, "依赖", "离不开他了，黏人，主动得很勤"),
     ]
 
     def current_stage(self) -> dict:
@@ -1086,21 +1086,24 @@ class MemoryStore:
 
     # -- 表情包索引：按情绪/关键词找图 ----------------------------------------
 
-    def meme_upsert(self, file: str, emotion: str = "", caption: str = "", keywords: str = "") -> dict:
+    def meme_upsert(self, file: str, emotion: str = "", caption: str = "", keywords: str = "", pack: str = "found") -> dict:
         now = time.time()
         self.conn.execute(
-            "INSERT INTO meme(file, emotion, caption, keywords, created, updated) VALUES (?,?,?,?,?,?) "
+            "INSERT INTO meme(file, emotion, caption, keywords, pack, created, updated) VALUES (?,?,?,?,?,?,?) "
             "ON CONFLICT(file) DO UPDATE SET emotion=excluded.emotion, caption=excluded.caption, "
-            "keywords=excluded.keywords, updated=excluded.updated",
-            (str(file), str(emotion), str(caption), str(keywords), now, now),
+            "keywords=excluded.keywords, pack=excluded.pack, updated=excluded.updated",
+            (str(file), str(emotion), str(caption), str(keywords), str(pack or "found"), now, now),
         )
         self.conn.commit()
-        return {"file": file, "emotion": emotion, "caption": caption}
+        return {"file": file, "emotion": emotion, "caption": caption, "pack": pack}
 
-    def meme_list(self, emotion: str = "", q: str = "", limit: int = 20) -> list[dict]:
+    def meme_list(self, emotion: str = "", q: str = "", limit: int = 20, pack: str = "") -> list[dict]:
         sql = "SELECT * FROM meme"
         where = []
         params = []
+        if pack:
+            where.append("pack = ?")
+            params.append(pack)
         if emotion:
             where.append("(emotion = ? OR emotion LIKE ?)")
             params.extend([emotion, "%" + emotion + "%"])
@@ -1115,9 +1118,17 @@ class MemoryStore:
         rows = self.conn.execute(sql, tuple(params)).fetchall()
         return [
             {"id": int(r["id"]), "file": r["file"], "emotion": r["emotion"],
-             "caption": r["caption"], "keywords": r["keywords"], "used_count": int(r["used_count"])}
+             "caption": r["caption"], "keywords": r["keywords"], "used_count": int(r["used_count"]),
+             "pack": r["pack"] if "pack" in r.keys() else "dafeiyu"}
             for r in rows
         ]
+
+    def meme_pack_stats(self) -> list[dict]:
+        """按图库包统计：每包多少张。"""
+        rows = self.conn.execute(
+            "SELECT COALESCE(pack, 'dafeiyu') AS p, COUNT(*) AS n FROM meme GROUP BY p ORDER BY n DESC"
+        ).fetchall()
+        return [{"pack": r["p"], "count": int(r["n"])} for r in rows]
 
     def meme_mark_used(self, file: str) -> None:
         self.conn.execute("UPDATE meme SET used_count = used_count + 1, updated = ? WHERE file = ?",

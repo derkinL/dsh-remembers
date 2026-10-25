@@ -213,6 +213,7 @@ CREATE TABLE IF NOT EXISTS meme (
   caption      TEXT NOT NULL DEFAULT '',
   keywords     TEXT NOT NULL DEFAULT '',
   used_count   INTEGER NOT NULL DEFAULT 0,
+  pack         TEXT NOT NULL DEFAULT 'dafeiyu',
   created      REAL NOT NULL DEFAULT 0,
   updated      REAL NOT NULL DEFAULT 0
 );

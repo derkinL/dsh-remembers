@@ -629,6 +629,8 @@ window.__ModuleLoader__.load({
         const [busy, setBusy] = React.useState(false);
         const [msg, setMsg] = React.useState(null);
         const [editing, setEditing] = React.useState(null);
+        const [pack, setPack] = React.useState("");
+        const [packs, setPacks] = React.useState([]);
 
         const startEdit = (m) => {
           setEditing({ file: m.file, emotion: m.emotion || "", caption: m.caption || "", keywords: m.keywords || "" });
@@ -648,16 +650,30 @@ window.__ModuleLoader__.load({
 
         const load = async () => {
           try {
-            const l = await call("/memes?limit=300");
+            const url = "/memes?limit=300" + (pack ? "&pack=" + encodeURIComponent(pack) : "");
+            const l = await call(url);
             setList(Array.isArray(l) ? l : []);
           } catch {
             setList([]);
           }
         };
 
+        const loadPacks = async () => {
+          try {
+            const r = await call("/memes/packs");
+            setPacks(Array.isArray(r) ? r : []);
+          } catch {
+            setPacks([]);
+          }
+        };
+
+        React.useEffect(() => {
+          void loadPacks();
+        }, []);
+
         React.useEffect(() => {
           void load();
-        }, []);
+        }, [pack]);
 
         const upload = (ev) => {
           const file = ev.target.files && ev.target.files[0];
@@ -694,9 +710,32 @@ window.__ModuleLoader__.load({
 
         const EMO = { happy: "开心", angry: "生气", sad: "难过", shy: "害羞", confused: "疑惑", daily: "日常" };
 
+        const PACKS_DEF = [
+          { id: "dafeiyu", name: "大肥鱼" },
+          { id: "user", name: "用户表情包" },
+          { id: "found", name: "大肥鱼叼回来的" },
+        ];
+        const packCount = (id) => {
+          const hit = packs.find((p) => p.pack === id);
+          return hit ? hit.count : 0;
+        };
+
         return h("div", { style: S.wrap },
           h("div", { style: S.desc },
-            "表情包库：" + list.length + " 张。上传后自动识别情绪和描述（视觉模型），她就能按情绪找图。",
+            "表情包库：" + list.length + " 张" + (pack ? "" : "") + "。上传后自动识别情绪和描述（视觉模型），她就能按情绪找图。",
+          ),
+          h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 } },
+            h("button", {
+              style: { ...S.btn(pack === ""), padding: "5px 12px", fontSize: 13 },
+              onClick: () => setPack(""),
+            }, "全部 " + list.length),
+            PACKS_DEF.map((pd) =>
+              h("button", {
+                key: pd.id,
+                style: { ...S.btn(pack === pd.id), padding: "5px 12px", fontSize: 13 },
+                onClick: () => setPack(pd.id),
+              }, pd.name + " " + packCount(pd.id)),
+            ),
           ),
           h("div", { style: S.row },
             h("input", {
@@ -714,10 +753,22 @@ window.__ModuleLoader__.load({
           },
             list.map((m) => h("div", {
               key: m.file,
+              onMouseEnter: (e) => {
+                e.currentTarget.style.transform = "translateY(-4px) scale(1.02)";
+                e.currentTarget.style.boxShadow = "0 10px 24px rgba(0,0,0,.13)";
+                e.currentTarget.style.borderColor = "rgba(64,132,255,.35)";
+              },
+              onMouseLeave: (e) => {
+                e.currentTarget.style.transform = "";
+                e.currentTarget.style.boxShadow = "";
+                e.currentTarget.style.borderColor = "";
+              },
               style: {
                 border: "1px solid var(--dsw-color-border-subtle, rgba(0,0,0,.08))",
                 borderRadius: 10, padding: 6, display: "flex", flexDirection: "column", gap: 4,
                 background: "var(--dsw-color-bg, #fff)",
+                transition: "transform .16s ease, box-shadow .16s ease, border-color .16s ease",
+                willChange: "transform",
               },
             },
               h("img", {

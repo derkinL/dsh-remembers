@@ -881,7 +881,8 @@ async function scanSeen() {
           + "老大发来的图、或者你在网上看到喜欢的图，把图片的完整路径传进来就行，系统会复制入库并自己识别。"
           + "memes 目录里已有的图也可以只传文件名。",
         parameters: {
-          file: { type: "string", required: true, description: "文件名（memes 目录里的）" },
+          file: { type: "string", required: true, description: "文件名（memes 目录里的）或完整路径" },
+          pack: { type: "string", description: "存到哪个图库包：user（老大发的）、found（你自己叼回来的）、dafeiyu（内置，别用）。默认 found" },
           emotion: { type: "string", description: "情绪：happy / angry / sad / shy / confused / daily" },
           caption: { type: "string", description: "一句话描述这张图的样子" },
           keywords: { type: "string", description: "关键词，空格分隔" },
@@ -889,6 +890,7 @@ async function scanSeen() {
         output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
         execute: async (args) => post("/memes", {
           file: args.file,
+          pack: args.pack || "found",
           emotion: args.emotion || "",
           caption: args.caption || "",
           keywords: args.keywords || "",

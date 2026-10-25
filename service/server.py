@@ -319,14 +319,17 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, self._get_proactive())
         elif path == "/memes/seen":
             self._json(200, store.seen_liked())
+        elif path == "/memes/packs":
+            self._json(200, store.meme_pack_stats())
         elif path == "/memes":
             emotion = (query.get("emotion") or [""])[0]
             q = (query.get("q") or [""])[0]
+            pack = (query.get("pack") or [""])[0]
             try:
                 limit = int((query.get("limit") or ["20"])[0])
             except Exception:
                 limit = 20
-            self._json(200, store.meme_list(emotion, q, limit))
+            self._json(200, store.meme_list(emotion, q, limit, pack))
         elif path == "/slang":
             self._json(200, store.slang_list())
         elif path == "/affinity":
@@ -1497,8 +1500,9 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
+        pack = str(body.get("pack") or "found")
         with _lock:
-            data = store.meme_upsert(file, emotion, caption, keywords)
+            data = store.meme_upsert(file, emotion, caption, keywords, pack)
         self._json(200, {"ok": True, **data})
 
     def _post_meme_used(self) -> None:
