@@ -230,7 +230,23 @@ class Scheduler:
         st["bili_last"] = now
         st["bili_interval"] = 0
         st["bili_count"] = count + 1
-        msg = f"（你自己待着，现在是 {hour} 点。想去 B 站逛逛吗？不想去就干别的，没事。）"
+        # 和唤醒一样的机制，但动作固定为「刷 B 站」
+        hints = []
+        if cfg.get("biliShareToOwner", True):
+            hints.append("看到有意思的，把链接和你的想法发给老大")
+        if cfg.get("biliShareToGroup", False):
+            hints.append("也可以分享到群里")
+        if cfg.get("biliComment", True):
+            hints.append("想评论就评论（bili_run comment）")
+        if cfg.get("biliMentionOwner", True):
+            hints.append("评论或分享时 @主人")
+        hint_text = ("；".join(hints) + "。") if hints else ""
+        msg = (
+            f"（你自己待着，现在是 {hour} 点。"
+            "抽到：刷一会儿 B 站。用 bili_feed 刷，把你的真实想法写进 bili_feed 的 thought 参数。"
+            + hint_text
+            + "想做什么就做，也可以不刷——这只是你自己的时间。）"
+        )
         self._inject(msg, silent=False)
         _log(f"bili: nudged model ({count + 1}/{per_day} today)")
         return True
