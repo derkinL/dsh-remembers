@@ -454,7 +454,6 @@ window.__ModuleLoader__.load({
         const [memories, setMemories] = React.useState([]);
         const [taskList, setTaskList] = React.useState([]);
         const [noteList, setNoteList] = React.useState([]);
-        const [sleepList, setSleepList] = React.useState([]);
         const [loading, setLoading] = React.useState(true);
         const [error, setError] = React.useState(null);
 
@@ -486,7 +485,6 @@ window.__ModuleLoader__.load({
             setActivities(Array.isArray(acts) ? acts : [])
             try { setTaskList(await call("/tasks") || []); } catch { setTaskList([]); }
             try { setNoteList(await call("/notes") || []); } catch { setNoteList([]); }
-            try { setSleepList(await call("/sleep") || []); } catch { setSleepList([]); };
             setSt(s);
             setPersona(p);
             setMemories(Array.isArray(m) ? m : []);
@@ -589,15 +587,6 @@ window.__ModuleLoader__.load({
                     nt.date + " · " + (nt.author || "某人") + "：" + nt.text))),
           ),
 
-          h("div", { style: S.card },
-            h("div", { style: S.label }, "睡前整理（睡眠巩固）"),
-            sleepList.length === 0
-              ? h("div", { style: S.muted }, "还没有——每天 23:00 她整理一次。")
-              : h("div", { style: { display: "flex", flexDirection: "column", gap: 10 } },
-                  sleepList.slice(0, 7).map((sl, i) => h("div", { key: i },
-                    h("div", { style: { fontSize: 12, color: "var(--dsw-color-text-secondary, #6b7280)", marginBottom: 4 } }, sl.date),
-                    h("div", { style: S.desc }, sl.text)))),
-          ),
 
           h("div", { style: S.card },
             h("div", { style: S.row },
@@ -1075,6 +1064,18 @@ window.__ModuleLoader__.load({
         const [talkActionEnabled, setTalkActionEnabled] = React.useState({});
         const [talkActions, setTalkActions] = React.useState([]);
         const [newAction, setNewAction] = React.useState({ silent: "", talk: "" });
+
+        // 删除一条动作（文本 + 启用状态一起删，索引要重排）
+        const removeAction = (texts, enabled, i, setTexts, setEnabled) => {
+          const newTexts = texts.filter((_, j) => j !== i);
+          const newEnabled = {};
+          newTexts.forEach((_, j) => {
+            const srcIdx = j < i ? j : j + 1;
+            newEnabled[j] = enabled[srcIdx] !== false;
+          });
+          setTexts(newTexts);
+          setEnabled(newEnabled);
+        };
         const [msg, setMsg] = React.useState(null);
         const [err, setErr] = React.useState(null);
 
@@ -1184,11 +1185,63 @@ window.__ModuleLoader__.load({
           ),
 
           h("div", { style: S.card },
-            h("div", { style: S.label }, "她醒着能做什么（动作编辑器）"),
+            h("div", { style: S.label }, "她的主动性"),
+            h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
+              "勾上之后会写进她的系统提示词。关掉 = 她不会主动约时间、也不会主动分享，只被动等你。"),
+
+            h("div", {
+              style: {
+                display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer",
+                padding: "10px 12px", borderRadius: 8, marginBottom: 8,
+                border: "1.5px solid " + (cfg.autoScheduleEnabled !== false ? "#4084ff" : "rgba(0,0,0,.10)"),
+                background: cfg.autoScheduleEnabled !== false ? "rgba(64,132,255,.04)" : "#fff",
+              },
+              onClick: () => setCfg({ ...cfg, autoScheduleEnabled: cfg.autoScheduleEnabled === false }),
+            },
+              h("input", {
+                type: "checkbox",
+                checked: cfg.autoScheduleEnabled !== false,
+                onClick: (ev) => ev.stopPropagation(),
+                onChange: (ev) => setCfg({ ...cfg, autoScheduleEnabled: ev.target.checked }),
+                style: { marginTop: 3 },
+              }),
+              h("div", { style: { flex: 1 } },
+                h("div", { style: { fontSize: 13, fontWeight: 500 } }, "聊完可以自己约下次时间"),
+                h("div", { style: { ...S.muted, fontSize: 12, marginTop: 2 } },
+                  "聊完觉得过会儿还想找你，她可以用 schedule_create 设个时间，到点自己来找你"),
+              ),
+            ),
+
+            h("div", {
+              style: {
+                display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer",
+                padding: "10px 12px", borderRadius: 8,
+                border: "1.5px solid " + (cfg.autoShareEnabled !== false ? "#4084ff" : "rgba(0,0,0,.10)"),
+                background: cfg.autoShareEnabled !== false ? "rgba(64,132,255,.04)" : "#fff",
+              },
+              onClick: () => setCfg({ ...cfg, autoShareEnabled: cfg.autoShareEnabled === false }),
+            },
+              h("input", {
+                type: "checkbox",
+                checked: cfg.autoShareEnabled !== false,
+                onClick: (ev) => ev.stopPropagation(),
+                onChange: (ev) => setCfg({ ...cfg, autoShareEnabled: ev.target.checked }),
+                style: { marginTop: 3 },
+              }),
+              h("div", { style: { flex: 1 } },
+                h("div", { style: { fontSize: 13, fontWeight: 500 } }, "刷完 B 站可以主动分享"),
+                h("div", { style: { ...S.muted, fontSize: 12, marginTop: 2 } },
+                  "刷到有意思的，她会把链接和两句感想发给你"),
+              ),
+            ),
+          ),
+
+          h("div", { style: S.card },
+            h("div", { style: S.label }, "她醒着能做什么"),
             h("div", { style: { ...S.muted, marginBottom: 8 } },
               "每次唤醒随机抽一条当作她这轮的状态提示。静默=她自己待着，说话=可以找你。改完点下面的保存。"),
 
-            h("div", { style: { ...S.muted, fontSize: 11, marginTop: 4 } }, "静默时（自己待着）"),
+            h("div", { style: { ...S.muted, fontSize: 11, marginTop: 4 } }, "她自己做什么（自己待着，不找你）"),
             h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 } },
               silentActions.map((a, i) => h("label", {
                 key: "s" + i,
@@ -1233,7 +1286,7 @@ window.__ModuleLoader__.load({
               }, "加"),
             ),
 
-            h("div", { style: { ...S.muted, fontSize: 11, marginTop: 14 } }, "说话时（可以找你）"),
+            h("div", { style: { ...S.muted, fontSize: 11, marginTop: 14 } }, "她想找你做什么（可以主动发消息）"),
             h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 } },
               talkActions.map((a, i) => h("label", {
                 key: "t" + i,
@@ -1921,7 +1974,6 @@ window.__ModuleLoader__.load({
               emotion_threshold: cur.emotion_threshold != null ? cur.emotion_threshold : 0.2,
               diary_enabled: cur.diary_enabled !== false,
               evolve_enabled: cur.evolve_enabled !== false,
-              sleep_enabled: cur.sleep_enabled !== false,
               episode_enabled: cur.episode_enabled !== false,
             });
           } catch (e) {

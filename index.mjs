@@ -57,6 +57,17 @@ async function fetchState() {
   }
 }
 
+/** 拉主动消息配置（主动性开关 + 提示词），失败返回 null。 */
+async function fetchProactive() {
+  try {
+    const res = await fetch(config.endpoint + "/proactive", { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 /** 社交亲和度：每次互动 +1（fire-and-forget）。 */
 async function bumpAffinity() {
   try {
@@ -164,110 +175,124 @@ async function bumpIntimacy(delta = 0.2) {
   }
 }
 
-/** 把状态渲染成提示词段（每轮必带）。只留三个最关键的状态，其余她需要时自己查。 */
-function renderState(state) {
-  if (!state) return "";
-  const moodMap = { happy: "开心", tired: "累", annoyed: "烦", bored: "无聊", normal: "平常" };
-  const lines = ['<dsh-remembers source="state">'];
+/**
+ * 把状态渲染成提示词段。
+ *
+ * 设计原则（2026-10-25 重构）：
+ *   - 只在「变了」的时候注入；静态内容走工具查库
+ *   - 时间每轮都带（她需要时间感）
+ *   - 心情/在干嘛/B站见闻/阶段：跟上次比，变了才加
+ *   - 学会的词 / 日记便签 / 工具速查：不在这里
+ *
+ * @param state  /state 返回的对象
+ * @param prev   上次注入时的哈希表
+ * @returns {{ text: string, hashes: object }}
+ */
+function renderState(state, prev) {
+  if (!state) return { text: "", hashes: prev || {} };
+  const hashes = { ...(prev || {}) };
+  const blocks = [];
 
-  // 1) 心情（mood + 情绪轴合成一句）
-  let mood = `心情：${moodMap[state.mood] || "平常"}`;
+  // ---------- 1. 时间（每轮，中文） ----------
+  const now = new Date();
+  const WK = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+  const hh = now.getHours();
+  const mi = String(now.getMinutes()).padStart(2, "0");
+  const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${WK[now.getDay()]} ${hh}:${mi}`;
+  const phase = hh < 5 ? "凌晨" : hh < 8 ? "清早" : hh < 11 ? "上午" : hh < 13 ? "中午" : hh < 17 ? "下午" : hh < 19 ? "傍晚" : hh < 22 ? "晚上" : "深夜";
+  blocks.push(`现在是 ${dateStr}（${phase}）。`);
+
+  // ---------- 2. 困意（按档位变） ----------
+  if (hh >= 23 || hh < 6) blocks.push("你现在困得眼睛都睁不开了，回话短一点、慢一点，别硬撑。");
+  else if (hh >= 21) blocks.push("有点困了，说话懒一点。");
+
+  // ---------- 3. 心情 + 情绪（变了才加） ----------
+  const moodMap = { happy: "开心", tired: "累", annoyed: "烦", bored: "无聊", normal: "平常" };
+  let moodText = `心情：${moodMap[state.mood] || "平常"}`;
   if (state.emotion) {
     const v = Number(state.emotion.valence) || 0;
     const a = Number(state.emotion.arousal) || 0.5;
     const vDesc = v > 0.4 ? "很开心" : v > 0.1 ? "还不错" : v < -0.4 ? "很难过" : v < -0.1 ? "有点低落" : "";
     const aDesc = a > 0.7 ? "很兴奋" : a > 0.55 ? "有点激动" : a < 0.3 ? "有点蔫" : "";
     const extras = [vDesc, aDesc].filter(Boolean).join("，");
-    if (extras) mood += `（${extras}）`;
+    if (extras) moodText += `（${extras}）`;
   }
-  lines.push(mood + "。");
-
-  // 2) 最近的几件让她有情绪的事（情感情节）
-  const recent = Array.isArray(state.emotion_recent) ? state.emotion_recent : [];
-  if (recent.length) {
-    const moodWord = (v, label) => {
-      if (label) return label;
-      if (v > 0.4) return "挺开心";
-      if (v > 0.1) return "还不错";
-      if (v < -0.4) return "很难过";
-      if (v < -0.1) return "有点低落";
-      return "";
-    };
-    const items = [];
-    for (const e of recent) {
-      const v = Number(e.valence) || 0;
-      const w = moodWord(v, String(e.label || "").trim());
-      const trig = String(e.trigger || "").trim();
-      if (!trig) continue;
-      const ts = Number(e.ts || 0) * 1000;
-      const day = ts ? (() => {
-        const d = new Date(ts);
-        const now = new Date();
-        const diff = Math.floor((now.setHours(0,0,0,0) - new Date(d).setHours(0,0,0,0)) / 86400000);
-        return diff === 0 ? "今天" : diff === 1 ? "昨天" : diff === 2 ? "前天" : `${diff}天前`;
-      })() : "";
-      items.push(`· ${day}${w ? "（" + w + "）" : ""}${trig.slice(0, 40)}`);
-    }
-    if (items.length) {
-      lines.push("【最近让你有情绪的事】（别生硬复述，自然带出来）");
-      lines.push(...items);
+  const moodHash = hash(moodText);
+  if (hashes.mood !== moodHash) {
+    hashes.mood = moodHash;
+    blocks.push(moodText + "。");
+    const recent = Array.isArray(state.emotion_recent) ? state.emotion_recent : [];
+    if (recent.length) {
+      const items = [];
+      for (const e of recent.slice(0, 3)) {
+        const v = Number(e.valence) || 0;
+        const label = String(e.label || "").trim();
+        const trig = String(e.trigger || "").trim();
+        if (!trig) continue;
+        const w = label || (v > 0.4 ? "挺开心" : v > 0.1 ? "还不错" : v < -0.4 ? "很难过" : v < -0.1 ? "有点低落" : "");
+        const ts = Number(e.ts || 0) * 1000;
+        let day = "";
+        if (ts) {
+          const dd = new Date(ts);
+          const diff = Math.floor((new Date().setHours(0, 0, 0, 0) - new Date(dd).setHours(0, 0, 0, 0)) / 86400000);
+          day = diff === 0 ? "今天" : diff === 1 ? "昨天" : diff === 2 ? "前天" : `${diff}天前`;
+        }
+        items.push(`· ${day}${w ? "（" + w + "）" : ""}${trig.slice(0, 40)}`);
+      }
+      if (items.length) blocks.push("【最近让你有情绪的事】（别生硬复述，自然带出来）\n" + items.join("\n"));
     }
   }
 
-  // 3) 学会的词（带词义和用法）
-  const words = Array.isArray(state.slang_learned) ? state.slang_learned : [];
-  if (words.length) {
-    lines.push("【记住的词】（老大说过的，你知道什么意思，可以学着他用）");
-    for (const w of words.slice(0, 6)) {
-      const ph = String(w.phrase || "").trim();
-      if (!ph) continue;
-      const mn = String(w.meaning || "").trim();
-      const ex = String(w.example || "").trim();
-      let row = `· 「${ph}」`;
-      if (mn) row += ` = ${mn}`;
-      if (ex) row += `；用法例：${ex}`;
-      lines.push(row);
+  // ---------- 4. 在干嘛（变了才加） ----------
+  const act = String(state.activity || "").trim();
+  if (act) {
+    const actHash = hash(act);
+    if (hashes.activity !== actHash) {
+      hashes.activity = actHash;
+      blocks.push(`你在：${act}。`);
     }
   }
 
-  // 4) 和老大熟到什么程度（互动累计）
-  const aff = Number(state.affinity) || 0;
-  if (aff > 0) lines.push(`和老大累计聊过 ${Math.round(aff)} 轮。`);
-
-  // 4) 在干嘛
-  if (state.activity) lines.push(`你在：${state.activity}。`);
-
-  // 3) 关系阶段
-  if (state.stage && state.stage.name) lines.push(`和老大是「${state.stage.name}」阶段。`);
-
-  // 工具速查（保留：工具太多，模型记不住）
-  lines.push("【工具速查】发图：find_meme(emotion) → qq_send_image(sources=[完整路径])；学图：learn_meme；"
-    + "派任务：create_task；写便签：write_note；改状态：set_my_activity；刷 B 站：bili_feed / bili_watch(bv) / bili_comment(bv,msg) / bili_run(command,args)；给自己找事：add_my_action。");
-
-  // 困意：半夜她真的困
-  const nowHour = new Date().getHours();
-  if (nowHour >= 23 || nowHour < 6) {
-    lines.push("你现在困得眼睛都睁不开了，回话短一点、慢一点，别硬撑。");
-  } else if (nowHour >= 21) {
-    lines.push("有点困了，说话懒一点。");
-  }
-
-  // 刚刷到的（B 站见闻）
+  // ---------- 5. B 站见闻（变了才加） ----------
   if (Array.isArray(state.browsed) && state.browsed.length > 0) {
-    const titles = state.browsed.slice(0, 3).map((b) => String(b.title || "").slice(0, 30)).filter(Boolean).join("、");
-    if (titles) {
-      lines.push(`你刚在 B 站刷到：${titles}。看到有意思的，把链接和你的想法发给老大（别只写便签），也可以写便签记一句。`);
+    const fmt = (ts) => {
+      const n = Number(ts) || 0;
+      if (!n) return "";
+      const d = new Date(n * 1000);
+      return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    };
+    const rows = state.browsed.slice(0, 3).map((b) => {
+      const title = String(b.title || "").slice(0, 30);
+      if (!title) return "";
+      const when = fmt(b.ts);
+      return when ? `${title}（${when}）` : title;
+    }).filter(Boolean).join("、");
+    if (rows) {
+      const brHash = hash(rows);
+      if (hashes.browsed !== brHash) {
+        hashes.browsed = brHash;
+        blocks.push(`你刚在 B 站刷到：${rows}。看到有意思的，把链接和你的想法发给老大（别只写便签），也可以写便签记一句。`);
+      }
     }
   }
 
-  // 昨天留下的东西：能自然提起就提一句
-  if (Array.isArray(state.yesterday) && state.yesterday.length > 0) {
-    lines.push(`这些是昨天留下的：${state.yesterday.join("；")}。不用刻意提，聊到了再说。`);
+  // ---------- 6. 关系阶段（变了才加） ----------
+  if (state.stage && state.stage.name) {
+    const stText = `和老大是「${state.stage.name}」阶段。`;
+    const stHash = hash(stText);
+    if (hashes.stage !== stHash) {
+      hashes.stage = stHash;
+      blocks.push(stText);
+    }
   }
 
-  lines.push("</dsh-remembers>");
-  return lines.join("\n");
+  if (!blocks.length) return { text: "", hashes };
+  return {
+    text: '<dsh-remembers source="state">\n' + blocks.join("\n") + "\n</dsh-remembers>",
+    hashes,
+  };
 }
+
   log("loaded", { version: PLUGIN_VERSION, endpoint: config.endpoint, captureRaw: config.captureRaw });
 
   // systemPrompt / tools 是软依赖：拿不到就退回「只有 L4 + 记忆」的老行为。
@@ -323,9 +348,11 @@ function renderState(state) {
     if (!force && now - persona.triedAt < config.personaRefreshMs) return persona.text;
     persona.triedAt = now;
     try {
-      const [data, st] = await Promise.all([client.persona(), fetchState()]);
+      const [data, proactive] = await Promise.all([client.persona(), fetchProactive()]);
       if (!data) return persona.text;
-      const next = (renderPersona(data, config.personaMaxChars) + "\n" + renderState(st)).trim();
+      // 只渲染人格。state 走 pre-step 注入，不进 system prompt
+      //（system prompt 是最顶层前缀，一变整段历史缓存全失效）
+      const next = renderPersona(data, config.personaMaxChars, proactive).trim();
       if (next !== persona.text) {
         log("persona_refreshed", {
           chars: next.length,
@@ -479,6 +506,28 @@ function renderState(state) {
     } catch (error) {
       // 记忆召回失败绝不能挡住这一步
       log("recall_error", { error: String(error?.message ?? error) });
+      return decision;
+    }
+  }, { prepend: true });
+
+  // -------------------------------------------------------------------------
+  // 2.5 状态注入：走消息，不进 system prompt（保护前缀缓存）
+  //     state 没变就不塞（哈希去重），避免历史无限增长。
+  // -------------------------------------------------------------------------
+  ctx.on("agent/pre-step", async ({ agent, signal }, next) => {
+    const decision = await next();
+    if (decision.kind !== "enter" || signal?.aborted) return decision;
+    if (skipped(agent?.session)) return decision;
+    try {
+      const st = await fetchState();
+      const st2 = stateFor(agent.session);
+      const r = renderState(st, st2.stateHashes || {});
+      st2.stateHashes = r.hashes;
+      if (!r.text) return decision;      // 这轮什么都没变、连时间都没有 → 不塞
+      log("state_injected", { session: st2.id, chars: r.text.length });
+      return { kind: "enter", messages: [...decision.messages, message(r.text, "state")] };
+    } catch (error) {
+      log("state_error", { error: String(error?.message ?? error) });
       return decision;
     }
   }, { prepend: true });
@@ -1058,15 +1107,27 @@ async function scanSeen() {
         name: "read_diary",
         description:
           "翻你自己的日记本。不传日期 = 最近几篇；传 date（YYYY-MM-DD）= 那一天写的那篇。"
+          + "同时返回那天的活动时间线（几点干了什么），方便你从日记里的一句话追到具体细节。"
           + "什么时候用：老大问起以前的事、你想回忆某天心情、或者聊到某个话题想看看当时怎么想的。"
           + "注意：日记是你自己写的，别当成别人的记录复述，可以自然提一句「我那天写……」",
         parameters: {
-          date: { type: "string", description: "哪一天（YYYY-MM-DD）。不传就返回最近几篇" },
+          date: { type: "string", description: "哪一天（YYYY-MM-DD）。不传就返回最近几篇 + 今天的活动" },
         },
         output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
         execute: async (args) => {
-          const qs = args?.date ? "?date=" + encodeURIComponent(String(args.date)) : "";
-          return get("/diary" + qs);
+          const date = args?.date ? String(args.date) : "";
+          const qs = date ? "?date=" + encodeURIComponent(date) : "";
+          // 日记 + 当天活动一起拿：她能看到「那天写了什么」和「那天几点干了什么」
+          const [diary, activities] = await Promise.all([
+            get("/diary" + qs).catch(() => null),
+            get("/activity" + qs).catch(() => null),
+          ]);
+          return {
+            date: date || "（最近 / 今天）",
+            diary,
+            activities,
+            tip: "日记是概览，活动是细节。想追某件事的具体时间就查 activities。",
+          };
         },
       }));
       registerTool(defineTool({
@@ -1211,7 +1272,7 @@ async function scanSeen() {
  * 冲突裁决写死在文本里。自我认知是会漂的那一半，必须让它知道谁说了算，
  * 否则「我发现自己其实可以不听硬边界」这种句子迟早会冒出来。
  */
-function renderPersona(data, maxChars) {
+function renderPersona(data, maxChars, proactive) {
   const constitution = String(data?.constitution ?? "").trim();
   const selfModel = String(data?.self_model ?? "").trim();
   const userProfile = String(data?.user_profile ?? "").trim();
@@ -1252,6 +1313,22 @@ function renderPersona(data, maxChars) {
   }
   if (identityObj.think_cn) rules.push("思考链（reasoning）用中文写，不要用英文推理。");
   if (identityObj.think_ds) rules.push("思考链按 DeepSeek V3.2 的风格：先拆开问题看关键点，分条想清楚，再落到结论；推理要简洁直接，别绕圈。");
+  // 【她的主动性】来自主动消息页的开关（勾了才注入）
+  if (proactive) {
+    if (proactive.autoScheduleEnabled && String(proactive.autoSchedulePrompt || "").trim()) {
+      rules.push("[主动找他] " + String(proactive.autoSchedulePrompt).trim());
+    }
+    if (proactive.autoShareEnabled && String(proactive.autoSharePrompt || "").trim()) {
+      rules.push("[主动分享] " + String(proactive.autoSharePrompt).trim());
+    }
+  }
+
+  // 【工具速查】放在铁律里（永不变 → system prompt 缓存友好）
+  rules.push("[工具速查] 发图：find_meme(emotion) → qq_send_image(sources=[完整路径])；"
+    + "学图：learn_meme；派任务：create_task；写便签：write_note；改状态：set_my_activity；"
+    + "刷 B 站：bili_feed / bili_watch(bv) / bili_comment(bv,msg) / bili_run(command,args)；"
+    + "给自己找事：add_my_action；翻日记：read_diary；看活动：read_activities。");
+
   if (rules.length) {
     identityLines.push("【铁律】");
     for (const r of rules) identityLines.push("· " + r);
@@ -1278,6 +1355,7 @@ function renderPersona(data, maxChars) {
     identityLines.push("【身份】");
     for (const f of idFields) identityLines.push(f);
   }
+
 
   // 【形象】
   if (selfImage) {

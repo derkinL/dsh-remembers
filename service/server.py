@@ -403,17 +403,18 @@ class Handler(BaseHTTPRequestHandler):
                 # 昨天留下的东西（日记 / 便签），她今天可以自然提起
                 import datetime as _dt
                 yday = (_dt.date.today() - _dt.timedelta(days=1)).isoformat()
+                ymd = yday[5:] if len(yday) >= 10 else yday
                 yd = []
                 try:
                     d = store.diary_get(yday)
                     if d and d.get("text"):
-                        yd.append("昨天的日记：" + d["text"][:80])
+                        yd.append(f"昨天（{ymd}）的日记：" + d["text"][:80])
                 except Exception:
                     pass
                 try:
                     for n in store.note_list(5):
                         if n.get("date") == yday and n.get("text"):
-                            yd.append("昨天的便签：" + n["text"][:60])
+                            yd.append(f"昨天（{ymd}）的便签：" + n["text"][:60])
                             break
                 except Exception:
                     pass
@@ -808,6 +809,18 @@ class Handler(BaseHTTPRequestHandler):
         "silentRatio": 40,        # 静默概率（%），其余允许发消息
         "talkEnabled": True,      # 允许发消息（关掉=全部静默）
         "minChatBeforeWake": 5,   # 距上次唤醒至少聊几句才唤醒（冷却）
+        # ---- 她的主动性（可开关，勾了才注入 system prompt）----
+        "autoScheduleEnabled": True,
+        "autoSchedulePrompt": (
+            "聊完天如果觉得过会儿还想跟他说话，用 schedule_create 给自己设个时间"
+            "（比如半小时后、明天早上）。到点它会叫醒你，你再开口。"
+            "不用每次都设——真的想找的时候才设。"
+        ),
+        "autoShareEnabled": True,
+        "autoSharePrompt": (
+            "刷到有意思的东西，可以主动发给老大看：链接 + 你自己的两句话，别只写便签。"
+            "他觉得有意思会回你；不感兴趣也没关系，那是你自己的生活。"
+        ),
         # ---- B 站刷视频（独立节奏，不跟唤醒绑）----
         "biliBrowseEnabled": True,     # 允许她按自己的节奏刷 B 站
         "biliMinGapMinutes": 60,       # 两次刷之间至少隔多久
@@ -1260,6 +1273,14 @@ class Handler(BaseHTTPRequestHandler):
         for key in ("startHour", "endHour", "minGapMinutes", "maxGapMinutes", "silentRatio"):
             if key in body:
                 cur[key] = int(body[key])
+        # 主动性开关 + 提示词
+        for key in ("autoScheduleEnabled", "autoShareEnabled"):
+            if key in body:
+                cur[key] = bool(body[key])
+        for key in ("autoSchedulePrompt", "autoSharePrompt"):
+            if key in body:
+                cur[key] = str(body[key] or "")[:1000]
+
         # 动作清单（前端发 [{text, enabled}]）—— 之前漏了，导致动作编辑器改了不生效
         for key in ("silentActions", "talkActions"):
             if key in body and isinstance(body[key], list):
