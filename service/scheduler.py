@@ -147,11 +147,18 @@ class Scheduler:
         silent_ratio = int(cfg.get("silentRatio", 40))
         talk_enabled = bool(cfg.get("talkEnabled", True))
         silent = (not talk_enabled) or random.randint(1, 100) <= silent_ratio
-        action = self._pick_action("silent" if silent else "talk")
-        if silent:
-            msg = f"（你自己待着，现在是 {hour} 点。抽到：{action}。想做就做，这只是你自己的时间，不用回消息。）"
+        count = int(cfg.get("wakeActionCount", 3) or 1)
+        actions = self._pick_actions("silent" if silent else "talk", count)
+        action = actions[0] if actions else "随便待会儿"
+        if len(actions) > 1:
+            menu = "\n".join(f"{i+1}. {a}" for i, a in enumerate(actions))
+            pick = f"抽到这几件事，想做几件做几件，也可以一件都不做：\n{menu}"
         else:
-            msg = f"（系统提醒：你醒着，现在是 {hour} 点。抽到：{action}。看看老大在不在，想找他就发一句；不想也行。）"
+            pick = f"抽到：{action}"
+        if silent:
+            msg = f"（你自己待着，现在是 {hour} 点。{pick}。这只是你自己的时间，不用回消息。）"
+        else:
+            msg = f"（系统提醒：你醒着，现在是 {hour} 点。{pick}。看看老大在不在，想找他就发一句；不想也行。）"
 
         self._inject(msg, silent=silent)
         self._log_activity("proactive", f"被叫醒（{hour}点，{'静默' if silent else '可发言'}）：{action}")
@@ -166,7 +173,8 @@ class Scheduler:
         _log(f"wake: injected (hour={hour} silent={silent} action={action})")
         return True
 
-    def _pick_action(self, mode: str) -> str:
+    def _pick_actions(self, mode: str, n: int = 1) -> list:
+        """抽 n 条动作给她选（不重复）。"""
         try:
             cfg = self._proactive_cfg()
             pool = cfg.get("silentActions" if mode == "silent" else "talkActions") or []
@@ -183,10 +191,13 @@ class Scheduler:
                 elif isinstance(a, str) and a.strip():
                     texts.append(a)
             if not texts:
-                return "随便待会儿"
-            return random.choice(texts)
+                return ["随便待会儿"]
+            k = max(1, min(int(n or 1), len(texts)))
+            if k == 1:
+                return [random.choice(texts)]
+            return random.sample(texts, k)
         except Exception:
-            return "随便待会儿"
+            return ["随便待会儿"]
 
     # ---------- 2. B 站 ----------
     def _tick_bili(self, st: dict, now: float) -> bool:
@@ -233,7 +244,41 @@ class Scheduler:
         if dt.hour < 23:
             return False
         st["diary_date"] = today
-        msg = f"（该写日记了，今天是 {dt.month} 月 {dt.day} 日。记两句今天的事吧，写给你自己看。）"
+        # 读当天素材，让她写日记时有东西可写
+        extra = ""
+        try:
+            start = datetime.datetime.combine(datetime.date.today(), datetime.time.min).timestamp()
+            rows = self.store.conn.execute(
+                "SELECT kind, detail FROM activity_log WHERE ts >= ? ORDER BY ts", (start,)
+            ).fetchall()
+            kinds = {}
+            for k, d in rows:
+                kinds.setdefault(k, []).append(str(d or "")[:24])
+            parts = []
+            if kinds.get("bili"):
+                parts.append(f"刷了 {len(kinds['bili'])} 次 B 站：" + "、".join(kinds["bili"][-3:]))
+            if kinds.get("chat"):
+                parts.append(f"跟老大聊了 {len(kinds['chat'])} 次")
+            if kinds.get("proactive"):
+                parts.append(f"被叫醒 {len(kinds['proactive'])} 次")
+            if kinds.get("game"):
+                parts.append(f"玩了 {len(kinds['game'])} 次游戏")
+            if kinds.get("habit"):
+                parts.append(f"有 {len(kinds['habit'])} 次习惯动作")
+            # 顺便带上今天刷到的视频标题
+            try:
+                browsed = self.store.conn.execute(
+                    "SELECT title FROM browsed WHERE ts >= ? ORDER BY ts DESC LIMIT 5", (start,)
+                ).fetchall()
+                if browsed:
+                    parts.append("刷到的视频：" + "、".join(str(x[0])[:20] for x in browsed))
+            except Exception:
+                pass
+            if parts:
+                extra = "\n今天你：\n· " + "\n· ".join(parts) + "\n"
+        except Exception:
+            pass
+        msg = f"（该写日记了，今天是 {dt.month} 月 {dt.day} 日。{extra}记两句今天的事吧，写给你自己看。）"
         self._inject(msg, silent=True)
         _log("diary: nudged model to write")
         return True
