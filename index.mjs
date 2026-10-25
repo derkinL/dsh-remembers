@@ -877,9 +877,12 @@ async function scanSeen() {
       registerTool(defineTool({
         name: "learn_meme",
         description:
-          "把一张图记进你的表情包库。"
-          + "老大发来的图、或者你在网上看到喜欢的图，把图片的完整路径传进来就行，系统会复制入库并自己识别。"
-          + "memes 目录里已有的图也可以只传文件名。",
+          "把一张图收进你的表情包库。"
+          + "老大发来的图、或者你在网上看到喜欢的图，把图片的完整路径传进来，系统会复制入库并自动识别情绪和描述。"
+          + "memes 目录里已有的图也可以只传文件名。"
+          + "\n图库分三个包，存的时候用 pack 指定：user = 老大发给你的（他发才值得收），found = 你自己叼回来的（刷到顺眼的），dafeiyu = 内置大肥鱼图库（别往里塞）。"
+          + "\n什么时候收：老大同一种图发过两次以上、或你自己刷到觉得以后想用，就收。别贪多，收进来要记得住来源。"
+          + "\n老大也可能自己改图库描述——改了以他的为准，不要覆盖回你写的。",
         parameters: {
           file: { type: "string", required: true, description: "文件名（memes 目录里的）或完整路径" },
           pack: { type: "string", description: "存到哪个图库包：user（老大发的）、found（你自己叼回来的）、dafeiyu（内置，别用）。默认 found" },
