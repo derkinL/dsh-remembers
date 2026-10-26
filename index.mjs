@@ -161,7 +161,7 @@ async function bumpChat() {
 }
 
 /** 真实互动涨亲密度（fire-and-forget），默认 +0.2 一轮。 */
-async function bumpIntimacy(delta = 0.2) {
+async function bumpIntimacy(delta = 1.0) {
   try {
     await fetch(config.endpoint + "/state", {
       method: "POST",
@@ -188,7 +188,37 @@ async function bumpIntimacy(delta = 0.2) {
  * @param prev   上次注入时的哈希表
  * @returns {{ text: string, hashes: object }}
  */
-function renderState(state, prev) {
+/**
+ * 颜文字 / emoji 示例池。
+ * 为什么要随机抽：示例给固定几个的话，模型会锚死在上面 —— 线上实测给 3 个颜文字，
+ * 她连着几句都在用其中那一个。每轮从大池子里随机抽几个，命中面就散开了。
+ */
+const KAOMOJI_POOL = [
+  "╰(*°▽°*)╯", "(´-ω-`)", "(￣▽￣)", "(｡•́︿•̀｡)", "(￣ω￣)",
+  "(・_・;)", "(⊙_⊙)", "(๑•̀ㅂ•́)و✧", "(￣ー￣)", "(*´∀`)~♥",
+  "(´；ω；`)", "( ˘ω˘ )", "(๑>ᴗ<๑)", "(¬‿¬)", "(°ロ°)",
+  "(￣^￣)ゞ", "(´・ω・`)", "^_^;", "ヽ(°〇°)ﾉ", "(｡ŏ_ŏ)",
+  "(=ﾟωﾟ)ﾉ", "(´,,•ω•,,)", "(・∀・)", "(￣ε￣)", "(๑¯ω¯๑)",
+];
+
+const EMOJI_POOL = [
+  "😆", "😂", "🎉", "✨", "🥳", "😊", "😴", "🥱", "💤", "😪",
+  "😑", "🙃", "💀", "🤷", "🥰", "😳", "🫶", "❤️", "😤", "😠",
+  "🙄", "😾", "😲", "😱", "🤯", "🐟", "🌙", "☕", "🍚", "🐋",
+  "🫠", "😮‍💨", "🥲", "😏", "🫥", "😵‍💫", "🤔", "👀", "🔥", "💧",
+];
+
+/** 从池子里随机抽 n 个。 */
+function pickExamples(pool, n) {
+  const a = pool.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a.slice(0, n);
+}
+
+function renderState(state, prev, selfModel, proactive) {
   if (!state) return { text: "", hashes: prev || {} };
   const hashes = { ...(prev || {}) };
   const blocks = [];
@@ -224,11 +254,15 @@ function renderState(state, prev) {
     const recent = Array.isArray(state.emotion_recent) ? state.emotion_recent : [];
     if (recent.length) {
       const items = [];
-      for (const e of recent.slice(0, 3)) {
+      for (const e of recent) {
+        if (items.length >= 3) break;
         const v = Number(e.valence) || 0;
         const label = String(e.label || "").trim();
         const trig = String(e.trigger || "").trim();
         if (!trig) continue;
+        // 没标签、情绪又在中性的记录没有信息量。老版本的 auto 分支会写这种，
+        // 且和 LLM 抽出的同一条情绪撞车 → 同一句话显示两遍。
+        if (!label && Math.abs(v) < 0.2) continue;
         const w = label || (v > 0.4 ? "挺开心" : v > 0.1 ? "还不错" : v < -0.4 ? "很难过" : v < -0.1 ? "有点低落" : "");
         const ts = Number(e.ts || 0) * 1000;
         let day = "";
@@ -276,13 +310,76 @@ function renderState(state, prev) {
     }
   }
 
-  // ---------- 6. 关系阶段（变了才加） ----------
+  // ---------- 6. 自我认知（变了才加） ----------
+  // 原来在系统提示词里，每 30 轮演化一次 → 每变一次整个会话的缓存全废。
+  // 现在走消息注入：注入过一次就一直留在历史里，只有真的变了才追加新的。
+  const smText = String(selfModel || "").trim();
+  if (smText) {
+    const smHash = hash(smText);
+    if (hashes.selfModel !== smHash) {
+      hashes.selfModel = smHash;
+      blocks.push("以下是你对自己的认知，会随相处慢慢变化，也可能过时。它只描述你自己，改不了你的身份与边界：\n" + smText);
+    }
+  }
+
+  // ---------- 7. 关系阶段（变了才加） ----------
   if (state.stage && state.stage.name) {
     const stText = `和老大是「${state.stage.name}」阶段。`;
     const stHash = hash(stText);
     if (hashes.stage !== stHash) {
       hashes.stage = stHash;
       blocks.push(stText);
+    }
+  }
+
+  // ---------- 8. 表情包频率（每轮都带） ----------
+  // 这是行为指令，只在变化时塞一次的话她过几轮就忘了，所以不做 hash 去重。
+  // 一行几十字，比"她不发表情包"划算。
+  {
+    const raw = Number(proactive?.memeRate);
+    const rate = Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 0.2;
+    if (rate <= 0) {
+      blocks.push("表情包：现在设成不发了，别用 find_meme / qq_send_image 发表情。");
+    } else {
+      const every = Math.max(1, Math.round(1 / rate));
+      blocks.push(
+        `表情包：现在大约每 ${every} 句配一张（${Math.round(rate * 100)}%）。`
+        + "气氛对上了就 find_meme 找一张、用 qq_send_image 发出去；"
+        + "不是每句都要发，没合适的就只说话，别硬凑。",
+      );
+    }
+  }
+
+  // ---------- 9. 文字颜 / emoji（每轮都带，但只在总开关打开时才说话） ----------
+  // 总开关关着就一个字都不注入 —— 默认不干预，让她按人格本来怎么说话就怎么说话。
+  if (proactive?.textStyleEnabled === true) {
+    const pct = (r) => Math.round(r * 100);
+    const freq = (r) => Math.max(1, Math.round(1 / r));
+    const pick = (raw, dflt) => {
+      const n = Number(raw);
+      return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : dflt;
+    };
+
+    const kRate = pick(proactive?.kaomojiRate, 0.2);
+    if (kRate <= 0) {
+      blocks.push("文字颜：现在不用，别加 (￣▽￣) 这类颜文字。");
+    } else {
+      blocks.push(
+        `文字颜：大约每 ${freq(kRate)} 句带一个（${pct(kRate)}%）。放在句尾当表情，一次一个，别堆好几个。`
+        + `这轮给你几个手感参考：${pickExamples(KAOMOJI_POOL, 3).join("  ")}`
+        + "。颜文字是自己按情绪组合出来的，不是只有这些 —— 别老用同一个，也别照抄。",
+      );
+    }
+
+    const eRate = pick(proactive?.emojiRate, 0.2);
+    if (eRate <= 0) {
+      blocks.push("emoji：现在不用，别加 😊 这类 Unicode 表情。");
+    } else {
+      blocks.push(
+        `emoji：大约每 ${freq(eRate)} 句带一个（${pct(eRate)}%）。一句最多一个，别连串。`
+        + `这轮给你几个参考：${pickExamples(EMOJI_POOL, 5).join("")}`
+        + "。按当时情绪自己挑，不是只有这些能用 —— 别总用同样的几个。",
+      );
     }
   }
 
@@ -336,42 +433,74 @@ function renderState(state, prev) {
   //   刷新时机 = 启动 / 每 personaRefreshMs / agent 创建时（节流后）
   //   失败时保留上一份好的：宁可人格旧一点，也不能让这轮没有人格。
   const persona = {
-    text: "",
+    /** /persona 的原始数据。系统提示词按会话现拼，画像段由 buildPersonaText 决定。 */
+    data: null,
+    /** proactive 配置也缓存一份，渲染时要 */
+    proactive: null,
+    /** 主人手编画像（= persona.user_profile）。主人画像百分百在场。 */
+    ownerManual: "",
+    /**
+     * user_id -> { name, manual, is_owner }
+     * 只装「手编画像」。AI 自动累积的那份（profiles.profile）每抽到一条 L2 就变，
+     * 放进系统提示词会把 prompt cache 一直打穿，所以它只走 person 消息块。
+     */
+    manualByUser: {},
+    /** 自我认知原文。走 state 块注入，不在这里进系统提示词。 */
+    selfModel: "",
     at: 0,         // 最近一次成功刷新（ms）
     triedAt: 0,    // 最近一次尝试（含失败），用于节流
     error: null,
   };
 
   async function refreshPersona(force = false) {
-    if (!config.personaEnabled || !client.enabled) return persona.text;
+    if (!config.personaEnabled || !client.enabled || !client.profiles) return "";
     const now = Date.now();
-    if (!force && now - persona.triedAt < config.personaRefreshMs) return persona.text;
+    if (!force && now - persona.triedAt < config.personaRefreshMs) return "";
     persona.triedAt = now;
     try {
-      const [data, proactive] = await Promise.all([client.persona(), fetchProactive()]);
-      if (!data) return persona.text;
+      // 一次拉齐：人格 + 主动配置 + 所有人的手编画像。
+      // profiles 是给系统提示词按会话挑人用的，所以整份缓存在内存里（同步可读）。
+      const [data, proactive, allProfiles] = await Promise.all([
+        client.persona(), fetchProactive(), client.profiles(),
+      ]);
+      if (!data) return persona.data ? renderPersona(persona.data, config.personaMaxChars, persona.proactive) : "";
       // 只渲染人格。state 走 pre-step 注入，不进 system prompt
       //（system prompt 是最顶层前缀，一变整段历史缓存全失效）
-      const next = renderPersona(data, config.personaMaxChars, proactive).trim();
-      if (next !== persona.text) {
-        log("persona_refreshed", {
-          chars: next.length,
-          constitution: Boolean(String(data.constitution || "").trim()),
-          selfModel: Boolean(String(data.self_model || "").trim()),
-        });
+      persona.data = data;
+      persona.proactive = proactive;
+      persona.ownerManual = String(data?.user_profile ?? "").trim();
+      persona.selfModel = String(data?.self_model ?? "").trim();
+
+      // 手编画像整份缓存：只有 manual_profile 进系统提示词，profile（自动累积）不进
+      const map = {};
+      for (const p of (allProfiles || [])) {
+        const uid = String(p?.user_id ?? "").trim();
+        if (!uid) continue;
+        map[uid] = {
+          name: String(p?.name ?? "").trim(),
+          manual: String(p?.manual_profile ?? "").trim(),
+          is_owner: Boolean(p?.is_owner),
+        };
       }
-      persona.text = next;
+      persona.manualByUser = map;
+      const next = "";
+      log("persona_refreshed", {
+        constitution: Boolean(String(data.constitution || "").trim()),
+        selfModel: Boolean(String(data.self_model || "").trim()),
+        profiles: Object.keys(map).length,
+        manualProfiles: Object.values(map).filter((x) => x.manual).length,
+      });
       persona.at = now;
       persona.error = null;
     } catch (error) {
       persona.error = String(error?.message ?? error);
       log("persona_error", { error: persona.error });
     }
-    return persona.text;
+    return "";
   }
 
   // 人格段是否真的接管了 L4 的「自我」条目。空人格段 = 不接管 = 老行为。
-  const personaOwnsProfile = () => config.personaEnabled && persona.text.trim() !== "";
+  const personaOwnsProfile = () => config.personaEnabled && persona.data !== null;
 
   // per-session 状态
   const states = new Map();
@@ -457,10 +586,15 @@ function renderState(state, prev) {
   // 2. 每步召回
   // -------------------------------------------------------------------------
   ctx.on("agent/pre-step", async ({ agent, signal }, next) => {
-    console.log("[dsh-remembers-debug] pre-step session=" + String(agent?.session?.id));
     const decision = await next();
     if (decision.kind !== "enter" || signal?.aborted) return decision;
     if (skipped(agent?.session)) return decision;
+
+    // 记住这一步是谁在说话。turn/end 写记忆时要带昵称，不然 profiles.name 永远是空。
+    try {
+      const spNow = speakerOf(decision.messages);
+      if (spNow && spNow.qq) stateFor(agent.session).nickname = spNow.nickname;
+    } catch { /* 忽略：拿不到昵称不影响对话 */ }
 
     // 画像注入（每 50 轮刷新）：L4 里程碑 + L2 画像
     try {
@@ -482,15 +616,55 @@ function renderState(state, prev) {
       log("profile_error", { error: String(error?.message ?? error) });
     }
 
+    // ---- 多人画像：只注入「当前这个说话的人」，别人的绝不出现 ----
+    try {
+      const scopeOf = scopeFromSession(agent.session.id);
+      if (scopeOf.userId) {
+        const p = await client.profileOf(scopeOf.userId);
+        // 系统提示词里放的：群聊 / 私聊主人 / web 无 QQ -> 主人画像；
+        // 私聊别人 -> 那个人手编的画像。
+        // 所以这里只补「系统提示词里没有的那部分」，绝不重复整段画像。
+        const owner = Boolean(p && p.is_owner);
+        const inGroup = String(agent?.session?.id ?? "").includes("-group-");
+        // 消息里带着真实昵称（<user_message qq nickname>），比 profiles.name 新
+        const sp = speakerOf(decision.messages);
+        const nick = sp && sp.qq === scopeOf.userId ? sp.nickname : "";
+        let block = "";
+        if (inGroup) {
+          // 群里发言人一直在换，系统提示词固定写的是主人 —— 必须逐轮说明是谁在说话，
+          // 否则她会把每个群友都当成老大。
+          block = owner
+            ? renderSpeakerNote(p, "这是你的老大")
+            : renderOtherProfile(p, { nickname: nick, notOwner: true });
+        } else if (!owner) {
+          // 私聊别人：系统提示词里有主人画像打底，这里必须说清他不是老大
+          block = renderOtherProfile(p, { nickname: nick, notOwner: true });
+        }
+        // 私聊主人：系统提示词已经带全了，跳过
+        if (block) {
+          // 群聊和私聊别人都不做内容去重：发言人天天在换，
+          // 「现在是谁在说话」这条一旦省掉，她就会认错人。
+          const st = stateFor(agent.session);
+          log("person_injected", { session: st.id, userId: scopeOf.userId, nick, chars: block.length });
+          return { kind: "enter", messages: [...decision.messages, message(block, "person")] };
+        }
+      }
+    } catch (error) {
+      log("person_error", { error: String(error?.message ?? error) });
+    }
+
     try {
       const { query, focus } = buildQuery(decision.messages);
       if (!query || query.length < config.recallMinChars) return decision;
 
+      // 只拉「当前场景 + 全局」的记忆：别人的私聊绝不进这里
+      const scopeOf = scopeFromSession(agent.session.id);
       const hits = await client.search({
         query,
         focus,
         topK: config.recallTopK,
         subject: config.profileSubject || undefined,
+        scopes: [scopeOf.scope, "global"],
       });
       if (!hits || hits.length === 0) return decision;
       if (signal?.aborted) return decision;
@@ -521,7 +695,7 @@ function renderState(state, prev) {
     try {
       const st = await fetchState();
       const st2 = stateFor(agent.session);
-      const r = renderState(st, st2.stateHashes || {});
+      const r = renderState(st, st2.stateHashes || {}, persona.selfModel || "", persona.proactive);
       st2.stateHashes = r.hashes;
       if (!r.text) return decision;      // 这轮什么都没变、连时间都没有 → 不塞
       log("state_injected", { session: st2.id, chars: r.text.length });
@@ -573,6 +747,7 @@ function renderState(state, prev) {
     console.log("[dsh-remembers-debug] turn/end session=" + String(session?.id) + " skipped=" + skipped(session));
     if (skipped(session)) return;
     const state = stateFor(session);
+    const scopeOf = scopeFromSession(state.id);   // 谁说的 / 在哪个场景
     state.turns = (state.turns || 0) + 1;
     if (state.turns % 100 === 0) {
       // QQ 会话基本不换窗口：靠轮数触发画像刷新（每 100 轮）
@@ -580,6 +755,7 @@ function renderState(state, prev) {
     }
     const user = state.turnUser.trim();
     const assistant = state.turnAssistant.trim();
+    const nickname = String(state.nickname || "").trim();
     // 剥掉系统唤醒片段，只留真实内容
     const keptUser = cleanNudge(user);
     state.turnUser = "";
@@ -591,7 +767,7 @@ function renderState(state, prev) {
     }
     // 亲密度：只有「老大真的说话」才涨（唤醒剥完就没内容了，不会走到这）
     if (keptUser && assistant) {
-      void bumpIntimacy(0.2);
+      void bumpIntimacy(1.0);
       void bumpChat();
     }
     // 情感层：情绪变化够大时由服务端自动记一条（带触发原因）
@@ -660,6 +836,9 @@ function renderState(state, prev) {
             subject: "self",
             tags: ["raw", `session:${state.id}`],
             embed: true,
+            user_id: scopeOf.userId,
+            scope: scopeOf.scope,
+            nickname,
           });
           if (id) log("raw_saved", { session: state.id, id, surprisal: gate?.score, method: gate?.method });
         })
@@ -669,7 +848,13 @@ function renderState(state, prev) {
     // ---- 门控 2：LLM 抽取 + 逐条判定，写结构记忆 ----
     // 两次 LLM 调用，几十秒级 —— fire-and-forget，绝不阻塞对话。
     if (config.extract && keptUser.length >= config.captureMinChars) {
-      client.extract({ userText: keptUser, assistantText: assistant })
+      client.extract({
+        userText: keptUser,
+        assistantText: assistant,
+        user_id: scopeOf.userId,
+        scope: scopeOf.scope,
+        nickname,
+      })
         .then((res) => {
           if (res?.ok) {
             log("extracted", { session: state.id, facts: res.facts, applied: res.applied });
@@ -742,13 +927,79 @@ function renderState(state, prev) {
     if (typeof refreshTimer.unref === "function") refreshTimer.unref();
   }
 
+  /**
+   * 按会话挑画像：这是整套设计的核心。
+   *
+   * 放进去的必须是「不会自己变」的东西 —— 只有手编画像满足。
+   * AI 自动累积的 profiles.profile 每抽到一条 L2 就变一次，放进系统提示词
+   * 等于每几轮就把这个会话的 prompt cache 全打穿，所以它只走 person 消息块。
+   *
+   *   私聊别人  -> 那个人的手编画像
+   *   其余情况  -> 主人画像（群聊也出，老大要求的：主人画像百分百在场）
+   */
+  function buildPersonaText(context) {
+    const data = persona.data;
+    if (!data) return "";
+    const maxChars = config.personaMaxChars;
+    const proactive = persona.proactive;
+
+    let sid = "";
+    try {
+      sid = String(context?.agent?.session?.id ?? "");
+    } catch { sid = ""; }
+    const isGroup = sid.includes("-group-");
+    let userId = "";
+    try {
+      userId = String(scopeFromSession(sid).userId ?? "");
+    } catch { userId = ""; }
+
+    // 每个会话只记一次，证明 section provider 真的拿到了 agent.session
+    buildPersonaText.seen ??= new Set();
+    const mark = sid || "<none>";
+    if (!buildPersonaText.seen.has(mark)) {
+      buildPersonaText.seen.add(mark);
+      log("persona_pick", { session: sid, group: isGroup, userId });
+    }
+
+    // 私聊别人：主人画像照样在（老大要求百分百在场），但必须说清「对面不是老大」。
+    // 之前这里的条件是 `&& other.manual`：陌生人没有手编画像时就掉到下面，
+    // 系统提示词里只剩主人画像 —— 她会把陌生人直接认成老大（线上真的发生了）。
+    if (!isGroup && userId) {
+      const other = persona.manualByUser[userId];
+      if (other && !other.is_owner) {
+        const who = other.name ? `${other.name}，QQ ${userId}` : `QQ ${userId}`;
+        const notOwnerNote = `注意：现在跟你说话的是 ${who}，**不是老大**。老大是另一个人。`
+          + "别把他当成老大，也别把老大的事、老大的偏好安到他头上。";
+        return renderPersona(data, maxChars, proactive, {
+          // 有手编画像就用他的，没有就给主人画像当参考，但下面那句一定带上
+          profileText: other.manual || persona.ownerManual,
+          profileHeader: other.manual
+            ? `以下是正在跟你说话的人（${who}）的画像：`
+            : "以下是老大是谁（他的画像，你该知道的基本信息）：",
+          footer: notOwnerNote,
+        });
+      }
+    }
+
+    return renderPersona(data, maxChars, proactive, {
+      profileText: persona.ownerManual,
+      profileHeader: "以下是老大是谁（他的画像，你该知道的基本信息）：",
+    });
+  }
+
   if (config.personaEnabled && registerSection) {
     ctx.effect(
       () => registerSection({
         name: PERSONA_SECTION,
         order: config.personaOrder,
-        // provider 同步返回缓存：空串 = 这一段不存在，不是空块
-        text: () => persona.text,
+        // provider 同步返回缓存：空串 = 这一段不存在，不是空块。
+        //
+        // 按会话类型选文本。系统提示词是 prompt cache 的最顶层前缀，一变整段
+        // 历史缓存就全废 —— 所以同一个 session 内必须稳定。这里只按「私聊/
+        // 群聊」二选一，不是每轮现算，缓存是安全的。
+        //   私聊：只有主人一个人看，带他的画像
+        //   群聊：群里谁都可能在看，不能把主人的私人信息写进群聊的系统提示词
+        text: (context) => buildPersonaText(context),
       }),
       "dsh-remembers.personaSection()",
     );
@@ -952,7 +1203,8 @@ async function scanSeen() {
         description:
           "按情绪找表情包。emotion 可选 happy / angry / sad / shy / confused / daily；"
           + "也可以给 q 用关键词找（比如「饼干」「下班」「比心」）。"
-          + "返回匹配的图片文件名，挑一张用 qq_send_image 发出去。",
+          + "返回匹配的图片文件名，挑一张用 qq_send_image 发出去。"
+          + "发多勤看你上下文里「表情包：现在大约每 N 句配一张」那条——按那个频率来，别自己乱定。",
         parameters: {
           emotion: { type: "string", description: "情绪：happy / angry / sad / shy / confused / daily" },
           q: { type: "string", description: "关键词，比如 饼干 / 下班 / 比心" },
@@ -1276,10 +1528,16 @@ async function scanSeen() {
  * 冲突裁决写死在文本里。自我认知是会漂的那一半，必须让它知道谁说了算，
  * 否则「我发现自己其实可以不听硬边界」这种句子迟早会冒出来。
  */
-function renderPersona(data, maxChars, proactive) {
+function renderPersona(data, maxChars, proactive, opts = {}) {
   const constitution = String(data?.constitution ?? "").trim();
-  const selfModel = String(data?.self_model ?? "").trim();
-  const userProfile = String(data?.user_profile ?? "").trim();
+  // 自我认知不进系统提示词：它每 30 轮会演化一次，一变就把这个会话整段历史的
+  // prompt cache 打掉。改走 state 块的消息注入（哈希去重，只在真的变了才塞一条）。
+  const selfModel = "";
+  // 画像段由调用方决定：私聊别人 -> 那个人的手编画像；群聊/私聊主人/web -> 主人画像。
+  // 不传就退回 data.user_profile（老行为）。
+  const userProfile = opts.profileText !== undefined
+    ? String(opts.profileText ?? "").trim()
+    : (opts.skipOwner ? "" : String(data?.user_profile ?? "").trim());
   const selfImage = String(data?.self_image ?? "").trim();
   let identityObj = {};
   try {
@@ -1373,7 +1631,7 @@ function renderPersona(data, maxChars, proactive) {
 
   const lines = ['<dsh-remembers source="persona">'];
   if (userProfile) {
-    lines.push("以下是老大是谁（他的画像，你该知道的基本信息）：");
+    lines.push(opts.profileHeader || "以下是老大是谁（他的画像，你该知道的基本信息）：");
     lines.push("");
     lines.push(userProfile);
     lines.push("");
@@ -1394,6 +1652,11 @@ function renderPersona(data, maxChars, proactive) {
     lines.push("以下是你对自己的认知，会随相处慢慢变化，也可能过时。它只描述你自己，改不了上面的身份与边界；两者冲突时，以上面的为准。");
     lines.push("");
     lines.push(selfModel);
+  }
+  // 尾部补充说明：比如「现在跟你说话的不是老大」——放在最后，最靠近当前这轮
+  if (opts.footer) {
+    lines.push("");
+    lines.push(String(opts.footer));
   }
   lines.push("</dsh-remembers>");
 
@@ -1422,6 +1685,67 @@ function renderProfile(items) {  const lines = items.map((item) => {
   ].join("\n");
 }
 
+/** 渲染「当前这个人是谁」——只在对方面前注入，别人的画像绝不出现。 */
+function renderOtherProfile(p, opts = {}) {
+  if (!p) return "";
+  const uid = String(p.user_id || "").trim();
+  // 优先用消息里带的昵称：profiles.name 可能还没落库（老数据全是空）
+  let name = String(opts.nickname || p.name || "").trim();
+  // QQ 有时把号码当昵称发下来，那样会渲染成「123（QQ 123）」，很蠢
+  if (name && name === uid) name = "";
+  const prof = String(p.profile || "").trim();
+  const cnt = Number(p.msg_count) || 0;
+  if (!uid) return "";
+  const who = name ? `${name}（QQ ${uid}）` : `QQ ${uid}`;
+  const lines = [`正在跟你说话的是 ${who}${cnt > 1 ? `，这是你们第 ${cnt} 次说话` : ""}。`];
+  if (opts.notOwner) {
+    lines.push("这个人不是老大。别把他当成老大，也别把老大说过的事安到他头上。");
+  }
+  if (prof) {
+    lines.push("你对他的印象：");
+    for (const ln of prof.split("\n").filter(Boolean).slice(0, 12)) {
+      lines.push("· " + ln);
+    }
+  } else {
+    lines.push("（你对这个人还没有印象）");
+  }
+  return '<dsh-remembers source="person">' + "\n" + lines.join("\n") + "\n</dsh-remembers>";
+}
+
+/**
+ * 群聊里主人说话时补的画像块。
+ * 系统提示词在群聊里故意不带主人画像（怕泄露），这一块就是那个补丁。
+ */
+function renderOwnerProfile(p, ownerProfile) {
+  const uid = String(p?.user_id || "").trim();
+  if (!uid) return "";
+  const name = String(p?.name || "").trim();
+  const who = name ? `${name}（QQ ${uid}）` : `QQ ${uid}`;
+  const lines = [`正在跟你说话的是 ${who} —— 这是你的老大。`];
+  const prof = String(ownerProfile || "").trim();
+  if (prof) {
+    lines.push("他的基本情况：");
+    for (const ln of prof.split("\n").filter(Boolean).slice(0, 20)) lines.push("· " + ln);
+  }
+  return '<dsh-remembers source="person">' + "\n" + lines.join("\n") + "\n</dsh-remembers>";
+}
+
+/**
+ * 群聊里说明「这一轮是谁在说话」。
+ * 画像已经在系统提示词里了，这里只补身份和次数，不重复画像。
+ */
+function renderSpeakerNote(p, note) {
+  const uid = String(p?.user_id || "").trim();
+  if (!uid) return "";
+  let name = String(p?.name || "").trim();
+  if (name && name === uid) name = "";
+  const cnt = Number(p?.msg_count) || 0;
+  const who = name ? `${name}（QQ ${uid}）` : `QQ ${uid}`;
+  const lines = [`正在跟你说话的是 ${who} —— ${note}。`];
+  if (cnt > 1) lines.push(`这是你们第 ${cnt} 次说话。`);
+  return '<dsh-remembers source="person">' + "\n" + lines.join("\n") + "\n</dsh-remembers>";
+}
+
 function renderRecall(hits) {
   const lines = hits.map((hit) => {
     const label = TIER_LABEL[hit.tier] || hit.tier;
@@ -1448,6 +1772,24 @@ function message(content, form) {
     content: [{ type: "text", text: content }],
     source: { kind: PLUGIN_KIND, plugin: PLUGIN_SOURCE, form },
   });
+}
+
+/**
+ * 从这一步的消息里认出「现在是谁在说话」。
+ * 取最后一条 <user_message qq="..." nickname="...">——多轮拼接时最新的在最后。
+ */
+function speakerOf(messages) {
+  let found = null;
+  for (const m of messages || []) {
+    const parts = Array.isArray(m?.content) ? m.content : [];
+    for (const part of parts) {
+      const text = String(part?.text ?? "");
+      const re = /<user_message\s+qq="(\d+)"\s+nickname="([^"]*)"/g;
+      let mm;
+      while ((mm = re.exec(text)) !== null) found = { qq: mm[1], nickname: mm[2] };
+    }
+  }
+  return found;
 }
 
 function hash(text) {
@@ -1513,6 +1855,15 @@ function cleanNudge(text) {
   s = s.replace(/<\/?dsh-recall[^>]*>/g, "");
   s = s.replace(/以下是你的回忆起的内容[\s\S]*?不要编。/g, "");
   return s.trim();
+}
+
+/** 从会话 ID 推断归属：onebot-private-<qq> / onebot-group-<gid>。 */
+function scopeFromSession(sessionId) {
+  const m = /^onebot-(private|group)-(\d+)/.exec(String(sessionId || ""));
+  if (!m) return { userId: "", scope: "global" };
+  return m[1] === "private"
+    ? { userId: m[2], scope: "private:" + m[2] }
+    : { userId: "", scope: "group:" + m[2] };
 }
 
 function extractText(message) {
