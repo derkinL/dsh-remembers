@@ -81,7 +81,7 @@ export function resolveConfig(input = {}, env = process.env) {
     personaOrder: toInt(value("personaOrder"), 5, -10000, 10000),
     personaMaxChars: toInt(value("personaMaxChars"), 4000, 200, 16000),
     // 刷新节流：人格段落只在服务端改过才有意义，60s 足够，别每轮打一次
-    personaRefreshMs: toInt(value("personaRefreshMs"), 60000, 1000, 600000),
+    personaRefreshMs: toInt(value("personaRefreshMs"), 20000, 1000, 600000),
     // 给不给 AI 写「自我认知区」的权限。宪法区无论如何都写不到（服务端没有那个入口）
     personaAllowWrite: toBool(value("personaAllowWrite"), true),
 
