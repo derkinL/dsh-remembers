@@ -211,3 +211,58 @@ A: 能，每个实例一套服务端 + 数据目录 + profile。
 ## 许可
 
 MIT
+
+---
+
+## 对 dsh-onebot-qq 的本地补丁（插件升级会覆盖，需重打）
+
+下面两处改的不是本仓库的代码，而是第三方插件 `dsh-onebot-qq`（0.9.x）的 `lib/outbound.js`。
+**插件一升级就会被覆盖**，升级后要重新打一遍，否则颜文字又会发不出去。
+
+### 1. `stripActions()` 保留颜文字
+
+原实现把括号内容一律删掉：
+
+```js
+.replace(/（[^）]{0,120}）/g, '')
+.replace(/【[^】]{0,120}】/g, '')
+.replace(/\([^)]{0,120}\)/g, '')    // 颜文字也是这种
+```
+
+这个函数本意是删「旁白 / 动作」（`（尾巴一甩）`、`(smiles)`），但颜文字 `(￣▽￣)` 同样是半角括号包起来的，于是被一起吃掉。人格里明写着「可以使用文字颜来代表自己的情绪」，结果她说得出来、发不出去。
+
+改成只看括号里面是什么：
+
+```js
+const isAction = (inner) => {
+    const s = String(inner == null ? '' : inner);
+    return /[\u4e00-\u9fa5]/.test(s) || /[A-Za-z]{2,}/.test(s);
+};
+
+return text
+    .replace(/（([^）]{0,120})）/g, (m, inner) => (isAction(inner) ? '' : m))
+    .replace(/【([^】]{0,120})】/g, (m, inner) => (isAction(inner) ? '' : m))
+    .replace(/\(([^)]{0,120})\)/g, (m, inner) => (isAction(inner) ? '' : m))
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+```
+
+判据（只看括号里面）：
+
+| 括号内 | 判定 | 处理 |
+|---|---|---|
+| 含汉字（`打了个哈欠`、`尾巴一甩`） | 动作 | 删 |
+| 含两个以上英文（`smiles`、`laughs`） | 动作 | 删 |
+| 纯符号 / 假名 / 希腊字母 / 单字母 | 颜文字 | **保留** |
+
+> 踩过的坑：正则 `（([^）]{0,120})）` 只有 **一个** 捕获组，回调签名必须是 `(m, inner)`。写成 `(m, _open, inner)` 会参数错位，`inner` 拿到 `undefined`，`isAction` 永远 false，结果一个都删不掉。
+
+### 2. 分句间隔统一 1500ms
+
+```js
+const SENTENCE_SPLIT_GAP_MIN_MS = 1500;
+const SENTENCE_SPLIT_GAP_MAX_MS = 1500;
+```
+
+原来两套实例分别是 1000-1500 / 800-1600，统一成固定 1.5 秒。
