@@ -327,6 +327,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, store.browsed_list())
         elif path == "/proactive":
             self._json(200, self._get_proactive())
+        elif path == "/profiles":
+            # 标出哪个人是「主人」——主人画像走 persona.user_profile，不走 profiles
+            admins = self._qq_admin_users()
+            rows = store.profile_list()
+            for r in rows:
+                r["is_owner"] = str(r.get("user_id") or "") in admins
+            self._json(200, {"ok": True, "profiles": rows, "admins": sorted(admins)})
         elif path == "/memes/seen":
             self._json(200, store.seen_liked())
         elif path == "/memes/packs":
@@ -373,7 +380,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/state":
             st = store.get_state()
             try:
-                st["emotion_recent"] = store.emotion_log_list(limit=3, days=7)
+                # 多取几条：渲染时要滤掉「没标签又中性」的记录，
+                # 只取 3 条的话过滤完可能一条不剩。
+                st["emotion_recent"] = store.emotion_log_list(limit=10, days=7)
             except Exception:
                 st["emotion_recent"] = []
             try:
@@ -524,6 +533,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(self._post_browse)
         elif path == "/proactive":
             self._guard(lambda: self._set_proactive())
+        elif path == "/profiles":
+            self._guard(lambda: self._set_profile())
         elif path == "/memes/scan":
             self._guard(lambda: self._scan_seen())
         elif path == "/memes/upload":
@@ -579,6 +590,9 @@ class Handler(BaseHTTPRequestHandler):
                 half_life_days=body.get("half_life_days"),
                 vec=vec,
                 vec_model=vec_model,
+                user_id=str(body.get("user_id") or ""),
+                scope=str(body.get("scope") or "global"),
+                nickname=str(body.get("nickname") or ""),
             ))
         self._json(200, {"ok": True, "id": mid, "embedded": vec is not None,
                          "embedding_error": None if vec or not embedder.enabled else embedder.last_error})
@@ -598,6 +612,7 @@ class Handler(BaseHTTPRequestHandler):
             query=query,
             query_vec=qvec,
             top_k=int(body.get("top_k") or 6),
+            scopes=body.get("scopes") or None,
             tiers=body.get("tiers"),
             subject=body.get("subject"),
             min_fused=float(body.get("min_fused") or 0.30),
@@ -1282,6 +1297,50 @@ class Handler(BaseHTTPRequestHandler):
         with _lock:
             return self._load_proactive()
 
+    def _qq_admin_users(self) -> set:
+        """读 cordis.patch.yml 的 dsh-onebot.adminUsers，返回管理员 QQ 集合。"""
+        import os as _os
+        import yaml
+        HOME = _os.environ.get("HOME", "/home/ubuntu")
+        if HOME.rstrip("/") == "/home/ubuntu":
+            cfg_path = "/home/ubuntu/.dsh/profiles/web/cordis.patch.yml"
+        else:
+            cfg_path = _os.path.join(HOME, "profiles/qq2/cordis.patch.yml")
+        try:
+            data = yaml.safe_load(open(cfg_path, encoding="utf-8"))
+            for item in data or []:
+                if isinstance(item, dict) and item.get("id") == "dsh-onebot":
+                    cfg = item.get("config") or {}
+                    users = cfg.get("adminUsers") or []
+                    return {str(x).strip() for x in users if str(x).strip()}
+        except Exception:
+            pass
+        return set()
+
+    def _set_profile(self) -> None:
+        """手动改/删某个人的画像。{user_id, name?, profile?, avatar?} 或 {user_id, delete:true}"""
+        body = self._body()
+        uid = str(body.get("user_id") or "").strip()
+        if not uid:
+            self._json(400, {"ok": False, "error": "user_id required"})
+            return
+        if body.get("delete"):
+            store.profile_delete(uid)
+            self._json(200, {"ok": True, "deleted": uid})
+            return
+        # manual_profile：不传 = 不碰；传 "" = 清空。别用 or 兜底，那样清不空。
+        manual = None
+        if "manual_profile" in body:
+            manual = str(body.get("manual_profile") or "")
+        store.profile_upsert(
+            uid,
+            name=str(body.get("name") or ""),
+            profile=str(body.get("profile") or ""),
+            avatar=str(body.get("avatar") or ""),
+            manual_profile=manual,
+        )
+        self._json(200, {"ok": True, "profile": store.profile_get(uid)})
+
     def _set_proactive(self) -> None:
         import json as _json
         body = self._body()
@@ -1292,6 +1351,21 @@ class Handler(BaseHTTPRequestHandler):
         for key in ("startHour", "endHour", "minGapMinutes", "maxGapMinutes", "silentRatio"):
             if key in body:
                 cur[key] = int(body[key])
+        # 表情包频率：0 = 不发，0.2 / 0.5 / 1.0 = 大约每 5 / 2 / 1 句配一张
+        if "memeRate" in body:
+            try:
+                cur["memeRate"] = max(0.0, min(1.0, float(body["memeRate"])))
+            except (TypeError, ValueError):
+                pass
+        # 文字颜 / emoji：一个总开关 + 各自频率。总开关关着就完全不干预。
+        if "textStyleEnabled" in body:
+            cur["textStyleEnabled"] = bool(body["textStyleEnabled"])
+        for key in ("kaomojiRate", "emojiRate"):
+            if key in body:
+                try:
+                    cur[key] = max(0.0, min(1.0, float(body[key])))
+                except (TypeError, ValueError):
+                    pass
         # 唤醒预设（cold/normal/warm/custom）
         if "wakePreset" in body:
             wp = str(body["wakePreset"] or "").strip()
@@ -1415,6 +1489,12 @@ class Handler(BaseHTTPRequestHandler):
                 label = "兴奋"
             elif a < 0.3:
                 label = "蔫"
+            if not label:
+                # 情绪还在中性区间（|v| < 0.2）。这种记录没有信息量，而且会和
+                # LLM 抽出来的同一条情绪撞车 —— 同一句话在「最近让你有情绪的事」
+                # 里显示两遍。所以不记。
+                self._json(200, {"ok": True, "skipped": True, "reason": "neutral"})
+                return
             mid = store.emotion_log_add(v, a, label, str(body.get("trigger") or "")[:200], "auto")
             self._json(200, {"ok": True, "id": mid, "label": label, "valence": round(v, 2), "arousal": round(a, 2)})
             return
@@ -2722,6 +2802,9 @@ class Handler(BaseHTTPRequestHandler):
             user_text=str(_u),
             assistant_text=str(_a),
             subject=str(body.get("subject") or "self"),
+            user_id=str(body.get("user_id") or ""),
+            scope=str(body.get("scope") or "global"),
+            nickname=str(body.get("nickname") or ""),
         )
         self._json(200 if res.get("ok") else 503, res)
 
