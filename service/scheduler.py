@@ -102,9 +102,23 @@ class Scheduler:
 
     # ---------- 读配置 ----------
     def _proactive_cfg(self) -> dict:
+        """读 proactive.json（前端"主动消息"页配置的那个文件）。
+
+        之前用 self.store._load_proactive()，但 memory_core 里根本没这个方法，
+        hasattr 返回 False → 永远返回 {} → 所有配置（时间窗/间隔/静默/预设）全部失效，
+        一直用硬编码默认值。2026-10-26 修。
+        """
+        import json as _json
+        import os as _os
         try:
-            return self.store._load_proactive() if hasattr(self.store, "_load_proactive") else {}
-        except Exception:
+            # CMEM_DATA_DIR 优先（systemd 环境变量），否则用实例的 data_dir
+            data_dir = _os.environ.get("CMEM_DATA_DIR") or self.data_dir
+            p = _os.path.join(data_dir, "proactive.json")
+            with open(p, encoding="utf-8") as f:
+                cfg = _json.load(f)
+            return cfg if isinstance(cfg, dict) else {}
+        except Exception as e:
+            _log(f"proactive_cfg: read failed ({e})")
             return {}
 
     # ---------- 1. 唤醒 ----------
