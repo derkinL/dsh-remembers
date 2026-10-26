@@ -634,6 +634,60 @@ window.__ModuleLoader__.load({
         const [view, setView] = React.useState("list");
         const [newPack, setNewPack] = React.useState(null);
         const [editPack, setEditPack] = React.useState(null);
+        // 发表情包的频率：0 / 0.2 / 0.5 / 1.0。会和 find_meme 的描述一起告诉她
+        const [memeRate, setMemeRate] = React.useState(null);
+        // 文字颜 / emoji：总开关默认关闭，关着就完全不干预
+        const [textStyleEnabled, setTextStyleEnabled] = React.useState(false);
+        const [kaomojiRate, setKaomojiRate] = React.useState(0.2);
+        const [emojiRate, setEmojiRate] = React.useState(0.2);
+
+        const STYLE_OPTIONS = [
+          { v: 0, label: "不用", hint: "一个都不加" },
+          { v: 0.2, label: "20%", hint: "大约每 5 句一个" },
+          { v: 0.5, label: "50%", hint: "大约每 2 句一个" },
+          { v: 1, label: "100%", hint: "每句都带" },
+        ];
+
+        const RATE_OPTIONS = [
+          { v: 0, label: "不发", hint: "只说话，不发图" },
+          { v: 0.2, label: "20%", hint: "大约每 5 句一张" },
+          { v: 0.5, label: "50%", hint: "大约每 2 句一张" },
+          { v: 1, label: "100%", hint: "每句都配一张" },
+        ];
+
+        const loadRate = async () => {
+          try {
+            const r = await call("/proactive");
+            const v = Number(r && r.memeRate);
+            setMemeRate(Number.isFinite(v) ? v : 0.2);
+            setTextStyleEnabled(Boolean(r && r.textStyleEnabled));
+            const k = Number(r && r.kaomojiRate);
+            setKaomojiRate(Number.isFinite(k) ? k : 0.2);
+            const e = Number(r && r.emojiRate);
+            setEmojiRate(Number.isFinite(e) ? e : 0.2);
+          } catch {
+            setMemeRate(0.2);
+          }
+        };
+
+        const postProactive = async (body, note) => {
+          try {
+            await call("/proactive", { method: "POST", body: JSON.stringify(body) });
+            if (note) setMsg(note);
+          } catch (err) {
+            setMsg("保存失败：" + (err && err.message ? err.message : String(err)));
+          }
+        };
+
+        const saveRate = async (v) => {
+          setMemeRate(v);
+          try {
+            await call("/proactive", { method: "POST", body: JSON.stringify({ memeRate: v }) });
+            setMsg("表情包频率已设为：" + (v <= 0 ? "不发" : Math.round(v * 100) + "%"));
+          } catch (err) {
+            setMsg("保存失败：" + (err && err.message ? err.message : String(err)));
+          }
+        };
 
         const startEdit = (m) => {
           setEditing({ file: m.file, emotion: m.emotion || "", caption: m.caption || "", keywords: m.keywords || "" });
@@ -672,6 +726,7 @@ window.__ModuleLoader__.load({
 
         React.useEffect(() => {
           void loadPacks();
+          void loadRate();
         }, []);
 
         React.useEffect(() => {
@@ -735,6 +790,117 @@ window.__ModuleLoader__.load({
           return h("div", { style: S.wrap },
             h("div", { style: S.desc },
               "她的表情包库，按图库分。点一个图库进去看里面的图。",
+            ),
+            // ---- 发表情包的频率 ----
+            h("div", { style: { ...S.card, marginBottom: 14 } },
+              h("div", { style: S.label }, "发表情包的频率"),
+              h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
+                "她多久主动发一张。这个频率会跟表情包工具一起告诉她，每轮都提醒，不会忘。"),
+              h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 } },
+                ...RATE_OPTIONS.map((o) => {
+                  const on = memeRate !== null && Math.abs(Number(memeRate) - o.v) < 0.001;
+                  return h("div", {
+                    key: "meme-rate-" + o.v,
+                    onClick: () => void saveRate(o.v),
+                    style: {
+                      padding: "10px 8px", borderRadius: 8, cursor: "pointer", textAlign: "center",
+                      border: on ? "1px solid #4084ff" : "1px solid rgba(0,0,0,.10)",
+                      background: on ? "rgba(64,132,255,.06)" : "#fff",
+                      transition: "border-color .15s, background .15s",
+                    },
+                  },
+                    h("div", { style: { fontSize: 13, fontWeight: 600, color: on ? "#4084ff" : "#333" } }, o.label),
+                    h("div", { style: { fontSize: 11, color: "#999", marginTop: 2 } }, o.hint),
+                  );
+                }),
+              ),
+            ),
+            // ---- 文字颜 / emoji（总开关 + 两个频率）----
+            h("div", { style: { ...S.card, marginBottom: 14 } },
+              h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 } },
+                h("div", { style: S.label }, "文字颜 / emoji"),
+                h("div", {
+                  onClick: () => {
+                    const next = !textStyleEnabled;
+                    setTextStyleEnabled(next);
+                    void postProactive(
+                      { textStyleEnabled: next },
+                      "文字颜 / emoji 已" + (next ? "开启" : "关闭"),
+                    );
+                  },
+                  style: {
+                    display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
+                    padding: "4px 10px", borderRadius: 999,
+                    border: textStyleEnabled ? "1px solid #4084ff" : "1px solid rgba(0,0,0,.12)",
+                    background: textStyleEnabled ? "rgba(64,132,255,.06)" : "#fff",
+                    transition: "border-color .15s, background .15s",
+                  },
+                },
+                  h("div", {
+                    style: {
+                      width: 14, height: 14, borderRadius: 999, boxSizing: "border-box",
+                      border: textStyleEnabled ? "4px solid #4084ff" : "1px solid rgba(0,0,0,.25)",
+                      background: "#fff",
+                    },
+                  }),
+                  h("span", { style: { fontSize: 12, color: textStyleEnabled ? "#4084ff" : "#666" } },
+                    textStyleEnabled ? "已开启" : "已关闭"),
+                ),
+              ),
+              h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 12 } },
+                "默认关闭。关着的时候不给她任何指令，她想怎么说话就怎么说话。"),
+              h("div", {
+                style: {
+                  opacity: textStyleEnabled ? 1 : 0.4,
+                  pointerEvents: textStyleEnabled ? "auto" : "none",
+                  transition: "opacity .15s",
+                },
+              },
+                h("div", { style: { fontSize: 12, fontWeight: 600, marginBottom: 6 } }, "文字颜 (￣▽￣)"),
+                h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 14 } },
+                  ...STYLE_OPTIONS.map((o) => {
+                    const on = Math.abs(Number(kaomojiRate) - o.v) < 0.001;
+                    return h("div", {
+                      key: "kao-" + o.v,
+                      onClick: () => {
+                        setKaomojiRate(o.v);
+                        void postProactive({ kaomojiRate: o.v }, "文字颜：" + o.label);
+                      },
+                      style: {
+                        padding: "10px 8px", borderRadius: 8, cursor: "pointer", textAlign: "center",
+                        border: on ? "1px solid #4084ff" : "1px solid rgba(0,0,0,.10)",
+                        background: on ? "rgba(64,132,255,.06)" : "#fff",
+                        transition: "border-color .15s, background .15s",
+                      },
+                    },
+                      h("div", { style: { fontSize: 13, fontWeight: 600, color: on ? "#4084ff" : "#333" } }, o.label),
+                      h("div", { style: { fontSize: 11, color: "#999", marginTop: 2 } }, o.hint),
+                    );
+                  }),
+                ),
+                h("div", { style: { fontSize: 12, fontWeight: 600, marginBottom: 6 } }, "emoji 😊"),
+                h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 } },
+                  ...STYLE_OPTIONS.map((o) => {
+                    const on = Math.abs(Number(emojiRate) - o.v) < 0.001;
+                    return h("div", {
+                      key: "emo-" + o.v,
+                      onClick: () => {
+                        setEmojiRate(o.v);
+                        void postProactive({ emojiRate: o.v }, "emoji：" + o.label);
+                      },
+                      style: {
+                        padding: "10px 8px", borderRadius: 8, cursor: "pointer", textAlign: "center",
+                        border: on ? "1px solid #4084ff" : "1px solid rgba(0,0,0,.10)",
+                        background: on ? "rgba(64,132,255,.06)" : "#fff",
+                        transition: "border-color .15s, background .15s",
+                      },
+                    },
+                      h("div", { style: { fontSize: 13, fontWeight: 600, color: on ? "#4084ff" : "#333" } }, o.label),
+                      h("div", { style: { fontSize: 11, color: "#999", marginTop: 2 } }, o.hint),
+                    );
+                  }),
+                ),
+              ),
             ),
             h("div", { style: { display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" } },
               h("button", {
@@ -2489,7 +2655,17 @@ window.__ModuleLoader__.load({
       }
 
       function QqSection() {
-        const [data, setData] = React.useState(null);
+                const [profiles, setProfiles] = React.useState([]);
+        // 默认展开：这块藏起来的话根本没人找得到编辑入口
+        const [profilesOpen, setProfilesOpen] = React.useState(true);
+        // 每个人手编画像的草稿：user_id -> 正在编辑的文本
+        const [profileDrafts, setProfileDrafts] = React.useState({});
+        // 「其他用户画像」里不该出现主人自己 —— 他的画像在「人格设定」页的「用户画像」里改
+        // 排除主人自己，也排除非法 QQ 号（唤醒脚本注入的系统提醒是 user_id=0）
+        const otherProfiles = (profiles || []).filter(
+          (p) => !p.is_owner && /^\d{5,}$/.test(String(p.user_id || "")),
+        );
+const [data, setData] = React.useState(null);
         const [err, setErr] = React.useState(null);
         const [draft, setDraft] = React.useState({});
         const [saving, setSaving] = React.useState(false);
@@ -2522,6 +2698,9 @@ window.__ModuleLoader__.load({
           try {
             const r = await call("/qq/config");
             setData(r);
+            try {
+              setProfiles(((await call("/profiles")).profiles) || []);
+            } catch { setProfiles([]); }
             try {
               const s = await call("/qq/sessions");
               setQqSessions((s && s.sessions) || []);
@@ -2981,6 +3160,111 @@ window.__ModuleLoader__.load({
                 }),
               ),
             ),
+          ),
+
+          // ---- 其他用户画像（按 QQ 号区分）----
+          h("div", { style: S.card },
+            h("div", { style: { ...S.label, display: "flex", alignItems: "center", justifyContent: "space-between" } },
+              h("span", {}, "其他用户画像"),
+              h("span", {
+                style: { fontSize: 12, cursor: "pointer", color: "#4084ff", fontWeight: 400 },
+                onClick: () => setProfilesOpen(!profilesOpen),
+              }, profilesOpen ? "收起" : `展开 ${otherProfiles.length} 人`),
+            ),
+            h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
+              "她认识的人（按 QQ 号区分）。每个人的记忆和画像独立，互不串门。"),
+            profilesOpen
+              ? (otherProfiles.length === 0
+                  ? h("div", { style: { ...S.muted, fontSize: 12, padding: "12px 0", textAlign: "center" } },
+                      "还没认识别人。等有人私聊她或她在群里说话，这里会出现。")
+                  : h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+                      ...otherProfiles.map((p) =>
+                        h("div", {
+                          key: "prof-" + p.user_id,
+                          style: {
+                            display: "flex", gap: 10, padding: "10px 12px", borderRadius: 8,
+                            border: "1px solid rgba(0,0,0,.08)", background: "#fafafa",
+                          },
+                        },
+                          h("img", {
+                            src: "http://q1.qlogo.cn/g?b=qq&nk=" + p.user_id + "&s=100",
+                            style: { width: 40, height: 40, borderRadius: 999, flexShrink: 0, background: "#eee" },
+                            onError: (ev) => { ev.target.style.visibility = "hidden"; },
+                          }),
+                          h("div", { style: { flex: 1, minWidth: 0 } },
+                            h("div", { style: { display: "flex", alignItems: "center", gap: 6, marginBottom: 2 } },
+                              h("span", { style: { fontSize: 13, fontWeight: 600 } }, p.name || ("QQ " + p.user_id)),
+                              h("span", { style: { ...S.muted, fontSize: 11 } }, p.user_id),
+                              h("span", { style: { ...S.muted, fontSize: 11 } }, "· 说过 " + (p.msg_count || 0) + " 次"),
+                            ),
+                            // ---- 段一：你手编的（进系统提示词）----
+                            h("div", { style: { fontSize: 11, color: "#888", margin: "6px 0 3px" } },
+                              "你手编的画像 —— 进系统提示词，她每轮都看得到"),
+                            h("textarea", {
+                              value: profileDrafts[p.user_id] !== undefined
+                                ? profileDrafts[p.user_id]
+                                : (p.manual_profile || ""),
+                              placeholder: "比如：一个爱猫的程序员，说话很短，最烦加班",
+                              rows: 2,
+                              onChange: (ev) => setProfileDrafts({
+                                ...profileDrafts,
+                                [p.user_id]: ev.target.value,
+                              }),
+                              style: {
+                                width: "100%", boxSizing: "border-box", fontSize: 12, lineHeight: 1.5,
+                                padding: "6px 8px", borderRadius: 6, resize: "vertical",
+                                border: "1px solid rgba(0,0,0,.14)", background: "#fff",
+                                fontFamily: "inherit", color: "#333",
+                              },
+                            }),
+                            h("div", { style: { display: "flex", gap: 8, alignItems: "center", margin: "4px 0 8px" } },
+                              h("button", {
+                                disabled: profileDrafts[p.user_id] === undefined,
+                                onClick: async () => {
+                                  const text = profileDrafts[p.user_id];
+                                  if (text === undefined) return;
+                                  try {
+                                    await call("/profiles", {
+                                      method: "POST",
+                                      body: JSON.stringify({ user_id: p.user_id, manual_profile: text }),
+                                    });
+                                    setProfiles(profiles.map((x) =>
+                                      x.user_id === p.user_id ? { ...x, manual_profile: text } : x));
+                                  } catch (e) { /* 忽略 */ }
+                                },
+                                style: {
+                                  fontSize: 11, padding: "3px 10px", borderRadius: 5,
+                                  cursor: profileDrafts[p.user_id] === undefined ? "default" : "pointer",
+                                  border: "1px solid rgba(0,0,0,.14)",
+                                  background: profileDrafts[p.user_id] === undefined ? "#f2f2f2" : "#fff",
+                                  color: profileDrafts[p.user_id] === undefined ? "#aaa" : "#333",
+                                },
+                              }, "保存这段"),
+                              h("span", { style: { fontSize: 11, color: "#aaa" } },
+                                "改完最多 20 秒她才看到"),
+                            ),
+                            // ---- 段二：她自己积累的（只走对话注入）----
+                            h("div", { style: { fontSize: 11, color: "#888", marginBottom: 3 } },
+                              "她自己记下的 —— 每抽到一条就变，所以只走对话注入，不进系统提示词"),
+                            h("div", { style: { fontSize: 12, lineHeight: 1.5, color: "#555", whiteSpace: "pre-wrap" } },
+                              p.profile ? String(p.profile).slice(0, 200) : "（还没提炼出画像）"),
+                          ),
+                          h("span", {
+                            style: { cursor: "pointer", opacity: 0.5, fontSize: 14, flexShrink: 0, alignSelf: "flex-start", padding: "0 4px" },
+                            title: "删掉这个人",
+                            onClick: async () => {
+                              if (!window.confirm("删掉 " + (p.name || p.user_id) + " 的画像？")) return;
+                              try {
+                                await call("/profiles", { method: "POST", body: JSON.stringify({ user_id: p.user_id, delete: true }) });
+                                setProfiles(profiles.filter((x) => x.user_id !== p.user_id));
+                              } catch (e) { /* 忽略 */ }
+                            },
+                          }, "×"),
+                        ),
+                      ),
+                    )
+                )
+              : null,
           ),
 
           // 保存按钮（固定在屏幕右侧中间，跟其他页签一致）
