@@ -131,6 +131,9 @@ class MemoryInput:
     half_life_days: float | None = field(default=None)
     vec: Sequence[float] | None = None
     vec_model: str | None = None
+    user_id: str = ""       # 谁说的（QQ 号），空 = 主人/系统
+    scope: str = "global"   # private:<qq> | group:<gid> | global
+    nickname: str = ""      # 这个 QQ 的昵称。之前完全没传，profiles.name 一直是空的
 
 
 @dataclass
@@ -186,6 +189,68 @@ class MemoryStore:
         conn = self._get_conn()
         conn.executescript(self._schema_path.read_text(encoding="utf-8"))
         conn.commit()
+
+        # ---------- 迁移：多用户隔离字段（2026-10-26）----------
+        # memory.user_id  谁说的（QQ 号）
+        # memory.scope    private:<qq> | group:<gid> | global
+        # emotion_log.target_user / target_group  情绪对谁/对哪个群
+        self._migrate_multi_user()
+
+    def _migrate_multi_user(self) -> None:
+        """幂等地给老库补多用户隔离字段。"""
+        def cols(table: str) -> set:
+            try:
+                return {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            except Exception:
+                return set()
+
+        mem_cols = cols("memory")
+        if "user_id" not in mem_cols:
+            try:
+                self.conn.execute("ALTER TABLE memory ADD COLUMN user_id TEXT DEFAULT ''")
+            except Exception:
+                pass
+        if "scope" not in mem_cols:
+            try:
+                self.conn.execute("ALTER TABLE memory ADD COLUMN scope TEXT DEFAULT 'global'")
+            except Exception:
+                pass
+
+        emo_cols = cols("emotion_log")
+        if "target_user" not in emo_cols:
+            try:
+                self.conn.execute("ALTER TABLE emotion_log ADD COLUMN target_user TEXT DEFAULT ''")
+            except Exception:
+                pass
+        if "target_group" not in emo_cols:
+            try:
+                self.conn.execute("ALTER TABLE emotion_log ADD COLUMN target_group TEXT DEFAULT ''")
+            except Exception:
+                pass
+
+        # profiles.manual_profile：你手编的画像。
+        # 自动累积的 profile 每抽到 L2 就变，不能进系统提示词；手编这份才行。
+        prof_cols = cols("profiles")
+        if "manual_profile" not in prof_cols:
+            try:
+                self.conn.execute("ALTER TABLE profiles ADD COLUMN manual_profile TEXT DEFAULT ''")
+            except Exception:
+                pass
+
+        # 索引：按 scope 查是最热的路径
+        for idx, table, col in [
+            ("idx_memory_scope", "memory", "scope"),
+            ("idx_memory_user", "memory", "user_id"),
+        ]:
+            try:
+                self.conn.execute(f"CREATE INDEX IF NOT EXISTS {idx} ON {table}({col})")
+            except Exception:
+                pass
+
+        try:
+            self.conn.commit()
+        except Exception:
+            pass
 
     def _get_conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -276,8 +341,8 @@ class MemoryStore:
             """
             INSERT INTO memory
               (tier, subject, text, summary, source_ids, tags, ts, half_life_days,
-               vec, vec_dim, vec_model, created_at, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+               vec, vec_dim, vec_model, created_at, updated_at, user_id, scope)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 item.tier,
@@ -293,12 +358,83 @@ class MemoryStore:
                 item.vec_model,
                 now,
                 now,
+                item.user_id,
+                item.scope,
             ),
         )
         mem_id = int(cur.lastrowid)
         self._index_terms(mem_id, item.text, item.summary, item.tags)
         self.conn.commit()
+
+        # ---- 系统来源（唤醒/自我反省）的 user_id 是 0，不该占一个人的位置 ----
+        if not self._normalize_user(item.user_id):
+            item.user_id = ""
+            item.scope = "global"
+
+        # ---- 多用户画像：把「关于某个人的事实」顺手写进 profiles ----
+        try:
+            self._touch_profile(item)
+        except Exception:
+            pass
+
         return mem_id
+
+    @staticmethod
+    def _normalize_user(uid: str) -> str:
+        """合法 QQ 号才算「某个人」。其余一律当系统来源（空串 + global）。
+
+        唤醒脚本 proactive-inject.sh 注入系统提醒时用的是 user_id=0，
+        之前被原样收下，于是 profiles 里长出一个 user_id='0' name='系统' 的
+        假用户，还会出现在「其他用户画像」里。真正的 QQ 号至少 5 位数字。
+        """
+        u = str(uid or "").strip()
+        if u.isdigit() and len(u) >= 5:
+            return u
+        return ""
+
+    def _touch_profile(self, item) -> None:
+        """从一条记忆里提取「这个人是谁」，更新 profiles 表。
+
+        - 只有 user_id 非空、且 scope 是 private:/group: 时才写
+        - L2 文本追加到 profile 字段（去重）
+        - 其他层只涨 msg_count
+        """
+        uid = self._normalize_user(getattr(item, "user_id", ""))
+        scope = str(getattr(item, "scope", "") or "global")
+        if not uid:
+            return
+        if not (scope.startswith("private:") or scope.startswith("group:")):
+            return
+
+        tier = str(getattr(item, "tier", "") or "").upper()
+        text = str(getattr(item, "text", "") or "").strip()
+        if not text:
+            return
+
+        add_text = text if tier == "L2" else ""
+
+        # 顺手把昵称落库：不然 profiles.name 永远是空，群聊里只能显示「QQ 123456」，
+        # 跟消息里的 nickname 对不上，她会把人认错。
+        nick = str(getattr(item, "nickname", "") or "").strip()
+        # QQ 有时不给昵称，直接把号码当昵称发下来。这种"昵称"没有信息量，
+        # 存进去还会把群聊里学到的好名字覆盖掉（profile_upsert 的 name 是非空即覆盖）。
+        if nick and nick == uid:
+            nick = ""
+
+        row = self.conn.execute("SELECT profile FROM profiles WHERE user_id=?", (uid,)).fetchone()
+        cur_profile = str(row["profile"] or "") if row else ""
+        lines = [x.strip() for x in cur_profile.split(chr(10)) if x.strip()]
+        if add_text:
+            dup = any(
+                add_text in x or x in add_text
+                or _norm_for_dedupe(add_text) == _norm_for_dedupe(x)
+                for x in lines
+            )
+            if not dup:
+                lines.append(add_text)
+        new_profile = chr(10).join(lines[-20:])
+
+        self.profile_upsert(uid, name=nick, profile=new_profile)
 
     def update_vec(self, mem_id: int, vec: Sequence[float], model: str | None = None) -> None:
         self._invalidate_caches()
@@ -511,10 +647,11 @@ class MemoryStore:
         if self._light_cache is not None:
             return self._light_cache
         rows = self.conn.execute(
-            "SELECT id, ts, half_life_days, tier, subject FROM memory"
+            "SELECT id, ts, half_life_days, tier, subject, scope FROM memory"
         ).fetchall()
         self._light_cache = {
-            int(r["id"]): (float(r["ts"]), r["half_life_days"], r["tier"], r["subject"])
+            int(r["id"]): (float(r["ts"]), r["half_life_days"], r["tier"], r["subject"],
+                           (r["scope"] or "global"))
             for r in rows
         }
         return self._light_cache
@@ -530,6 +667,7 @@ class MemoryStore:
         focus: str | None = None,
         now: float | None = None,
         log: bool = True,
+        scopes: Sequence[str] | None = None,
     ) -> list[Hit]:
         now = float(now if now is not None else time.time())
 
@@ -558,7 +696,7 @@ class MemoryStore:
             meta = light.get(mid)
             if meta is None:
                 continue
-            ts, half, tier, subj = meta
+            ts, half, tier, subj, sc = meta[0], meta[1], meta[2], meta[3], (meta[4] if len(meta) > 4 else "global")
             if tier_set is not None:
                 if tier not in tier_set:
                     continue
@@ -566,6 +704,8 @@ class MemoryStore:
                 # L4 是每轮必带的人格块，由 profile() 单独取，不进检索
                 continue
             if subject and subj != subject:
+                continue
+            if scopes and sc not in scopes:
                 continue
             b_raw = bm25.get(mid, 0.0)
             v_raw = max(0.0, vec.get(mid, 0.0))
@@ -609,7 +749,7 @@ class MemoryStore:
             return []
 
         # ---- 第二阶段：只对入选者取完整行 ----
-        rows = self._load_rows({s[1] for s in kept_pairs}, tiers, subject)
+        rows = self._load_rows({s[1] for s in kept_pairs}, tiers, subject, scopes)
         by_id = {int(r["id"]): r for r in rows}
         kept: list[Hit] = []
         for fused, mid, b_raw, v_raw, rec in kept_pairs:
@@ -788,8 +928,11 @@ class MemoryStore:
                 cur.get("game_score", 0) if game_score is None else int(game_score),
                 cur.get("game_plays", 0) if game_plays is None else int(game_plays),
                 cur.get("activity", "") if activity is None else str(activity),
-                cur.get("valence", 0.0) if valence is None else float(valence),
-                cur.get("arousal", 0.5) if arousal is None else float(arousal),
+                # 情绪强度必须留在合法区间。之前只 clamp 了 intimacy，valence /
+                # arousal 裸奔：每轮 bump_valence(-0.15) 一直累加，第二套掉到
+                # -4.25 还在往下掉，写进 emotion_log 的全是超界垃圾。
+                max(-1.0, min(1.0, cur.get("valence", 0.0) if valence is None else float(valence))),
+                max(0.0, min(1.0, cur.get("arousal", 0.5) if arousal is None else float(arousal))),
             ),
         )
         self.conn.commit()
@@ -819,11 +962,13 @@ class MemoryStore:
     # 数值太抽象，模型不知道怎么用。分段之后可以直接告诉她「你是熟悉阶段」，
     # 她自己就会调整称呼和距离感。
 
+    # 阈值配「每轮 +1.0」的亲密度增量：一天聊 50 轮 ≈ 2 天到「熟悉」，
+    # 一周到「亲密」。原来是 0/200/500/800 + 每轮 +0.2，聊 573 轮还在「陌生」。
     STAGES = [
         (0, "陌生", "刚认识，客气一点，别太黏"),
-        (200, "熟悉", "认识一阵了，会聊会闹，偶尔主动"),
-        (500, "亲密", "很熟了，会撒娇会闹，经常主动找他"),
-        (800, "依赖", "离不开他了，黏人，主动得很勤"),
+        (100, "熟悉", "认识一阵了，会聊会闹，偶尔主动"),
+        (300, "亲密", "很熟了，会撒娇会闹，经常主动找他"),
+        (600, "依赖", "离不开他了，黏人，主动得很勤"),
     ]
 
     def current_stage(self) -> dict:
@@ -917,6 +1062,66 @@ class MemoryStore:
 
     # -- 活动日志：她真的做过什么 ----------------------------------------------
 
+    # ---------- 多用户画像（除主人外，按 QQ 号区分）----------
+
+    def profile_get(self, user_id: str) -> dict | None:
+        """取某个人的画像。没有返回 None。"""
+        try:
+            row = self.conn.execute(
+                "SELECT * FROM profiles WHERE user_id = ?", (str(user_id),)
+            ).fetchone()
+            return dict(row) if row else None
+        except Exception:
+            return None
+
+    def profile_upsert(self, user_id: str, name: str = "", profile: str = "",
+                       avatar: str = "", manual_profile: str | None = None) -> None:
+        """新建或更新某个人的画像（空字段不覆盖已有值）。
+
+        manual_profile 的三种语义（这个必须分清楚，不然清不空）：
+            None -> 完全不碰（_touch_profile 走这条，自动累积绝不覆盖手编）
+            ""   -> 清空
+            其他 -> 覆盖
+        """
+        import time as _time
+        now = _time.time()
+        set_manual = 0 if manual_profile is None else 1
+        manual_val = "" if manual_profile is None else str(manual_profile)
+        try:
+            self.conn.execute("""
+                INSERT INTO profiles(user_id, name, avatar, profile, manual_profile, msg_count, first_seen, updated_at)
+                VALUES(?,?,?,?,?,1,?,?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    name    = CASE WHEN excluded.name    != '' THEN excluded.name    ELSE profiles.name    END,
+                    avatar  = CASE WHEN excluded.avatar  != '' THEN excluded.avatar  ELSE profiles.avatar  END,
+                    profile = CASE WHEN excluded.profile != '' THEN excluded.profile ELSE profiles.profile END,
+                    manual_profile = CASE WHEN ? THEN excluded.manual_profile ELSE profiles.manual_profile END,
+                    msg_count = profiles.msg_count + 1,
+                    updated_at = excluded.updated_at
+            """, (str(user_id), str(name or ""), str(avatar or ""), str(profile or ""),
+                  manual_val, now, now, set_manual))
+            self.conn.commit()
+        except Exception:
+            pass
+
+    def profile_list(self, limit: int = 200) -> list:
+        """所有非主人画像，按最近活跃排序。"""
+        try:
+            rows = self.conn.execute(
+                "SELECT * FROM profiles ORDER BY updated_at DESC LIMIT ?", (int(limit),)
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+    def profile_delete(self, user_id: str) -> bool:
+        try:
+            self.conn.execute("DELETE FROM profiles WHERE user_id = ?", (str(user_id),))
+            self.conn.commit()
+            return True
+        except Exception:
+            return False
+
     def log_activity(self, kind: str, detail: str = "", thought: str = "") -> None:
         """记一条活动。thought = 她当时的想法（可以空）。"""
         try:
@@ -962,8 +1167,9 @@ class MemoryStore:
         updated = float(cur.get("mood_updated") or 0) or now
         hours = max(0.0, (now - updated) / 3600.0)
         decay = max(0.0, 1.0 - 0.2 * hours)
-        valence = float(cur.get("valence") or 0) * decay
-        arousal = 0.5 + (float(cur.get("arousal") or 0.5) - 0.5) * decay
+        # clamp 在这里也做一遍：库里可能还留着 clamp 上线之前的超界值
+        valence = max(-1.0, min(1.0, float(cur.get("valence") or 0) * decay))
+        arousal = max(0.0, min(1.0, 0.5 + (float(cur.get("arousal") or 0.5) - 0.5) * decay))
         return {"valence": round(valence, 3), "arousal": round(arousal, 3)}
 
     def set_emotion(self, valence: float, arousal: float) -> dict:
@@ -1607,7 +1813,7 @@ class MemoryStore:
             meta = light.get(mid)
             if meta is None:
                 continue
-            ts, half, tier, subj = meta
+            ts, half, tier, subj = meta[0], meta[1], meta[2], meta[3]
             if tier == "L4":
                 continue
             if subject and subj != subject:
@@ -1633,7 +1839,8 @@ class MemoryStore:
             ))
         return out
 
-    def _load_rows(self, ids: set[int], tiers: Sequence[str] | None, subject: str | None):
+    def _load_rows(self, ids: set[int], tiers: Sequence[str] | None, subject: str | None,
+                   scopes: Sequence[str] | None = None):
         if not ids:
             return []
         placeholders = ",".join("?" * len(ids))
@@ -1648,6 +1855,9 @@ class MemoryStore:
         if subject:
             sql += " AND subject=?"
             params.append(subject)
+        if scopes:
+            sql += f" AND COALESCE(scope,'global') IN ({','.join('?' * len(scopes))})"
+            params.extend(scopes)
         return self.conn.execute(sql, params).fetchall()
 
     def _log_search(self, query: str, hits: int, top: float | None, bm: float | None,
