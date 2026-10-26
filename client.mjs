@@ -59,11 +59,14 @@ export class MemoryClient {
    * LLM 抽取 + 逐条判定（ADD/UPDATE/DELETE/NONE）。
    * 两次 LLM 调用，可能几十秒 —— 调用方不要 await。
    */
-  async extract({ userText, assistantText, subject = "self" }) {
+  async extract({ userText, assistantText, subject = "self", user_id, scope, nickname }) {
     return this.#request("POST", "/extract", {
       user_text: userText,
       assistant_text: assistantText,
       subject,
+      user_id,
+      scope,
+      nickname,
     }, 120000);
   }
 
@@ -80,18 +83,41 @@ export class MemoryClient {
   }
 
   /** 混合检索。空数组 = 真的没印象，调用方必须尊重这个信号。 */
-  async search({ query, focus, topK, subject }) {
+  async search({ query, focus, topK, subject, scopes }) {
     const res = await this.#request("POST", "/search", {
       query,
       focus,
       top_k: topK,
       subject,
+      scopes,
     });
     return res?.hits ?? null;
   }
 
+  /** 查某个人的画像（多人隔离用）。没有返回 null。 */
+  /** 拉所有人（含手编画像）。系统提示词按会话挑人用，所以要在启动时整份缓存下来。 */
+  async profiles() {
+    try {
+      const all = await this.#request("GET", "/profiles");
+      return (all && all.profiles) || [];
+    } catch {
+      return [];
+    }
+  }
+
+  async profileOf(userId) {
+    if (!userId) return null;
+    try {
+      const all = await this.#request("GET", "/profiles");
+      const list = (all && all.profiles) || [];
+      return list.find((p) => String(p.user_id) === String(userId)) || null;
+    } catch {
+      return null;
+    }
+  }
+
   /** 写入一条记忆。 */
-  async ingest({ text, tier, subject, summary, tags, embed = true }) {
+  async ingest({ text, tier, subject, summary, tags, embed = true, user_id, scope, nickname }) {
     const res = await this.#request("POST", "/ingest", {
       text,
       tier,
@@ -99,6 +125,9 @@ export class MemoryClient {
       summary,
       tags,
       embed,
+      user_id,
+      scope,
+      nickname,
     });
     return res?.id ?? null;
   }
