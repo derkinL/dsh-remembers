@@ -190,18 +190,13 @@ CREATE TABLE IF NOT EXISTS notes (
   date       TEXT NOT NULL DEFAULT '',
   text       TEXT NOT NULL,
   author     TEXT NOT NULL DEFAULT '',
-  created    REAL NOT NULL DEFAULT 0
+  created    REAL NOT NULL DEFAULT 0,
+  memory_id INTEGER DEFAULT NULL
 );
 
 -- ---------------------------------------------------------------------------
 -- 睡眠巩固：每晚整理
 -- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS sleep_log (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  date       TEXT NOT NULL,
-  text       TEXT NOT NULL DEFAULT '',
-  created    REAL NOT NULL DEFAULT 0
-);
 
 -- ---------------------------------------------------------------------------
 -- 表情包索引：每张图有情绪分类 + 描述 + 关键词（AI 按情绪找图）
@@ -235,7 +230,8 @@ CREATE TABLE IF NOT EXISTS browsed (
   id      INTEGER PRIMARY KEY AUTOINCREMENT,
   title   TEXT NOT NULL DEFAULT '',
   url     TEXT NOT NULL DEFAULT '',
-  ts      REAL NOT NULL DEFAULT 0
+  ts      REAL NOT NULL DEFAULT 0,
+  memory_id INTEGER DEFAULT NULL
 );
 
 -- ---------------------------------------------------------------------------
@@ -248,6 +244,22 @@ CREATE TABLE IF NOT EXISTS emotion_log (
   arousal      REAL NOT NULL DEFAULT 0,
   label        TEXT NOT NULL DEFAULT '',
   trigger      TEXT NOT NULL DEFAULT '',
-  source       TEXT NOT NULL DEFAULT 'chat'
+  source       TEXT NOT NULL DEFAULT 'chat',
+  memory_id    INTEGER DEFAULT NULL       -- 关联到 memory.id（哪条记忆引发的）
 );
 CREATE INDEX IF NOT EXISTS idx_emotion_log_ts ON emotion_log(ts);
+
+-- 多用户画像（除主人外，按 QQ 号区分）
+CREATE TABLE IF NOT EXISTS profiles (
+    user_id     TEXT PRIMARY KEY,
+    name        TEXT DEFAULT '',
+    avatar      TEXT DEFAULT '',
+    -- AI 自己积累的画像：每抽到一条 L2 事实就往里追加，随时在变。
+    -- 只能走消息注入，绝不能进系统提示词（一变就把 prompt cache 打穿）。
+    profile     TEXT DEFAULT '',
+    -- 你手编的画像：只有你改才变。这个才进系统提示词。
+    manual_profile TEXT DEFAULT '',
+    msg_count   INTEGER DEFAULT 0,
+    first_seen  REAL,
+    updated_at  REAL
+);
