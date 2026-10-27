@@ -328,6 +328,34 @@ class Scheduler:
         return True
 
     # ---------- 工具 ----------
+    def _owner_qq(self) -> int:
+        """主人的 QQ 号。
+
+        必须是真实号：原来 _inject() 里写死 user_id: 0，唤醒跑完、话也生成了，
+        但 onebot 回复时发给「QQ 号 0」，QQ 直接拒：
+            final send failed: OneBot action failed (retcode 1400): user_id: must be >= 1
+        结果所有服务内唤醒的回复一条都没发出去。
+        """
+        cfg_home = os.environ.get("HOME", "/home/ubuntu")
+        if cfg_home.rstrip("/") == "/home/ubuntu":
+            cfg = "/home/ubuntu/.dsh/profiles/web/cordis.patch.yml"
+        else:
+            cfg = os.path.join(cfg_home, "profiles/qq2/cordis.patch.yml")
+        try:
+            import yaml
+            for item in (yaml.safe_load(open(cfg, encoding="utf-8")) or []):
+                if isinstance(item, dict) and item.get("id") == "dsh-onebot":
+                    for u in ((item.get("config") or {}).get("adminUsers") or []):
+                        s = str(u).strip()
+                        if s.isdigit() and len(s) >= 5:
+                            return int(s)
+        except Exception:
+            pass
+        env = os.environ.get("CMEM_OWNER_QQ", "").strip()
+        if env.isdigit() and len(env) >= 5:
+            return int(env)
+        return 3169341724
+
     def _inject(self, msg: str, silent: bool = False) -> None:
         path = self.inject_path
         if not path:
@@ -335,18 +363,20 @@ class Scheduler:
             return
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
+            # 用真实 QQ 号！0 会让回复发不出去（retcode 1400）
+            uid = self._owner_qq()
             ev = {
                 "post_type": "message",
                 "message_type": "private",
                 "sub_type": "friend",
                 "message_id": int(time.time() * 1000) % 1000000000,
-                "user_id": 0,
+                "user_id": uid,
                 "message": msg,
                 "raw_message": msg,
                 "time": int(time.time()),
                 "self_id": 0,
                 "silent": silent,
-                "sender": {"user_id": 0, "nickname": "系统"},
+                "sender": {"user_id": uid, "nickname": "系统"},
             }
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(ev, ensure_ascii=False) + "\n")
