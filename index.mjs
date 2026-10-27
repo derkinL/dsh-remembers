@@ -786,16 +786,19 @@ function renderState(state, prev, selfModel, proactive) {
         }
       })();
     }
-    // 记一条聊天活动
-    if (user) {
+    // 记一条聊天活动。
+    // 门控用 keptUser（剥掉系统唤醒之后的剩余），不是 user：
+    // 唤醒轮里 user 是「（系统提醒：……）」，那是系统说的，不是用户说的 ——
+    // 之前把它记成 chat、学进口头禅、还触发情绪传染，全是假的。
+    if (keptUser) {
       void logActivity("chat", keptUser.slice(0, 80));
-      void recordSlang(user);
+      void recordSlang(keptUser);
       void bumpAffinity();
       void scanSeen();
       // 情绪传染：他难过她就跟着沉，他开心她就跟着亮
-      if (/(累|烦|难过|难受|不想|沮丧|焦虑|崩溃|哭)/.test(user)) {
+      if (/(累|烦|难过|难受|不想|沮丧|焦虑|崩溃|哭)/.test(keptUser)) {
         void bumpEmotion(-0.15, -0.05);
-      } else if (/(开心|高兴|好耶|爽|棒|喜欢|哈哈|不错)/.test(user)) {
+      } else if (/(开心|高兴|好耶|爽|棒|喜欢|哈哈|不错)/.test(keptUser)) {
         void bumpEmotion(0.15, 0.05);
       }
     }
@@ -902,7 +905,13 @@ function renderState(state, prev, selfModel, proactive) {
     state.episodeStartedAt = 0;
     if (turns.length === 0) return;
 
-    const fmt = (ms) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
+    // 必须用本地时间。以前这里用 toISOString()，那是 UTC —— 服务器 UTC+8，
+    // 下午 14:51 传过去变成 06:51，LLM 就把它写成「凌晨」。已经错过三条 episode。
+    const fmt = (ms) => {
+      const d = new Date(ms);
+      const p = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    };
     // fire-and-forget：压一段要几十秒，绝不能挂在 turn/end 上
     client.episode({ turns, window: `${fmt(startedAt)} ~ ${fmt(Date.now())}` })
       .then((res) => {
@@ -1101,7 +1110,9 @@ async function scanSeen() {
         name: "bili_comment",
         description:
           "在一条 B 站视频下面评论一句。只给 BV 号和你想说的话就行，aid 服务端自己查。"
-          + "用你自己的语气写，别像客服；看到特别喜欢的视频才评，不用每条都评。"
+          + "用你自己的语气写，短一点，别像客服。"
+          + "有想说的就留一句（弹幕戳到你了、看完有不同意见、想吐槽标题党都算），"
+          + "一天一两条很正常；真没话说就不评，别硬凑。"
           + "发之前可以先 dry 一次看看效果。",
         parameters: {
           bvid: { type: "string", required: true, description: "BV 号，比如 BV1DubxzVEPB" },
@@ -1164,7 +1175,18 @@ async function scanSeen() {
           const bv = String(args.bv || "").trim();
           if (!bv) return { ok: false, error: "bv required" };
           const r = await get("/bili/debrief?bv=" + encodeURIComponent(bv));
-          return r || { ok: false, error: "unavailable" };
+          if (!r) return { ok: false, error: "unavailable" };
+          // 每次看完都提一次：有想说的可以用 bili_comment 留一句。
+          // 之前只在工具描述里写「看到特别喜欢的才评」，结果她从来不评。
+          return {
+            ...r,
+            hint: "摘要只有尾巴 3000 字。想看完整："
+              + "字幕全文在 paths.subs（txt，用 read 打开，几十上百行都在）；"
+              + "画面在 paths.sheet（3x3 九宫格，用 read_image 看）；"
+              + "字幕条在 paths.subs_img，封面在 paths.cover。"
+              + "看完如果哪个点戳到你了（弹幕很妙、标题骗人、有不同意见都算），"
+              + "就用 bili_comment 去评论区留一句，用你自己的话。没戳到就算了，别硬评。",
+          };
         },
       }));
       log("bili_tools_registered", { count: 2 });
@@ -1845,9 +1867,12 @@ function cleanNudge(text) {
   let s = String(text || "");
   // 整段的唤醒提示（含括号内容里可能嵌套括号，粗匹配到句末）
   // 结尾锚定：动作文本里自带括号，非贪婪会提前断
-  s = s.replace(/（系统提醒：[\s\S]*?不想也行。）/g, "");
-  s = s.replace(/（你自己待着，[\s\S]*?不用回消息。）/g, "");
-  s = s.replace(/（抽到：[\s\S]*?）/g, "");
+  // 唤醒提示是整条独立注入的，里面没有用户的真实内容，所以贪婪吃到最后一个全角右括号。
+  // 原来的写法把结尾锚在「不想也行。」上，可动作列表有时以「）」收尾，压根匹配不到，
+  // 整段残留下来被当成「用户说的话」记进 activity_log / 学进口头禅 / 触发假情绪。
+  s = s.replace(/（系统提醒：[\s\S]*）/g, "");
+  s = s.replace(/（你自己待着，[\s\S]*）/g, "");
+  s = s.replace(/（抽到：[\s\S]*）/g, "");
   // 残留的括号碎片
   s = s.replace(/^[，,。.）)]+/, "");
   s = s.replace(/<dsh-remembers[\s\S]*?<\/dsh-remembers>/g, "");
