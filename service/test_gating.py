@@ -75,7 +75,12 @@ print("=" * 64)
 
 
 class MockLLM:
-    """按 system prompt 区分是抽取还是判定，返回预设结果。"""
+    """按 system prompt 区分是抽取还是判定，返回预设结果。
+
+    用 extractor 里的 prompt 常量比对，不要硬编码 prompt 里的句子 ——
+    2026-10-27 重写 EXTRACT_SYSTEM 时，"抽取值得长期记住的事实"这句话没了，
+    这里就全返回 None，process_turn 退化成 extract-failed，测试直接 KeyError。
+    """
 
     enabled = True
     last_error = None
@@ -85,9 +90,14 @@ class MockLLM:
         self._decide = decide
 
     def chat_json(self, system, user, max_tokens=0):
-        if "抽取值得长期记住的事实" in system:
+        from extractor import EXTRACT_SYSTEM
+        try:
+            from extractor import DECIDE_SYSTEM as _DS
+        except ImportError:
+            _DS = None
+        if system == EXTRACT_SYSTEM or EXTRACT_SYSTEM in system:
             return self._extract
-        if "管理一个记忆库" in system:
+        if _DS is not None and (system == _DS or _DS in system):
             return self._decide(user)
         return None
 

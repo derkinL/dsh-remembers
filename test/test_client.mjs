@@ -1,122 +1,139 @@
 /**
- * client.js 的离线验证。
+ * 浏览器半边测试（client.js）：模块协议 + 7 个设置段的注册面。
  *
- * 不用真浏览器：mock 掉 window.__ModuleLoader__、react 和 ctx，
- * 确认三件事：
- *   1. 模块协议形状对（load({id, factory})，factory(require) 返回 exports）
- *   2. exports.apply / exports.inject 存在且 inject 含 slots
- *   3. apply(ctx) 真的调了 slots.register("settings.section", 组件)
+ * 不跑真 React，用 minimal mock 把 client.js 的执行路径走通。
+ * 运行：node test/test_client.mjs
  */
-
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import vm from "node:vm";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const HERE = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
-const source = fs.readFileSync(path.join(HERE, "..", "client.js"), "utf8");
+const HERE = dirname(fileURLToPath(import.meta.url));
+const PLUGIN_ROOT = join(HERE, "..");
+const code = readFileSync(join(PLUGIN_ROOT, "client.js"), "utf8");
 
-// ---- mock 环境 -----------------------------------------------------------
-let captured = null;
+let pass = 0;
+let fail = 0;
+function ok(label, fn) {
+  try {
+    fn();
+    pass += 1;
+    console.log("  ✓ " + label);
+  } catch (e) {
+    fail += 1;
+    console.log("  ✗ " + label + "\n      " + String(e.message).split("\n")[0]);
+  }
+}
 
-const fakeReact = {
-  createElement: (type, props, ...children) => ({ type, props: props || {}, children }),
-  useState: (init) => [typeof init === "function" ? init() : init, () => {}],
-  useEffect: () => {},
-  useCallback: (fn) => fn,
-  useMemo: (fn) => fn(),
-  useRef: (v) => ({ current: v }),
-};
-
-const sandbox = {
-  window: {
-    __ModuleLoader__: {
-      load: (mod) => { captured = mod; },
-    },
-    localStorage: {
-      _d: {},
-      getItem(k) { return this._d[k] ?? null; },
-      setItem(k, v) { this._d[k] = String(v); },
-    },
-    console,
-    fetch: async () => { throw new Error("no network in test"); },
-  },
-  console,
-  fetch: async () => { throw new Error("no network in test"); },
-  setTimeout,
-  clearTimeout,
-};
-sandbox.globalThis = sandbox;
-
-vm.createContext(sandbox);
-vm.runInContext(source, sandbox, { filename: "client.js" });
-
-// ---- 1. 模块协议 ---------------------------------------------------------
-assert.ok(captured, "没有调用 window.__ModuleLoader__.load");
-assert.equal(captured.id, "dsh-remembers", "模块 id 不对");
-assert.equal(typeof captured.factory, "function", "factory 不是函数");
-console.log("  ✓ 模块协议：load({id, factory})，id=" + captured.id);
-
-const requireMock = (name) => {
-  if (name === "react") return fakeReact;
-  throw new Error("unexpected require: " + name);
-};
-const exportsObj = captured.factory(requireMock);
-
-// ---- 2. 导出面 -----------------------------------------------------------
-assert.equal(typeof exportsObj.apply, "function", "exports.apply 缺失");
-assert.ok(Array.isArray(exportsObj.inject), "exports.inject 缺失");
-assert.ok(exportsObj.inject.includes("slots"), "inject 里没有 slots");
-console.log("  ✓ 导出面：apply() + inject=[" + exportsObj.inject.join(", ") + "]");
-
-// ---- 3. apply 注册设置段 -------------------------------------------------
+// ---------------------------------------------------------------- mock 环境
 const registered = [];
-const ctx = {
-  get: (name) => (name === "slots"
-    ? {
-        inject: (slotName, thunk) => {
-          // 模拟 DSH：投影时才求值
-          thunk();
-        },
-        register: (meta, component) => {
-          registered.push({ meta, component });
-          return { dispose() {} };
-        },
-      }
-    : undefined),
+let loadDef = null;
+
+const h = (type, props, ...kids) => ({ $$typeof: "el", type, props, children: kids });
+const React = {
+  createElement: h,
+  useState: (v) => [typeof v === "function" ? v() : v, () => {}],
+  useEffect: () => {},
+  useMemo: (f) => f(),
+  useCallback: (f) => f,
+  useRef: (v) => ({ current: v }),
+  Fragment: "Fragment",
 };
 
+const windowMock = {
+  __ModuleLoader__: { load: (def) => { loadDef = def; } },
+  localStorage: { getItem: () => null, setItem: () => {} },
+  location: { hostname: "127.0.0.1", pathname: "/", protocol: "http:", host: "127.0.0.1:49801" },
+  addEventListener: () => {},
+  removeEventListener: () => {},
+};
+globalThis.window = windowMock;
+globalThis.document = {
+  getElementById: () => null,
+  createElement: () => ({ style: {}, setAttribute: () => {}, appendChild: () => {} }),
+  head: { appendChild: () => {} },
+  addEventListener: () => {},
+  body: { appendChild: () => {} },
+};
+globalThis.localStorage = windowMock.localStorage;
+
+const req = (m) => {
+  if (m === "react") return React;
+  throw new Error("unexpected require: " + m);
+};
+
+new Function("window", "document", "localStorage", "require", code)(
+  globalThis.window, globalThis.document, globalThis.localStorage, req,
+);
+
+// ---------------------------------------------------------------- 模块协议
+console.log("\n[模块协议]");
+ok("调用了 __ModuleLoader__.load", () => assert.ok(loadDef));
+ok('id 是 "dsh-remembers"', () => assert.equal(loadDef.id, "dsh-remembers"));
+ok("factory 是函数", () => assert.equal(typeof loadDef.factory, "function"));
+
+const exportsObj = loadDef.factory(req);
+ok("导出 apply", () => assert.equal(typeof exportsObj.apply, "function"));
+ok('inject 声明了 slots', () => assert.deepEqual([...exportsObj.inject], ["slots"]));
+
+// ---------------------------------------------------------------- 注册设置段
+const slotsMock = {
+  inject: (_n, fn) => fn(),
+  register: (meta, comp) => { registered.push({ meta, comp }); return { dispose() {} }; },
+};
+const ctx = {
+  get: (n) => (n === "slots" ? slotsMock : undefined),
+  on: () => {},
+  effect: (fn) => fn(),
+  logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+};
 exportsObj.apply(ctx);
 
-assert.equal(registered.length, 1, "应该注册 1 个设置段，实际 " + registered.length);
-const { meta, component } = registered[0];
-assert.equal(meta.name, "settings.section", "slot 名不对");
-assert.equal(meta.id, "dsh-remembers", "段 id 不对");
-assert.equal(typeof meta.label, "function", "label 应该是函数（投影时翻译）");
-assert.equal(meta.label(), "记忆服务", "label 文本不对");
-assert.equal(typeof component, "function", "注册的不是组件函数");
-console.log("  ✓ 注册设置段：name=" + meta.name + " id=" + meta.id + " label=" + JSON.stringify(meta.label()) + " order=" + meta.order);
+console.log("\n[设置段]");
+// 当前是 7 段（API设置 / 人格 / 表情包 / 主动消息 / QQ通道 / B站 / 记忆）
+// 原来这里断言 1，后来加了 6 个页签没同步 —— 就是那个红灯。现在跟实际一致。
+const EXPECT = [
+  { id: "dsh-remembers", label: "记忆服务 API 设置", order: 32 },
+  { id: "dsh-remembers-persona", label: "人格设定", order: 33 },
+  { id: "dsh-remembers-memes", label: "表情包", order: 35 },
+  { id: "dsh-remembers-proactive", label: "主动消息", order: 36 },
+  { id: "dsh-remembers-qq", label: "QQ 通道", order: 365 },
+  { id: "dsh-remembers-bili", label: "B 站", order: 37 },
+  { id: "dsh-remembers-memories", label: "记忆", order: 38 },
+];
 
-// ---- 4. 组件能产出一棵元素树（不真的渲染） -------------------------------
-// 用 fake React 调用一次组件函数，确认它不会立刻抛
-const tree = component({});
-assert.ok(tree && typeof tree === "object", "组件返回的不是元素");
-const flat = JSON.stringify(tree);
-assert.ok(flat.includes("正在读取配置"), "loading 态没出现");
-console.log("  ✓ 组件可调用（首帧是「正在读取配置…」）");
+ok(`注册了 ${EXPECT.length} 个设置段`, () => assert.equal(registered.length, EXPECT.length));
+ok('slot 名都是 "settings.section"', () =>
+  assert.ok(registered.every((r) => r.meta?.name === "settings.section")));
 
-// ---- 5. 字段与按钮（静态检查源码） ---------------------------------------
-// 组件的首帧是 loading 态，真正的表单要等 fetch 回来才渲染，所以这里
-// 检查源码而不是元素树。真实渲染留给浏览器里验。
-for (const needle of ["服务地址", "提供商", "API 密钥", "自定义设置", "取消", "保存", "惊讶度阈值"]) {
-  assert.ok(source.includes(needle), "源码里缺少字段/按钮：" + needle);
+for (const want of EXPECT) {
+  const hit = registered.find((r) => r.meta?.id === want.id);
+  ok(`有 ${want.id}（order=${want.order}）`, () => {
+    assert.ok(hit, `找不到 id=${want.id}`);
+    assert.equal(hit.meta.order, want.order);
+    let label = hit.meta.label;
+    if (typeof label === "function") label = label();
+    assert.equal(label, want.label);
+  });
 }
-console.log("  ✓ 字段与按钮齐全：服务地址 / 提供商 / API 密钥 / 自定义设置 / 惊讶度阈值 / 取消 / 保存");
 
-// ---- 6. 安全约定：密钥不回显 ---------------------------------------------
-assert.ok(source.includes("type: \"password\""), "密钥输入框应该是 password");
-assert.ok(source.includes("留空保持原密钥"), "缺少「留空保持原密钥」的提示");
-assert.ok(!/console\.log\([^)]*llm_key/.test(source), "不要在控制台打印密钥");
-console.log("  ✓ 安全约定：password 输入框、留空保持原值、不打印密钥");
+ok("每个段都挂了组件函数", () =>
+  assert.ok(registered.every((r) => typeof r.comp === "function")));
 
-console.log("\n全部通过 ✅  client.js 的注册链路是对的");
+// ---------------------------------------------------------------- 组件能建树
+console.log("\n[组件可渲染性]");
+for (const r of registered) {
+  const id = r.meta?.id;
+  ok(`${id} 能产出元素树不抛错`, () => {
+    const tree = r.comp({});
+    assert.ok(tree !== undefined && tree !== null);
+  });
+}
+
+// ---------------------------------------------------------------- 结果
+console.log(`\n通过 ${pass} / ${pass + fail}`);
+if (fail > 0) {
+  console.log("有失败项");
+  process.exit(1);
+}

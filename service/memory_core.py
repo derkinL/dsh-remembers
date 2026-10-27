@@ -172,6 +172,10 @@ class Hit:
 # 存储
 # ---------------------------------------------------------------------------
 
+# 注入事件 / 系统消息用的假昵称，一律不当作真人昵称入库。
+_NON_PERSON_NICKS = {"", "系统", "系统消息", "System", "system", "SYSTEM"}
+
+
 class MemoryStore:
     def __init__(self, db_path: str | Path, schema_path: str | Path | None = None):
         self.path = str(db_path)
@@ -236,6 +240,34 @@ class MemoryStore:
                 self.conn.execute("ALTER TABLE profiles ADD COLUMN manual_profile TEXT DEFAULT ''")
             except Exception:
                 pass
+
+        # ---------- 迁移：2026-10-27 补齐「代码在用但 schema 没写」的列 ----------
+        # 线上库这些列都有（历史手工 ALTER 出来的），schema.sql 却一直落后。
+        # 换机器 / 重置库时，第一个 /persona 请求就会 no such column: self_image。
+        # 这里补幂等 ALTER：老库打开时自动补上，新库建出来就是全的。
+        for table, specs in [
+            ("persona", [("self_image", "TEXT DEFAULT ''"),
+                         ("identity", "TEXT DEFAULT ''"),
+                         ("user_profile", "TEXT DEFAULT ''")]),
+            ("state", [("game_score", "INTEGER DEFAULT 0"),
+                       ("game_plays", "INTEGER DEFAULT 0"),
+                       ("chat_since_wake", "INTEGER DEFAULT 0")]),
+            ("activity_log", [("thought", "TEXT DEFAULT ''")]),
+            ("slang", [("meaning", "TEXT DEFAULT ''"),
+                       ("example", "TEXT DEFAULT ''"),
+                       ("source", "TEXT DEFAULT 'chat'"),
+                       ("memory_id", "INTEGER")]),
+        ]:
+            have = cols(table)
+            if not have:
+                continue          # 表还不存在（老版本库），schema 建完再看
+            for col, decl in specs:
+                if col in have:
+                    continue
+                try:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+                except Exception:
+                    pass
 
         # 索引：按 scope 查是最热的路径
         for idx, table, col in [
@@ -418,7 +450,10 @@ class MemoryStore:
         nick = str(getattr(item, "nickname", "") or "").strip()
         # QQ 有时不给昵称，直接把号码当昵称发下来。这种"昵称"没有信息量，
         # 存进去还会把群聊里学到的好名字覆盖掉（profile_upsert 的 name 是非空即覆盖）。
-        if nick and nick == uid:
+        # 「系统」这类是注入事件的假昵称，不是真人；存进去会把真实昵称覆盖掉
+        # （profile_upsert 的 name 是非空即覆盖）。2026-10-27 线上实测：owner 的
+        # profiles.name 被写成了「系统」。
+        if nick in _NON_PERSON_NICKS or nick == uid:
             nick = ""
 
         row = self.conn.execute("SELECT profile FROM profiles WHERE user_id=?", (uid,)).fetchone()
@@ -1188,15 +1223,26 @@ class MemoryStore:
     def slang_add(self, phrase: str, n: int = 1, meaning: str = "",
                   example: str = "", source: str = "chat",
                   memory_id: int | None = None) -> None:
-        """记一个词/短语。只收短语（<=12 字），整句和测试文本丢弃。"""
+        """记一个词/短语。
+
+        口头禅是「短词」，不是句子。原来门槛只有「<=12 字」，结果
+        「你爹现在在调试你」「上上下下左右左右BABA」这种整句全进来了。
+        2026-10-27 收紧：<=8 字、不含任何标点空白、不是纯数字。
+        """
         import re as _re
         phrase = str(phrase).strip()[:20]
-        if not phrase or len(phrase) > 12:
+        if not phrase or len(phrase) < 2 or len(phrase) > 8:
             return
-        # 整句/测试文本/图片占位 → 不要
+        # 白名单：只允许汉字 / 字母 / 数字。
+        # 标点、空格、#%&@ 这类符号一律不是「词」——黑名单永远漏（#sl、
+        # 好感度增加20% 就是这么漏进来的）。
+        if not _re.fullmatch(r"[\u4e00-\u9fa5A-Za-z0-9]+", phrase):
+            return
+        # 纯数字（QQ号/UID/BV号）没有语义
+        if _re.search(r"^\d+$", phrase):
+            return
+        # 测试文本/图片占位
         if _re.search(r"(测试|重启后|\[图片|^（|^\()", phrase):
-            return
-        if _re.search(r"[。？！]$", phrase):
             return
         now = time.time()
         self.conn.execute(
@@ -1217,10 +1263,17 @@ class MemoryStore:
         )
         self.conn.commit()
 
-    def slang_list(self, limit: int = 15, only_repeated: bool = False) -> list[dict]:
+    def slang_list(self, limit: int = 15, only_repeated: bool = False,
+                   min_count: int = 2, require_meaning: bool = False) -> list[dict]:
+        """only_repeated=True 时只返回「够 min_count 次」或「她主动学的」。
+
+        口头禅的门槛是 6 次（2026-10-27 定）：说一两次不算口头禅。
+        """
         sql = "SELECT phrase, count, meaning, example, source FROM slang"
         if only_repeated:
-            sql += " WHERE count >= 2 OR source = 'taught'"
+            sql += f" WHERE (count >= {max(1, int(min_count))} OR source = 'taught')"
+            if require_meaning:
+                sql += " AND meaning IS NOT NULL AND meaning != ''"
         sql += " ORDER BY count DESC, last_seen DESC LIMIT ?"
         rows = self.conn.execute(sql, (max(1, min(int(limit), 50)),)).fetchall()
         return [{
@@ -1228,6 +1281,19 @@ class MemoryStore:
             "meaning": r["meaning"] or "", "example": r["example"] or "",
             "source": r["source"] or "chat",
         } for r in rows]
+
+    def slang_pending(self, min_count: int = 6, limit: int = 4) -> list[dict]:
+        """够次数、但还不知道什么意思的词 —— 该去问老大了。
+
+        口头禅的意义必须问出来才算学会。这些词只计数，不进提示词的「你会说」。
+        """
+        rows = self.conn.execute(
+            "SELECT phrase, count FROM slang WHERE count >= ?"
+            " AND (meaning IS NULL OR meaning = '') AND source != 'taught'"
+            " ORDER BY count DESC, last_seen DESC LIMIT ?",
+            (max(1, int(min_count)), max(1, min(int(limit), 20))),
+        ).fetchall()
+        return [{"phrase": r["phrase"], "count": int(r["count"])} for r in rows]
 
     def affinity_get(self, user_id: str) -> float:
         r = self.conn.execute("SELECT score FROM affinity WHERE user_id=?", (str(user_id),)).fetchone()

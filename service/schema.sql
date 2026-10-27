@@ -49,6 +49,10 @@ CREATE TABLE IF NOT EXISTS persona (
   id               INTEGER PRIMARY KEY CHECK (id = 1),
   constitution     TEXT NOT NULL DEFAULT '',
   self_model       TEXT NOT NULL DEFAULT '',
+  -- 2026-10-27 补：这三列代码早就在用了，schema 里一直没有（线上靠手工 ALTER 活着）
+  self_image       TEXT NOT NULL DEFAULT '',   -- 她的形象（给文生图/自拍用）
+  identity         TEXT NOT NULL DEFAULT '',   -- 结构化身份卡（JSON）
+  user_profile     TEXT NOT NULL DEFAULT '',   -- 手编的「老大画像」
   updated_at       REAL NOT NULL DEFAULT 0,
   self_updated_at  REAL NOT NULL DEFAULT 0
 );
@@ -125,7 +129,11 @@ CREATE TABLE IF NOT EXISTS state (
   arousal          REAL NOT NULL DEFAULT 0.5,
   activity         TEXT NOT NULL DEFAULT '',
   weather          TEXT NOT NULL DEFAULT '',
-  weather_updated  REAL NOT NULL DEFAULT 0
+  weather_updated  REAL NOT NULL DEFAULT 0,
+  -- 2026-10-27 补：get_state() 一直在读这三列
+  game_score       INTEGER NOT NULL DEFAULT 0,
+  game_plays       INTEGER NOT NULL DEFAULT 0,
+  chat_since_wake  INTEGER NOT NULL DEFAULT 0
 );
 INSERT OR IGNORE INTO state(id) VALUES (1);
 
@@ -147,7 +155,9 @@ CREATE TABLE IF NOT EXISTS activity_log (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   ts         REAL NOT NULL,
   kind       TEXT NOT NULL,
-  detail     TEXT NOT NULL DEFAULT ''
+  detail     TEXT NOT NULL DEFAULT '',
+  -- 2026-10-27 补：活动列表要显示「当时的想法」
+  thought    TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_activity_ts ON activity_log(ts);
 
@@ -158,7 +168,12 @@ CREATE TABLE IF NOT EXISTS slang (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   phrase     TEXT NOT NULL UNIQUE,
   count      INTEGER NOT NULL DEFAULT 1,
-  last_seen  REAL NOT NULL DEFAULT 0
+  last_seen  REAL NOT NULL DEFAULT 0,
+  -- 2026-10-27 补：口头禅必须带意思才算学会
+  meaning    TEXT NOT NULL DEFAULT '',
+  example    TEXT NOT NULL DEFAULT '',
+  source     TEXT NOT NULL DEFAULT 'chat',   -- chat=听来的 / taught=老大教的
+  memory_id  INTEGER
 );
 
 -- ---------------------------------------------------------------------------

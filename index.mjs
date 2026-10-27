@@ -218,7 +218,7 @@ function pickExamples(pool, n) {
   return a.slice(0, n);
 }
 
-function renderState(state, prev, selfModel, proactive) {
+function renderState(state, prev, selfModel, proactive, thinkCn) {
   if (!state) return { text: "", hashes: prev || {} };
   const hashes = { ...(prev || {}) };
   const blocks = [];
@@ -322,6 +322,36 @@ function renderState(state, prev, selfModel, proactive) {
     }
   }
 
+  // ---------- 6.5 学到的词 / 还没搞懂意思的词 ----------
+  // 以前只有 recordSlang 在写，提示词里从不读 —— 攒了一堆词她一个没学会。
+  // 现在两头都接上：会说的自然带出来，不懂的自己找机会问。
+  {
+    const learned = (Array.isArray(state.slang_learned) ? state.slang_learned : [])
+      .filter((s) => s && s.phrase && String(s.meaning || "").trim());
+    const pending = Array.isArray(state.slang_pending) ? state.slang_pending : [];
+    if (learned.length) {
+      const words = learned.slice(0, 4)
+        .map((s) => `${s.phrase}（${String(s.meaning).slice(0, 24)}）`)
+        .join("；");
+      const lh = hash("learned:" + learned.map((s) => s.phrase).join(","));
+      if (hashes.slangLearned !== lh) {
+        hashes.slangLearned = lh;
+        blocks.push("【你会跟着老大说的词】" + words
+          + "。用的时候要合场合，别为了用而硬塞。");
+      }
+    }
+    if (pending.length) {
+      const names = pending.slice(0, 3).map((s) => `${s.phrase}×${s.count}`).join("、");
+      const ph = hash("pending:" + pending.map((s) => s.phrase).join(","));
+      if (hashes.slangPending !== ph) {
+        hashes.slangPending = ph;
+        blocks.push("【这些词老大说了好几次，你还没搞懂意思】" + names
+          + "。想问就找个自然的时机问一句；搞懂了立刻用 learn_word 把意思记下来"
+          + "（必须带 meaning，不然不算学会）。");
+      }
+    }
+  }
+
   // ---------- 7. 关系阶段（变了才加） ----------
   if (state.stage && state.stage.name) {
     const stText = `和老大是「${state.stage.name}」阶段。`;
@@ -330,6 +360,12 @@ function renderState(state, prev, selfModel, proactive) {
       hashes.stage = stHash;
       blocks.push(stText);
     }
+  }
+
+  // ---------- 7.5 思考链语言（每轮都提醒） ----------
+  // 系统提示词里那条权重不够（实测模型照旧英文推理），所以每轮在消息里再钉一次。
+  if (thinkCn) {
+    blocks.push("思考链（reasoning）用中文写。别用英文推理。");
   }
 
   // ---------- 8. 表情包频率（每轮都带） ----------
@@ -695,7 +731,8 @@ function renderState(state, prev, selfModel, proactive) {
     try {
       const st = await fetchState();
       const st2 = stateFor(agent.session);
-      const r = renderState(st, st2.stateHashes || {}, persona.selfModel || "", persona.proactive);
+      const r = renderState(st, st2.stateHashes || {}, persona.selfModel || "", persona.proactive,
+        Boolean(persona.data?.identity && (() => { try { return JSON.parse(persona.data.identity).think_cn; } catch { return false; } })()));
       st2.stateHashes = r.hashes;
       if (!r.text) return decision;      // 这轮什么都没变、连时间都没有 → 不塞
       log("state_injected", { session: st2.id, chars: r.text.length });
@@ -722,7 +759,10 @@ function renderState(state, prev, selfModel, proactive) {
       }
       return;
     }
-    if (event?.type === "user/message" || event?.type === "assistant/message") {
+    // 2026-10-27：原来这里无条件把整条消息（含 reasoning 全文、工具参数）打进
+    // journal —— 24 小时 500 多行、约 300KB，既撑爆日志也泄露隐私。
+    // 要排查再开 logRequests（CMEM_LOG=1）。
+    if (config.logRequests && (event?.type === "user/message" || event?.type === "assistant/message")) {
       try {
         console.log("[dsh-remembers-debug] msgdata=" + JSON.stringify(event.data).slice(0, 600));
       }
@@ -1113,11 +1153,12 @@ async function scanSeen() {
           + "用你自己的语气写，短一点，别像客服。"
           + "有想说的就留一句（弹幕戳到你了、看完有不同意见、想吐槽标题党都算），"
           + "一天一两条很正常；真没话说就不评，别硬凑。"
-          + "发之前可以先 dry 一次看看效果。",
+          + "**直接发就行，不用带 dry** —— dry 只是预览，带了它那一步不会真发出去，"
+          + "看完预览满意还得把 dry 去掉再调一次。",
         parameters: {
           bvid: { type: "string", required: true, description: "BV 号，比如 BV1DubxzVEPB" },
           message: { type: "string", required: true, description: "评论内容（你自己的话，短一点）" },
-          dry: { type: "boolean", description: "true = 只预览不真发" },
+          dry: { type: "boolean", description: "只预览不真发。不带就直接发出去；带了预览完记得去掉再调一次" },
         },
         output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: String(v?.output || v?.error || JSON.stringify(v)) }] },
         execute: async (a) => {
@@ -1364,9 +1405,11 @@ async function scanSeen() {
         name: "learn_word",
         description:
           "老大教你一个新词/梗/黑话时，用它记下来。"
-          + "什么时候用：他说「记住这个词 X」「X 是这个意思」「你知道 X 吗」或者明显在解释一个你不懂的词。"
-          + "记完你就懂什么意思、什么时候用；以后可以学着他讲，别乱用在不对的场合。"
-          + "只记词本身（<=12 字），别把整句话塞进来。",
+          + "什么时候用：他说「记住这个词 X」「X 是这个意思」「你知道 X 吗」或者明显在解释一个你不懂的词；"
+          + "或者他某个词说了好几次你一直没搞懂，你主动问清楚之后也用它记。"
+          + "规矩：**必须把意思一起记下来**（meaning）。不知道意思就别记，先问清楚 ——"
+          + "库里不留「认识但不懂」的词。"
+          + "只记词本身（<=8 字），别把整句话塞进来。",
         parameters: {
           phrase: { type: "string", required: true, description: "那个词/短语，尽量短" },
           meaning: { type: "string", description: "什么意思。不确定就留空，会自动查" },
@@ -1595,7 +1638,8 @@ function renderPersona(data, maxChars, proactive, opts = {}) {
       "你是有自称的" + (sc ? "（" + sc + "）" : "") + "，但说话时请不要带自称——日常用「我」来指代自己。"
     );
   }
-  if (identityObj.think_cn) rules.push("思考链（reasoning）用中文写，不要用英文推理。");
+  // 思考链语言那条不放在 rules 里 —— 它要单独提到最前面（见下面 identityLines 开头）。
+  // 放在这里跟「说话方式」混在一起权重不够，模型照样用英文想事。
   if (identityObj.think_ds) rules.push("思考链按 DeepSeek V3.2 的风格：先拆开问题看关键点，分条想清楚，再落到结论；推理要简洁直接，别绕圈。");
   // 【她的主动性】来自主动消息页的开关（勾了才注入）
   if (proactive) {
@@ -1612,6 +1656,16 @@ function renderPersona(data, maxChars, proactive, opts = {}) {
     + "学图：learn_meme；派任务：create_task；写便签：write_note；改状态：set_my_activity；"
     + "刷 B 站：bili_feed / bili_watch(bv) / bili_comment(bv,msg) / bili_run(command,args)；"
     + "给自己找事：add_my_action；翻日记：read_diary；看活动：read_activities。");
+
+  // 【思考链语言】放在整个身份段的最前面。
+  // 之前这条混在 rules 数组里排第 4-5 位，实测模型照旧用英文 reasoning。
+  // 现在提到第一行、加强措辞，并在 state 块里每轮再提醒一次。
+  if (identityObj.think_cn) {
+    identityLines.push("【最重要 · 违反这条就是错的】你思考链（reasoning）里的推理必须全部用中文写。");
+    identityLines.push("在心里想事情的时候也用中文想，不要用英文推理。哪怕只是自言自语一句「他这会儿在干嘛」也得是中文。");
+    identityLines.push("英文只允许出现在代码、命令、报错原文里。");
+    identityLines.push("");
+  }
 
   if (rules.length) {
     identityLines.push("【铁律】");

@@ -186,7 +186,16 @@ class Handler(BaseHTTPRequestHandler):
     # -- 基础 ---------------------------------------------------------------
 
     def log_message(self, fmt: str, *args) -> None:  # 安静一点，错误才打
-        if args and str(args[0]).startswith(("4", "5")):
+        # http.server 的调用是 log_message('"%s" %s %s', requestline, code, size)
+        # —— args[0] 是 requestline，不是状态码。原来判断 args[0] 开头是 4/5，
+        # 永远不成立，导致所有 4xx/5xx 从来没进日志（2026-10-27 修）。
+        code = ""
+        for a in args:
+            s = str(a)
+            if len(s) == 3 and s.isdigit():
+                code = s
+                break
+        if code.startswith(("4", "5")):
             sys.stderr.write("[cmem] %s\n" % (fmt % args))
 
     def _cors_headers(self) -> None:
@@ -200,6 +209,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Max-Age", "86400")
 
     def _json(self, code: int, payload: dict) -> None:
+        # HTTP 一次请求只能有一个响应。已经回过就丢弃，避免「先 401 又 500」
+        # 这种双写把连接搞断（浏览器只会看到 Failed to fetch）。
+        if getattr(self, "_responded", False):
+            return
+        self._responded = True
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -256,6 +270,29 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:
+        self._handle(self._do_GET)
+
+    def do_POST(self) -> None:
+        self._handle(self._do_POST)
+
+    def _handle(self, fn) -> None:
+        """所有路由的统一兜底。
+
+        原来 25 个 GET + 3 个 POST 分支是裸的：store 一抛异常，BaseHTTPRequestHandler
+        就在 handle_one_request 里把连接断掉，前端只看到 "Failed to fetch"，
+        根本不知道为什么。现在统一包一层，异常变 500 JSON。
+        """
+        try:
+            fn()
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+            if not getattr(self, "_responded", False):
+                try:
+                    self._json(500, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+                except Exception:
+                    pass
+
+    def _do_GET(self) -> None:
         parsed = urlparse(self.path)
         path, query = parsed.path.rstrip("/") or "/", parse_qs(parsed.query)
         if path == "/health":
@@ -287,6 +324,7 @@ class Handler(BaseHTTPRequestHandler):
                      "webp": "image/webp", "gif": "image/gif"}.get(ext, "application/octet-stream")
             with open(fp, "rb") as f:
                 data = f.read()
+            self._responded = True
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
@@ -307,7 +345,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/persona/user":
             self._json(200, {"user_profile": store.get_user_profile()})
         elif path == "/public/status":
-            self._json(200, _public_status())
+            # 这条原来是 _public_status()，但那个函数从来没定义过（NameError 必崩），
+            # 而且前端没有任何调用方。2026-10-27 直接摘掉，别留一个必然报错的接口。
+            self._json(404, {"ok": False, "error": "not found"})
         elif path == "/bili/cfg":
             self._json(200, self._load_bili_whale())
         elif path == "/memories":
@@ -390,9 +430,16 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 st["affinity"] = 0.0
             try:
-                st["slang_learned"] = store.slang_list(limit=6, only_repeated=True)
+                # 只给「说了 6 次以上」或「她主动学的」——一两次的碎句不算口头禅
+                st["slang_learned"] = store.slang_list(
+                    limit=6, only_repeated=True, min_count=6, require_meaning=True)
             except Exception:
                 st["slang_learned"] = []
+            try:
+                # 够 6 次但还没搞懂意思的，提示她去问
+                st["slang_pending"] = store.slang_pending(6, 4)
+            except Exception:
+                st["slang_pending"] = []
             hour = None
             try:
                 raw_hour = (query.get("hour") or [None])[0]
@@ -447,7 +494,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._json(404, {"ok": False, "error": "not found"})
 
-    def do_POST(self) -> None:
+    def _do_POST(self) -> None:
         path = urlparse(self.path).path.rstrip("/") or "/"
         if path == "/ingest":
             self._guard(lambda: self._ingest())
@@ -663,6 +710,7 @@ class Handler(BaseHTTPRequestHandler):
         lines = [json.dumps(manifest, ensure_ascii=False)]
         lines.extend(json.dumps(r, ensure_ascii=False) for r in records)
         body = ("\n".join(lines) + "\n").encode("utf-8")
+        self._responded = True
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
         self.send_header("Content-Disposition", 'attachment; filename="memories.jsonl"')
@@ -1332,13 +1380,14 @@ class Handler(BaseHTTPRequestHandler):
         manual = None
         if "manual_profile" in body:
             manual = str(body.get("manual_profile") or "")
-        store.profile_upsert(
-            uid,
-            name=str(body.get("name") or ""),
-            profile=str(body.get("profile") or ""),
-            avatar=str(body.get("avatar") or ""),
-            manual_profile=manual,
-        )
+        with _lock:
+            store.profile_upsert(
+                uid,
+                name=str(body.get("name") or ""),
+                profile=str(body.get("profile") or ""),
+                avatar=str(body.get("avatar") or ""),
+                manual_profile=manual,
+            )
         self._json(200, {"ok": True, "profile": store.profile_get(uid)})
 
     def _set_proactive(self) -> None:
@@ -1574,6 +1623,73 @@ class Handler(BaseHTTPRequestHandler):
             _json.dump(raw, f, ensure_ascii=False, indent=2)
         self._json(200, self._bili_tools())
 
+    def _bili_aid_from_cache(self, bvid: str) -> str:
+        """从 CLI 的 api-cache.json 里捞 aid。
+
+        为什么不直接 recon：recon 要调一次 view API，撞上限流就是
+        「HTTP 412 —— 已熔断 5 分钟」，整个 aid 查询直接失败。
+        而 feed/debrief 早就把 view 的结果缓存到本地了，aid 就在里面。
+        先查缓存既快又不吃限流额度。
+        """
+        import json as _json
+        import os as _os
+        home = _os.environ.get("HOME", "/home/ubuntu")
+        cache_path = _os.path.join(home, ".bili-ai", "api-cache.json")
+        try:
+            cache = _json.load(open(cache_path, encoding="utf-8"))
+        except Exception:
+            return ""
+        for k, v in (cache or {}).items():
+            if bvid not in str(k):
+                continue
+            try:
+                d = ((v.get("data") or {}).get("data") or {})
+                aid = d.get("aid")
+                if aid:
+                    return str(aid)
+            except Exception:
+                continue
+        return ""
+
+    def _bili_failure_hint(self, code: str, stderr: str) -> tuple:
+        """把 CLI 的错误码翻成她看得懂的话 + 下一步该干嘛。
+
+        CLI 挂掉时 stderr 只剩一堆 `at ModuleJob.run(...)`，真正的错误码藏在
+        里面的 `code: 'BILI_TRAFFIC_PAUSED'`。原样丢给模型只会让她瞎猜、反复重试
+        （每撞一次都把熔断时间续上）。所以这里翻译成人话 + 给出「等多久」。
+        """
+        import json as _json
+        import os as _os
+        import time as _t
+        if code == "BILI_TRAFFIC_PAUSED":
+            home = (_os.environ.get("BILI_SHARED_HOME")
+                    or ("/home/ubuntu" if _os.path.isdir("/home/ubuntu/.bili-ai")
+                        else _os.environ.get("HOME", "/home/ubuntu")))
+            ban = _os.path.join(home, ".bili-ai", "api-ban.json")
+            left, why = 10, "风控"
+            try:
+                d = _json.load(open(ban, encoding="utf-8"))
+                until = float(d.get("until") or 0)
+                if until > 1e11:
+                    until /= 1000.0
+                left = max(1, int((until - _t.time()) // 60) + 1) if until else 10
+                why = str(d.get("why") or "风控")
+            except Exception:
+                pass
+            return (
+                f"B站还在风控暂停里（{why}），大约还要等 {left} 分钟。现在发不出去，"
+                "dry 预览也一样会被挡——不是你的内容有问题。",
+                f"别重试了，等 {left} 分钟之后再说。这期间可以干别的（写便签、"
+                "想好下次评论什么）；每撞一次都会把暂停时间续上。",
+            )
+        if "412" in (stderr or "") or code in ("BILI_BANNED", "BILI_RISK"):
+            return ("B站拒绝了这次请求（412 风控），是出口 IP 被限流，不是你写错了。",
+                    "等十几分钟再试，或者先去做别的。")
+        if code:
+            return (f"B站返回 {code}，评论没发出去。", "不是内容问题，先别重试；过一会儿再来。")
+        return ("评论没发出去，CLI 没给出明确原因。",
+                "把 stderr 原文告诉老大，别自己反复试。")
+
     def _post_bili_comment(self) -> None:
         """简化评论：只给 bvid + message，服务端自己查 aid 再发。"""
         import re as _re
@@ -1584,25 +1700,58 @@ class Handler(BaseHTTPRequestHandler):
         if not bvid or not msg:
             self._json(400, {"ok": False, "error": "bvid and message required"})
             return
-        # 1. 查 aid（recon 会输出 aid）
-        recon = self._run_bili(["recon", bvid], timeout=90)
-        out = (recon.get("stdout") or "") + (recon.get("stderr") or "")
-        m = _re.search(r"aid\D{0,4}(\d{3,})", out)
-        aid = m.group(1) if m else ""
+        # 1. 查 aid：先看本地缓存（不吃限流额度），缓存没有才 recon
+        aid = self._bili_aid_from_cache(bvid)
+        aid_src = "cache" if aid else ""
         if not aid:
-            self._json(200, {"ok": False, "error": "查不到 aid（可能被风控）", "raw": out[-300:]})
-            return
+            recon = self._run_bili(["recon", bvid], timeout=90)
+            out = (recon.get("stdout") or "") + (recon.get("stderr") or "")
+            m = _re.search(r"aid\D{0,4}(\d{3,})", out)
+            aid = m.group(1) if m else ""
+            aid_src = "recon" if aid else ""
+            if not aid:
+                self._json(200, {
+                    "ok": False,
+                    "error": "查不到 aid",
+                    "hint": "缓存里没有这条视频，recon 又被限流了。"
+                            "先用 bili_watch 看一遍（会缓存 view 结果），再回来评论。",
+                    "raw": out[-300:],
+                })
+                return
         # 2. 发（或 dry）
         args = ["comment", "--bvid", bvid, "--oid", aid, "--message", msg]
         args.append("--dry" if dry else "--go")
         res = self._run_bili(args, timeout=120)
-        self._json(200, {
+        _stderr = res.get("stderr") or ""
+        payload = {
             "ok": res.get("ok", False),
             "aid": aid,
+            "aid_src": aid_src,
             "dry": dry,
             "output": (res.get("stdout") or "")[-1500:],
-            "stderr": (res.get("stderr") or "")[-300:],
-        })
+        }
+        if not payload["ok"]:
+            # 把 CLI 的错误码翻成人话，别让模型去读堆栈
+            _code = ""
+            _m = _re.search(r"code:\s*'([A-Z_]+)'", _stderr)
+            if _m:
+                _code = _m.group(1)
+            _why, _next = self._bili_failure_hint(_code, _stderr)
+            payload["code"] = _code
+            payload["error"] = _why
+            payload["next"] = _next
+            payload["stderr"] = _stderr[-300:]
+            self._json(200, payload)
+            return
+        if dry:
+            # 现场踩过：只写了「可以先 dry 一次看看效果」，结果她 dry 完就停了，
+            # 以为任务完成了。所以预览结果里必须把下一步写死。
+            payload["next"] = (
+                "这只是预览（dry），还没发出去。"
+                "确认内容没问题的话，把 dry 去掉（或设成 false）再调一次 bili_comment，"
+                "同样的 bvid 和 message，才会真的发出去。"
+            )
+        self._json(200, payload)
 
     def _public_toggle(self) -> None:
         """开/关公网入口（调 root 脚本）。"""
@@ -1774,22 +1923,29 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"ok": True, "chars": len(text)})
 
     def _set_bili_cfg(self) -> None:
-        """设置 bili-whale 的任意配置字段（path 数组 + value）。"""
+        """设置 bili-whale 的任意配置字段（path 数组 + value）。
+
+        整段必须加锁：这是「读整份文件 → 改一个字段 → 写回整份」。
+        前端保存时是并发发 8 个请求（like/dislike/night/persona…），
+        不加锁的话它们各读各的旧副本、各写各的，互相覆盖 ——
+        现场表现就是「保存完刷新，只有最后一两项还在，UID 和喜好全没了」。
+        """
         import json as _json
         body = self._body()
         path = body.get("path")
         if not isinstance(path, list) or not path:
             self._json(400, {"ok": False, "error": "path (array) required"})
             return
-        bw = self._load_bili_whale()
-        cur = bw
-        for k in path[:-1]:
-            if not isinstance(cur.get(k), dict):
-                cur[k] = {}
-            cur = cur[k]
-        cur[path[-1]] = body.get("value")
-        with open(self.BILI_WHALE_CFG, "w", encoding="utf-8") as f:
-            _json.dump(bw, f, ensure_ascii=False, indent=2)
+        with _lock:
+            bw = self._load_bili_whale()
+            cur = bw
+            for k in path[:-1]:
+                if not isinstance(cur.get(k), dict):
+                    cur[k] = {}
+                cur = cur[k]
+            cur[path[-1]] = body.get("value")
+            with open(self.BILI_WHALE_CFG, "w", encoding="utf-8") as f:
+                _json.dump(bw, f, ensure_ascii=False, indent=2)
         self._json(200, {"ok": True})
 
     def _set_bili_owner(self) -> None:
@@ -1798,10 +1954,12 @@ class Handler(BaseHTTPRequestHandler):
         body = self._body()
         mid = str(body.get("mid") or "").strip()
         name = str(body.get("name") or "").strip()
-        bw = self._load_bili_whale()
-        bw["owner"] = {"mid": mid, "name": name}
-        with open(self.BILI_WHALE_CFG, "w", encoding="utf-8") as f:
-            _json.dump(bw, f, ensure_ascii=False, indent=2)
+        # 同样要加锁：不然会被并发的 /bili/cfg 写成旧副本覆盖掉
+        with _lock:
+            bw = self._load_bili_whale()
+            bw["owner"] = {"mid": mid, "name": name}
+            with open(self.BILI_WHALE_CFG, "w", encoding="utf-8") as f:
+                _json.dump(bw, f, ensure_ascii=False, indent=2)
         self._json(200, self._bili_status())
 
     def _bili_login(self) -> None:
@@ -2202,8 +2360,17 @@ class Handler(BaseHTTPRequestHandler):
                     _ex = str(_info.get("example") or "")
                 except Exception:
                     pass
+            # 老大教的词必须带意义：LLM 也没生成出来的话，这条不算学会 ——
+            # 宁可让她回头再问一次，也不要在库里留一个「认识但不懂」的词。
+            if _src == "taught" and not _mn:
+                self._json(400, {
+                    "ok": False,
+                    "error": "meaning_required",
+                    "hint": "这个词还没搞懂意思。先问清老大这词什么意思，再带着 meaning 记一次。",
+                })
+                return
             store.slang_add(_ph, int(body.get("count") or 1), _mn, _ex, _src)
-        self._json(200, {"ok": True})
+        self._json(200, {"ok": True, "phrase": _ph, "meaning": _mn})
 
     def _post_affinity(self) -> None:
         body = self._body()
@@ -2706,7 +2873,8 @@ class Handler(BaseHTTPRequestHandler):
         while len("\n".join(lines)) > 4000 and len(lines) > 1:
             lines.pop(0)
         new = "\n".join(lines)
-        store.set_self_model(new)
+        with _lock:
+            store.set_self_model(new)
         self._json(200, {"ok": True, "line": line, "chars": len(new)})
 
     def _episode(self) -> None:

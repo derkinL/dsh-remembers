@@ -82,6 +82,9 @@ window.__ModuleLoader__.load({
         const res = await fetch(serviceUrl() + path, {
           ...(init || {}),
           headers: { "Content-Type": "application/json; charset=utf-8", ...(init && init.headers) },
+          // 2026-10-27：原来没有超时。服务卡住时整页一直转圈、按钮点不动，
+          // 也看不出是卡了还是慢。给一个上限，超时就当请求失败、页面给出错误。
+          signal: (init && init.signal) || AbortSignal.timeout(20000),
         });
         const text = await res.text();
         let data = null;
@@ -2056,16 +2059,21 @@ window.__ModuleLoader__.load({
                 }
               } catch (e) { /* UID 失败不影响主配置 */ }
 
-                await Promise.all([
-                  call("/bili/cfg", { method: "POST", body: JSON.stringify({ path: ["preferences", "like"], value: Array.isArray(f.like) ? f.like : [] }) }),
-                  call("/bili/cfg", { method: "POST", body: JSON.stringify({ path: ["preferences", "dislike"], value: Array.isArray(f.dislike) ? f.dislike : [] }) }),
-                  call("/bili/cfg", { method: "POST", body: JSON.stringify({ path: ["night", "skipChance"], value: Number(f.skipChance) || 0 }) }),
-                  call("/bili/cfg", { method: "POST", body: JSON.stringify({ path: ["night", "maxVideos"], value: Number(f.maxVideos) || 6 }) }),
-                  call("/bili/cfg", { method: "POST", body: JSON.stringify({ path: ["night", "minGapMin"], value: Number(f.minGapMin) || 10 }) }),
-                  call("/bili/cfg", { method: "POST", body: JSON.stringify({ path: ["persona", "name"], value: String(f.name || "") }) }),
-                  call("/bili/cfg", { method: "POST", body: JSON.stringify({ path: ["persona", "ownerTitle"], value: String(f.ownerTitle || "") }) }),
-                  call("/bili/cfg", { method: "POST", body: JSON.stringify({ path: ["persona", "selfClaim"], value: String(f.selfClaim || "") }) }),
-                ]);
+                // 串行保存，不要 Promise.all：
+                // 后端每个请求都是「读整份文件 → 改一个字段 → 写回整份」，
+                // 并发时它们互相覆盖，最后只有一项能留下（现场踩过，UID 和喜好全丢）。
+                for (const [p, v] of [
+                  [["preferences", "like"], Array.isArray(f.like) ? f.like : []],
+                  [["preferences", "dislike"], Array.isArray(f.dislike) ? f.dislike : []],
+                  [["night", "skipChance"], Number(f.skipChance) || 0],
+                  [["night", "maxVideos"], Number(f.maxVideos) || 6],
+                  [["night", "minGapMin"], Number(f.minGapMin) || 10],
+                  [["persona", "name"], String(f.name || "")],
+                  [["persona", "ownerTitle"], String(f.ownerTitle || "")],
+                  [["persona", "selfClaim"], String(f.selfClaim || "")],
+                ]) {
+                  await call("/bili/cfg", { method: "POST", body: JSON.stringify({ path: p, value: v }) });
+                }
                 setSavedAt(new Date().toLocaleTimeString());
                 const c = await call("/bili/cfg");
                 setBiliCfg(c);
@@ -2587,16 +2595,51 @@ window.__ModuleLoader__.load({
                 )
               : h("div", { style: S.muted }, notesList ? "还没记过便签" : "读取中…")
           ) : mode === "slang" ? (
-            slangList && slangList.length > 0
-              ? h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
-                  slangList.map((s, i) =>
-                    h("span", {
-                      key: i,
-                      style: { fontSize: 12, padding: "2px 10px", borderRadius: 999, border: "1px solid rgba(127,127,127,.25)", background: "rgba(64,132,255,.08)" },
-                    }, (s.phrase || s.word || "") + " ×" + (s.count || 0)),
-                  ),
-                )
-              : h("div", { style: S.muted }, slangList ? "还没学会什么词" : "读取中…")
+            (() => {
+              if (!slangList) return h("div", { style: S.muted }, "读取中…")
+              if (!slangList.length) return h("div", { style: S.muted }, "还没学会什么词")
+              const _has = (s) => String((s && s.meaning) || "").trim() !== ""
+              const known = slangList.filter(_has)
+              const pending = slangList.filter((s) => !_has(s) && (Number(s.count) || 0) >= 6)
+              const seeds = slangList.filter((s) => !_has(s) && (Number(s.count) || 0) < 6)
+              const chip = (s, warn) =>
+                h("span", {
+                  key: "w-" + s.phrase,
+                  style: {
+                    fontSize: 12, padding: "2px 10px", borderRadius: 999,
+                    border: "1px solid " + (warn ? "rgba(240,128,60,.5)" : "rgba(127,127,127,.25)"),
+                    background: warn ? "rgba(240,128,60,.10)" : "rgba(64,132,255,.08)",
+                  },
+                }, (s.phrase || s.word || "") + " ×" + (s.count || 0))
+              return h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+                known.length > 0
+                  ? h("div", null,
+                      h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 6 } }, "已学会（知道意思）"),
+                      h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+                        known.map((s) =>
+                          h("div", { key: "k-" + s.phrase, style: { ...S.card, padding: "8px 12px", borderLeft: "3px solid #2fa36b" } },
+                            h("div", { style: { fontSize: 13, fontWeight: 600 } }, (s.phrase || "") + "  ×" + (s.count || 0)),
+                            h("div", { style: { ...S.muted, fontSize: 12, marginTop: 2 } }, s.meaning),
+                            s.example ? h("div", { style: { ...S.muted, fontSize: 11, marginTop: 2 } }, "例：" + s.example) : null,
+                          ),
+                        ),
+                      ),
+                    )
+                  : null,
+                pending.length > 0
+                  ? h("div", null,
+                      h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 6 } }, "说够 6 次了还不知道意思（该去问老大）"),
+                      h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } }, pending.map((s) => chip(s, true))),
+                    )
+                  : null,
+                seeds.length > 0
+                  ? h("div", null,
+                      h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 6 } }, "候选（还没说够 6 次）"),
+                      h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } }, seeds.map((s) => chip(s, false))),
+                    )
+                  : null,
+              )
+            })()
           ) : mode === "tasks" ? (
             tasksList && tasksList.length > 0
               ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },

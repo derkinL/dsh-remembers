@@ -1,3 +1,6 @@
 # companion-memory —— 情感陪伴记忆服务
 # 零框架依赖：标准库 HTTP + numpy
 numpy>=1.26
+# QQ 通道面板 / 用户画像要读 cordis.patch.yml（server.py 里 3 处 import yaml）。
+# 原来没写进来，线上是手工装的 —— 换机器重装就会 500。
+pyyaml>=6

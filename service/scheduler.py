@@ -188,6 +188,13 @@ class Scheduler:
         return True
 
     def _pick_actions(self, mode: str, n: int = 1) -> list:
+        """从配置里抽 n 条动作。
+
+        过滤掉「刷 B 站」这类动作：B 站有自己独立的节奏（_tick_bili），
+        受 biliBrowsePerDay 限制。唤醒动作里再抽一次就会重复刷 ——
+        今天 08:00 和 08:01 隔一分钟刷了两回，一天刷到 8 次远超上限 3 次，
+        API 读取量翻倍，直接撞上 B站的 IP 级 412。
+        """
         """抽 n 条动作给她选（不重复）。"""
         try:
             cfg = self._proactive_cfg()
@@ -200,9 +207,13 @@ class Scheduler:
                 if isinstance(a, dict):
                     if a.get("enabled", True):
                         txt = str(a.get("text") or "").strip()
-                        if txt:
+                        # 「刷B站」类动作排除掉：B站有独立节奏（_tick_bili，受
+                        # biliBrowsePerDay 限制）。这里再抽一次就会重复刷 ——
+                        # 今天 08:00 和 08:01 隔一分钟刷两回，一天刷到 8 次，
+                        # API 读取翻倍，直接撞上 B站的 IP 级 412。
+                        if txt and "bili_feed" not in txt:
                             texts.append(txt)
-                elif isinstance(a, str) and a.strip():
+                elif isinstance(a, str) and a.strip() and "bili_feed" not in a:
                     texts.append(a)
             if not texts:
                 return ["随便待会儿"]
@@ -376,7 +387,12 @@ class Scheduler:
                 "time": int(time.time()),
                 "self_id": 0,
                 "silent": silent,
-                "sender": {"user_id": uid, "nickname": "系统"},
+                # synthetic：这条是系统自己醒的，不是老大发的。onebot 会据此把
+                # source.kind 标成 system:nudge，dsh-remembers 就不会当成用户原话。
+                "synthetic": True,
+                # 昵称留空：写「系统」会被 _touch_profile 存进 profiles.name，
+                # 把老大真实的画像名字覆盖掉（2026-10-27 线上实测踩过）。
+                "sender": {"user_id": uid, "nickname": ""},
             }
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(ev, ensure_ascii=False) + "\n")
