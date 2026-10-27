@@ -1994,11 +1994,46 @@ class Handler(BaseHTTPRequestHandler):
             return {"ok": False, "error": str(e), "items": []}
 
     def _bili_debrief(self, bv: str) -> dict:
-        """看懂一条视频（字幕+弹幕+热评+抽帧），返回摘要素材。"""
+        """看懂一条视频（字幕+弹幕+热评+抽帧），返回摘要素材。
+
+        除了截断的摘要，还把各文件的**完整路径**单独给出来：
+        字幕 txt 有 187 行、九宫格图有 9 帧，全是完整内容，
+        模型想细看可以直接 read / read_image，不用挤在那 3000 字摘要里。
+        """
         if not bv:
             return {"ok": False, "error": "bv required"}
         res = self._run_bili(["debrief", bv], timeout=300)
-        return {"ok": res.get("ok", False), "bv": bv, "text": (res.get("stdout") or "")[-3000:], "stderr": res.get("stderr")}
+        out = res.get("stdout") or ""
+
+        import re as _re
+        paths = {}
+        # 字幕 txt：  "→ /home/ubuntu/.dsh/shots/subs/BVxxx-debrief.txt"
+        m = _re.search(r"→\s*(/\S+?\.txt)", out)
+        if m:
+            paths["subs"] = m.group(1)
+        # 抽帧九宫格： "SHEET: /home/ubuntu/.dsh/shots/video/BVxxx-...-3x3.jpg"
+        m = _re.search(r"SHEET:\s*(/\S+?\.jpg)", out)
+        if m:
+            paths["sheet"] = m.group(1)
+        # 字幕条截图： "SUBS:  /home/ubuntu/.dsh/shots/video/BVxxx-...-subs.jpg"
+        m = _re.search(r"^SUBS:\s*(/\S+?\.jpg)", out, _re.M)
+        if m:
+            paths["subs_img"] = m.group(1)
+        # 封面： "（交给 read_image 看）" 前面那个路径
+        m = _re.search(r"(/\S+/covers/\S+?\.jpg)", out)
+        if m:
+            paths["cover"] = m.group(1)
+
+        return {
+            "ok": res.get("ok", False),
+            "bv": bv,
+            # 摘要只留尾巴：开头是元信息，尾巴是弹幕热区 + 抽帧路径
+            "text": out[-3000:],
+            # 完整内容的入口
+            "paths": paths,
+            "full_chars": len(out),
+            "stderr": res.get("stderr"),
+        }
 
     def _post_browse(self) -> None:
         """刷一下 B 站热门（公开接口，不需要登录），把看到的记下来。"""
