@@ -2028,11 +2028,20 @@ window.__ModuleLoader__.load({
               ),
             ),
             // ---- 帧数（debrief 的子设置，跟上面那排工具放在同一个卡片里）----
-            st && st.frameGridOptions ? h("div", {
-              style: { marginTop: 16, paddingTop: 14, borderTop: "1px solid rgba(0,0,0,.06)" },
-            },
+            // debrief 没勾时整块置灰且不可点：帧数只对它有意义。
+            st && st.frameGridOptions ? (() => {
+              const debriefOn = (biliTools.tools || []).some((t) => t.cmd === "debrief" && t.enabled);
+              return h("div", {
+                style: {
+                  marginTop: 16, paddingTop: 14,
+                  borderTop: "1px solid rgba(0,0,0,.06)",
+                  opacity: debriefOn ? 1 : 0.42,
+                  pointerEvents: debriefOn ? "auto" : "none",
+                  transition: "opacity .15s",
+                },
+              },
               h("div", { style: { fontSize: 13, fontWeight: 600, marginBottom: 4 } },
-                "看视频时抽几帧画面"),
+                "看视频时抽几帧画面" + (debriefOn ? "" : "（先打开上面的 debrief）")),
               h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
                 "只有「debrief」开着才用得上——她看懂一条视频时会抽若干帧拼成一张图。"
                 + "帧数多看得细，帧数少每帧更大。长视频/讲解类选 30 或 60；快节奏、画面切换密的选 9。"),
@@ -2064,7 +2073,8 @@ window.__ModuleLoader__.load({
                   );
                 })),
               ),
-            ) : null,
+              );
+            })() : null,
           ) : null,
 
           h("div", { style: S.card },
