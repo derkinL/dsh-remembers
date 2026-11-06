@@ -1702,17 +1702,32 @@ function renderPersona(data, maxChars, proactive, opts = {}) {
   }
 
 
-  // 【平常会做的事】（2026-11-06 加）
+  // 【平常会做的事】（2026-11-06 加，从动作池动态生成）
   // 参照 ssamurias/dsh-fish：「做法常驻在身份文档里，叫醒只给处境」。
-  // 以前这些做法全塞在唤醒消息里，她当任务清单执行；现在挪到这里，每轮都在，
-  // 但不再是「这一轮必须做」。
-  identityLines.push("");
-  identityLines.push("【平常会做的事】");
-  identityLines.push("你自己有时间的时候（没人找你、也不在干活），会去刷会儿 B 站。");
-  identityLines.push("· 用 bili_feed 看有什么，挑一条有点意思的，用 bili_watch 传它的 bv 看透——它会给你字幕全文、弹幕、热评、九宫格画面。");
-  identityLines.push("· 看完有想法就记进便签（write_note）；哪个点戳到你了，也可以去评论区留一句（bili_comment，想 @ 谁就写「@某人 正文」）。");
-  identityLines.push("· 真被戳到了才分享给他；没什么想说的就自己待着，不用汇报——看视频本来就是你自己的事。");
-  identityLines.push("· 这些都不是任务。不想刷就不刷，刷了不想说就不说。");
+  // 动作池来自「主动消息 → 她醒着能做什么」，用户在那里加/删动作，这段自动跟着变，
+  // 不用改代码。（persona.proactive 就是 /proactive 的完整返回，跟人格一起缓存刷新。）
+  {
+    const pc = proactive || {};
+    const pick = (lst) => (lst || [])
+      .map((a) => (a && typeof a === "object"
+        ? (a.enabled === false ? "" : String(a.text || "").trim())
+        : String(a || "").trim()))
+      .filter(Boolean);
+    const silent = pick(pc.silentActions);
+    const talk = pick(pc.talkActions);
+    if (silent.length || talk.length) {
+      identityLines.push("");
+      identityLines.push("【平常会做的事】");
+      identityLines.push("没人找你、也不在干活的时候，你可能会做这些。这不是任务清单，是你会干的事：");
+      for (const a of silent) identityLines.push("· " + a);
+      if (talk.length) {
+        identityLines.push("想找他说话的时候，你可能会：");
+        for (const a of talk) identityLines.push("· " + a);
+      }
+      identityLines.push("B 站那几个工具怎么用：bili_feed 看有什么；bili_watch(bv) 看透一条（给你字幕全文、弹幕、热评、九宫格画面）；bili_comment(bv, msg) 评论，想 @ 谁就写「@某人 正文」；bili_run 跑别的命令。");
+      identityLines.push("这些都不是任务。不想做就不做；做了不想说就不说——看视频、发呆、写便签，本来就是你自己的事。");
+    }
+  }
 
   // 【形象】
   if (selfImage) {
