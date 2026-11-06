@@ -2758,27 +2758,7 @@ window.__ModuleLoader__.load({
                     onChange: (ev) => setNewExpr({ ...newExpr, example: ev.target.value }),
                   }),
                 ),
-                known.length > 0
-                  ? h("div", null,
-                      h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 6 } }, "已学会（知道意思）"),
-                      h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
-                        known.map((s) =>
-                          h("div", { key: "k-" + s.phrase, style: { ...S.card, padding: "8px 12px", borderLeft: "3px solid #2fa36b" } },
-                            h("div", { style: { fontSize: 13, fontWeight: 600 } }, (s.phrase || "") + "  ×" + (s.count || 0)),
-                            h("div", { style: { ...S.muted, fontSize: 12, marginTop: 2 } }, s.meaning),
-                            s.example ? h("div", { style: { ...S.muted, fontSize: 11, marginTop: 2 } }, "例：" + s.example) : null,
-                          ),
-                        ),
-                      ),
-                    )
-                  : null,
-                pending.length > 0
-                  ? h("div", null,
-                      h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 6 } }, "说够 6 次了还不知道意思（该去问老大）"),
-                      h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } }, pending.map((s) => chip(s, true))),
-                    )
-                  : null,
-                (!exprs.length && !known.length && !pending.length)
+                (!exprs.length)
                   ? h("div", { style: S.muted }, "还没学到什么。她会在聊天里慢慢琢磨「什么场合该怎么接」。")
                   : null,
               )
