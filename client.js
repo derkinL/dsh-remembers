@@ -3618,6 +3618,9 @@ const [data, setData] = React.useState(null);
         const [notice, setNotice] = React.useState(null);
         const [saved, setSaved] = React.useState({ constitution: "", self_model: "", self_image: "", identity: "" });
         const [draft, setDraft] = React.useState({ constitution: "", self_model: "", self_image: "", identity: "" });
+        // 学说话的两个计数（2026-11-06）：人格设定页的「她怎么学说话」卡片要显示
+        const [exprCount, setExprCount] = React.useState(0);
+        const [wordCount, setWordCount] = React.useState(0);
         const [idFields, setIdFields] = React.useState({
           name: "", self_call: "", user_call: "", personality: "", speaking: "", taboo: "", free: "",
           think_cn: false,
@@ -3628,6 +3631,17 @@ const [data, setData] = React.useState(null);
           taboo_off: "",
           ai_flavor: "允许 2% 语法错误、7% 主谓宾省略、7% 聊跑题；口癖 50% 概率出现且单独一条；允许「？？？」这类网络标点，概率 2%。",
         });
+        // 2026-11-06：拉一次「学说话」的计数，人格页要显示
+        React.useEffect(() => {
+          (async () => {
+            try {
+              const [er, sr] = await Promise.all([call("/expressions"), call("/slang")]);
+              setExprCount(Array.isArray(er && er.items) ? er.items.length : 0);
+              const words = Array.isArray(sr) ? sr : [];
+              setWordCount(words.filter((x) => String((x && x.meaning) || "").trim()).length);
+            } catch { /* 拿不到就显示 0，不挡页面 */ }
+          })();
+        }, []);
         const setId = (k, v) => setIdFields((f) => ({ ...f, [k]: v }));
 
         const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
@@ -4045,6 +4059,38 @@ const [data, setData] = React.useState(null);
                     ),
                   );
                 })(),
+              ),
+              h("div", { style: { ...S.card, marginTop: 10 } },
+                h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } },
+                  h("span", { style: { ...S.muted, fontSize: 12 } }, "她怎么学说话"),
+                  h("span", { style: { fontSize: 11, color: "#4084ff" } },
+                    `${exprCount} 条说法 · ${wordCount} 个词`),
+                ),
+                h("div", { style: { fontSize: 12, marginTop: 6, lineHeight: 1.6 } },
+                  "她会从聊天和评论区学「当 X 时，可以 Y」——不是背词，是场合感。"
+                  + "碰到贴的场合就顺手用一下，不贴就别硬套。"),
+
+                h("div", { style: { marginTop: 10, display: "flex", flexDirection: "column", gap: 6 } },
+                  h("div", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 12 } },
+                    h("span", { style: { color: "#2fa36b", fontSize: 13 } }, "●"),
+                    h("span", null, "私聊里听你说话"),
+                    h("span", { style: { ...S.muted, fontSize: 11 } }, "你说得太简洁时学不到什么")),
+                  h("div", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 12 } },
+                    h("span", { style: { color: "#2fa36b", fontSize: 13 } }, "●"),
+                    h("span", null, "B 站评论区（热评）"),
+                    h("span", { style: { ...S.muted, fontSize: 11 } }, "每看一条视频学一轮，梗最多")),
+                  h("div", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 12 } },
+                    h("span", { style: { color: "#d0d4da", fontSize: 13 } }, "●"),
+                    h("span", { style: { ...S.muted, fontSize: 12 } }, "贴吧"),
+                    h("span", { style: { ...S.muted, fontSize: 11 } }, "还没接（没号）")),
+                ),
+
+                h("button", {
+                  style: { ...S.btn(true), marginTop: 10, fontSize: 12, padding: "5px 14px" },
+                  onClick: () => { setTab && setTab("memory"); },
+                }, "看学到的说法 →"),
+                h("div", { style: { ...S.muted, fontSize: 11, marginTop: 6 } },
+                  "在「记忆 → 学说话」里能看全部、能删、也能手动教她一条。"),
               ),
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 10 } },
                 h("span", { style: { ...S.muted, fontSize: 12 } }, "她的形象（可替换）"),
