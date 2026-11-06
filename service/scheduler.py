@@ -264,7 +264,9 @@ class Scheduler:
         # 和唤醒一样的机制，但动作固定为「刷 B 站」
         hints = []
         if cfg.get("biliShareToOwner", True):
-            hints.append("看到有意思的，把链接和你的想法发给老大")
+            # 2026-11-06：原来写的是「把链接和你的想法发给老大」——读起来像派活，
+            # 她每次都报告。改成「被戳到才分享，没感觉就自己待着」，给她不说的余地。
+            hints.append("被什么戳到了就分享给他（链接 + 你自己的话）；没什么想说的就自己待着，不用汇报")
         if cfg.get("biliShareToGroup", False):
             hints.append("也可以分享到群里")
         if cfg.get("biliComment", True):
