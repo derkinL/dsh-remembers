@@ -2196,6 +2196,7 @@ window.__ModuleLoader__.load({
         const [browseList, setBrowseList] = React.useState(null);
         const [notesList, setNotesList] = React.useState(null);
         const [slangList, setSlangList] = React.useState(null);
+        const [exprList, setExprList] = React.useState(null);
         const [tasksList, setTasksList] = React.useState(null);
         const [stateInfo, setStateInfo] = React.useState(null);
         const [selfModel, setSelfModel] = React.useState(null);
@@ -2242,6 +2243,10 @@ window.__ModuleLoader__.load({
 
         const loadSlang = async () => {
           setBusy(true); setErr(null);
+          try {
+            const r = await call("/expressions");
+            setExprList(Array.isArray(r && r.items) ? r.items : []);
+          } catch { setExprList([]); }
           try { const r = await call("/slang"); setSlangList(Array.isArray(r) ? r : []); }
           catch (e) { setErr(e && e.message ? e.message : String(e)); setSlangList([]); }
           finally { setBusy(false); }
@@ -2542,6 +2547,10 @@ window.__ModuleLoader__.load({
                 onClick: () => { setMode("slang"); void loadSlang(); },
               }, "学会的词" + (slangList ? ` ${slangList.length}` : "")),
               h("button", {
+                style: { ...S.btn(mode === "expr"), padding: "4px 10px", fontSize: 12 },
+                onClick: () => { setMode("expr"); void loadSlang(); },
+              }, "学来的说法" + (exprList ? ` ${exprList.length}` : "")),
+              h("button", {
                 style: { ...S.btn(mode === "tasks"), padding: "4px 10px", fontSize: 12 },
                 onClick: () => { setMode("tasks"); void loadTasks(); },
               }, "互相派的活" + (tasksList ? ` ${tasksList.length}` : "")),
@@ -2648,6 +2657,40 @@ window.__ModuleLoader__.load({
                   ),
                 )
               : h("div", { style: S.muted }, notesList ? "还没记过便签" : "读取中…")
+          ) : mode === "expr" ? (
+            !exprList ? h("div", { style: S.muted }, "读取中…")
+            : !exprList.length ? h("div", { style: S.muted }, "还没学到什么说法。她会在聊天里慢慢琢磨「什么场合该怎么接」。")
+            : h("div", null,
+              h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
+                "从聊天里学来的场合感：「当 X 时，可以 Y」。每轮最多挑 3 条给她看，"
+                + "跟当前话题沾边的优先，用过的会变重（越用越顺手）。删掉就不再用。"),
+              ...exprList.map((e) => h("div", {
+                key: "ex" + e.id,
+                style: {
+                  ...S.card, marginBottom: 8, padding: "10px 12px",
+                  display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8,
+                },
+              },
+                h("div", { style: { flex: 1, minWidth: 0 } },
+                  h("div", { style: { fontSize: 13, lineHeight: 1.5 } },
+                    "当", h("span", { style: { color: "#4084ff", fontWeight: 600 } }, e.situation),
+                    "时，可以", h("span", { style: { fontWeight: 600 } }, e.style)),
+                  e.example ? h("div", { style: { ...S.muted, fontSize: 11, marginTop: 4 } },
+                    "例：" + e.example) : null,
+                  h("div", { style: { ...S.muted, fontSize: 11, marginTop: 4 } },
+                    `见过 ${e.count || 1} 次 · ${e.scope}`),
+                ),
+                h("button", {
+                  style: { ...S.btn(false), fontSize: 11, padding: "2px 8px", flexShrink: 0 },
+                  onClick: async () => {
+                    try {
+                      await call("/expressions", { method: "POST", body: JSON.stringify({ op: "delete", id: e.id }) });
+                      setExprList((exprList || []).filter((x) => x.id !== e.id));
+                    } catch (err) { setMsg("删除失败：" + String(err && err.message || err)); }
+                  },
+                }, "删"),
+              )),
+            )
           ) : mode === "slang" ? (
             (() => {
               if (!slangList) return h("div", { style: S.muted }, "读取中…")

@@ -392,6 +392,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, store.meme_list(emotion, q, limit, pack))
         elif path == "/slang":
             self._json(200, store.slang_list())
+        elif path == "/expressions":
+            # 2026-11-06：学来的说法（「当 X 时，可以 Y」）
+            self._guard(lambda: self._json(200, {
+                "ok": True,
+                "items": store.expr_list(200),
+            }))
         elif path == "/affinity":
             uid = (query.get("user") or [""])[0]
             self._json(200, {"user": uid, "score": store.affinity_get(uid) if uid else 0})
@@ -486,6 +492,13 @@ class Handler(BaseHTTPRequestHandler):
                 st["slang"] = []
                 st["affinity"] = 0
                 st["open_tasks"] = 0
+            # 2026-11-06：学来的说法。scope 由 /state?scope= 传（private:<qq> / group:<gid>），
+            # 不传就跳过——每个聊天学自己的，群里的梗不带到私聊去。
+            try:
+                _scope = (query.get("scope") or [""])[0].strip()
+                st["expressions"] = store.expr_pick(_scope, "", 3) if _scope else []
+            except Exception:
+                st["expressions"] = []
             st["view_hour"] = hour
             self._json(200, st)
         elif path == "/persona":
@@ -595,6 +608,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._delete_meme())
         elif path == "/slang":
             self._guard(lambda: self._post_slang())
+        elif path == "/expressions":
+            self._guard(lambda: self._post_expressions())
         elif path == "/affinity":
             self._guard(lambda: self._post_affinity())
         elif path == "/tasks":
@@ -2702,6 +2717,27 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"ok": True})
 
     # -- 学说话 / 亲和度 / 任务 / 便签 / 睡眠 --------------------------------
+
+    def _post_expressions(self) -> None:
+        """POST 增一条 / DELETE 删一条。"""
+        body = self._body()
+        if str(body.get("op") or "") == "delete":
+            eid = body.get("id")
+            try:
+                n = store.expr_delete(int(eid))
+            except (TypeError, ValueError):
+                self._json(400, {"ok": False, "error": "bad id"})
+                return
+            self._json(200, {"ok": True, "deleted": n})
+            return
+        scope = str(body.get("scope") or "global").strip()[:60]
+        situation = str(body.get("situation") or "").strip()
+        style = str(body.get("style") or "").strip()
+        if not situation or not style:
+            self._json(400, {"ok": False, "error": "situation/style required"})
+            return
+        eid = store.expr_add(scope, situation, style, str(body.get("example") or ""))
+        self._json(200, {"ok": True, "id": eid})
 
     def _post_slang(self) -> None:
         body = self._body()

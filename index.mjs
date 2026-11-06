@@ -46,9 +46,10 @@ export function apply(ctx, input = {}) {
   const log = (stage, data) => logger?.debug?.(`[dsh-remembers] ${stage} ${JSON.stringify(data)}`);
 
 /** 拉运行时状态（心情/亲密度/勿扰），服务不可用时返回 null，绝不阻塞对话。 */
-async function fetchState() {
+async function fetchState(scope) {
   try {
-    const res = await fetch(config.endpoint + "/state", { signal: AbortSignal.timeout(3000) });
+    const q = scope && scope !== "global" ? "?scope=" + encodeURIComponent(scope) : "";
+    const res = await fetch(config.endpoint + "/state" + q, { signal: AbortSignal.timeout(3000) });
     if (!res.ok) return null;
     return await res.json();
   }
@@ -235,6 +236,21 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
   // ---------- 2. 困意（按档位变） ----------
   if (hh >= 23 || hh < 6) blocks.push("你现在困得眼睛都睁不开了，回话短一点、慢一点，别硬撑。");
   else if (hh >= 21) blocks.push("有点困了，说话懒一点。");
+
+  // ---------- 2.5 学来的说法（2026-11-06） ----------
+  // 从聊天里学到的「当 X 时，可以 Y」。这是场合感，不是必答题——
+  // 所以措辞是「合适就用，不合适就按自己的说」。
+  if (Array.isArray(state.expressions) && state.expressions.length) {
+    const lines = state.expressions
+      .map((e) => `· 当${e.situation}时，可以${e.style}`)
+      .filter(Boolean);
+    if (lines.length) {
+      blocks.push(
+        "【学来的说法】这几个是你从聊天里听来的说话方式。碰到贴的场合就顺手用一下，不贴就别硬套——不是任务。\n"
+        + lines.join("\n"),
+      );
+    }
+  }
 
   // ---------- 3. 心情 + 情绪（变了才加） ----------
   const moodMap = { happy: "开心", tired: "累", annoyed: "烦", bored: "无聊", normal: "平常" };
@@ -731,7 +747,8 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
     if (decision.kind !== "enter" || signal?.aborted) return decision;
     if (skipped(agent?.session)) return decision;
     try {
-      const st = await fetchState();
+      const scopeOf2 = scopeFromSession(agent.session?.id ?? "");
+      const st = await fetchState(scopeOf2.scope);
       const st2 = stateFor(agent.session);
       const r = renderState(st, st2.stateHashes || {}, persona.selfModel || "", persona.proactive,
         Boolean(persona.data?.identity && (() => { try { return JSON.parse(persona.data.identity).think_cn; } catch { return false; } })()));
@@ -1635,9 +1652,18 @@ function renderPersona(data, maxChars, proactive, opts = {}) {
     .filter((s) => s && !tabooOff.includes(s))
     .join("\n");
   if (speaking) rules.push(speaking);
+  // 2026-11-06：taboo 分层。
+  // 以前七条全塞进【铁律】，混了三种东西：禁止（不讨好）/ 允许（可以顶嘴）/ 做法（不是每轮都要关心）。
+  // 「可以顶嘴」写成禁令，读起来像「不许讨好也不许顶嘴」，她就不敢说话。
+  // 现在按行拆开：允许类单独成【你可以的】——那是授权，不是约束。
+  let tabooAllow = [];
   if (taboo) {
-    // 直接推原文，不去重（用户要能看出原文哪出问题）
-    rules.push(taboo);
+    // 按换行/分号拆，去掉空行
+    const _lines = String(taboo).split(/[\n；;]+/).map((x) => x.trim()).filter(Boolean);
+    const _allow = _lines.filter((l) => /^(可以|能|允许|想)/.test(l));
+    const _forbid = _lines.filter((l) => !/^(可以|能|允许|想)/.test(l));
+    tabooAllow = _allow;
+    if (_forbid.length) rules.push(_forbid.join("\n"));
   }
   if (identityObj.self_call_in_speech !== true) {
     const sc = String(identityObj.self_call ?? "").trim();
@@ -1677,6 +1703,14 @@ function renderPersona(data, maxChars, proactive, opts = {}) {
   if (rules.length) {
     identityLines.push("【铁律】");
     for (const r of rules) identityLines.push("· " + r);
+  }
+
+  // 【你可以的】—— 这些不是禁令的反面，是明确给你的权利。
+  // 单独一段，是因为混在铁律里会被当成「又一条限制」。
+  if (Array.isArray(tabooAllow) && tabooAllow.length) {
+    identityLines.push("");
+    identityLines.push("【你可以的】");
+    for (const a of tabooAllow) identityLines.push("· " + a);
   }
 
   // 【说话风格】去 AI 味

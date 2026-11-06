@@ -1288,6 +1288,113 @@ class MemoryStore:
             "source": r["source"] or "chat",
         } for r in rows]
 
+    # -- 学来的说法（2026-11-06）--------------------------------------------
+    def expr_add(self, scope: str, situation: str, style: str,
+                 example: str = "", n: int = 1) -> int:
+        """记一条「当 situation 时，可以 style」。同 scope 下同样的组合只累加 count。"""
+        s = str(situation or "").strip()[:40]
+        st = str(style or "").strip()[:60]
+        if not s or not st:
+            return 0
+        now = time.time()
+        # 跟 slang_add 一样用 UPSERT：单条 INSERT ... ON CONFLICT 是原子的，
+        # 不需要额外加锁（MemoryStore 也只有 _cache_lock，没有通用的 _lock）。
+        self.conn.execute(
+            "INSERT INTO expressions(scope, situation, style, example, count, ts, last_hit) "
+            "VALUES (?,?,?,?,?,?,?) "
+            "ON CONFLICT(scope, situation, style) DO UPDATE SET "
+            "  count = count + ?, last_hit = ?",
+            (scope, s, st, str(example or "")[:200], max(1, int(n)), now, now,
+             max(1, int(n)), now),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT id FROM expressions WHERE scope=? AND situation=? AND style=?",
+            (scope, s, st)).fetchone()
+        return int(row[0]) if row else 0
+
+    def expr_pick(self, scope: str, recent_text: str = "", n: int = 3) -> list[dict]:
+        """加权抽样：跟这轮话题沾边的优先，见过的次数多的优先。
+
+        count 线性映射到 1-5 倍权重；situation 里至少两个二字片段在本轮话里出现 → ×3。
+        不放回抽 n 条。（照抄 dsh-fish-soul 的 pickExpressions。）
+        """
+        import random as _random
+
+        _PUNCT = set("，,。.！!？?、；;：:\"'“”‘’「」『』（）()…~～")
+
+        def _norm(x: str) -> str:
+            return "".join(ch for ch in str(x or "").lower()
+                           if not ch.isspace() and ch not in _PUNCT)
+
+        def _related(situation: str, text: str) -> bool:
+            if not text:
+                return False
+            s = _norm(situation)
+            if len(s) < 4:
+                return False
+            grams = {s[i:i + 2] for i in range(len(s) - 1)}
+            hit = 0
+            for g in grams:
+                if g in text and (hit := hit + 1) >= 2:
+                    return True
+            return False
+
+        try:
+            # 本 scope + global 的都能用（global 排在后面）
+            rows = [dict(r) for r in self.conn.execute(
+                "SELECT id, scope, situation, style, example, count FROM expressions "
+                "WHERE scope IN (?, 'global') ORDER BY count DESC LIMIT 200", (scope,))]
+        except Exception:
+            return []
+        if not rows:
+            return []
+        text = _norm(recent_text)
+        counts = [max(1, int(r.get("count") or 1)) for r in rows]
+        lo, hi = min(counts), max(counts)
+        weights = []
+        for r, c in zip(rows, counts):
+            w = 1.0 if hi == lo else 1.0 + 4.0 * (c - lo) / (hi - lo)
+            if _related(r.get("situation", ""), text):
+                w *= 3.0
+            weights.append(w)
+        picked = []
+        pool = list(range(len(rows)))
+        while len(picked) < max(1, int(n)) and pool:
+            r = _random.random() * sum(weights[i] for i in pool)
+            acc = 0.0
+            chosen = pool[-1]
+            for i in pool:
+                acc += weights[i]
+                if r <= acc:
+                    chosen = i
+                    break
+            picked.append(rows[chosen])
+            pool.remove(chosen)
+        # 抽样了就算「被用上」（单条 UPDATE，不需要额外加锁）
+        try:
+            now = time.time()
+            for p in picked:
+                self.conn.execute("UPDATE expressions SET last_hit=? WHERE id=?",
+                                  (now, int(p["id"])))
+            self.conn.commit()
+        except Exception:
+            pass
+        return picked
+
+    def expr_list(self, limit: int = 100) -> list[dict]:
+        try:
+            return [dict(r) for r in self.conn.execute(
+                "SELECT id, scope, situation, style, example, count, last_hit "
+                "FROM expressions ORDER BY count DESC, id DESC LIMIT ?", (max(1, int(limit)),))]
+        except Exception:
+            return []
+
+    def expr_delete(self, eid: int) -> int:
+        cur = self.conn.execute("DELETE FROM expressions WHERE id=?", (int(eid),))
+        self.conn.commit()
+        return int(cur.rowcount or 0)
+
     def slang_pending(self, min_count: int = 6, limit: int = 4) -> list[dict]:
         """够次数、但还不知道什么意思的词 —— 该去问老大了。
 

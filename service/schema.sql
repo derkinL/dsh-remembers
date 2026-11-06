@@ -177,6 +177,26 @@ CREATE TABLE IF NOT EXISTS slang (
 );
 
 -- ---------------------------------------------------------------------------
+-- 学来的说法：什么时候可以怎么说（2026-11-06）
+--
+-- 来源：听来的「当 situation 时，可以 style」——不是背的词，是场合感。
+-- 存 scope（private:<qq> / group:<gid> / global）——每个聊天学自己的，
+-- 群里的梗不带到私聊去。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS expressions (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope      TEXT NOT NULL DEFAULT 'global',
+  situation  TEXT NOT NULL,                  -- 场合，如「对方说了件倒霉事」
+  style      TEXT NOT NULL,                  -- 说法，如「先回一个"啊这"再接一句吐槽」
+  example    TEXT NOT NULL DEFAULT '',       -- 原话例子
+  count      INTEGER NOT NULL DEFAULT 1,     -- 见过几次（加权抽样用）
+  ts         REAL NOT NULL DEFAULT 0,
+  last_hit   REAL NOT NULL DEFAULT 0,
+  UNIQUE(scope, situation, style)
+);
+CREATE INDEX IF NOT EXISTS idx_expr_scope ON expressions(scope);
+
+-- ---------------------------------------------------------------------------
 -- 社交亲和度：对不同的人的熟悉程度
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS affinity (
