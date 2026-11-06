@@ -3630,6 +3630,9 @@ const [data, setData] = React.useState(null);
           _newTaboo: "",
           taboo_off: "",
           ai_flavor: "允许 2% 语法错误、7% 主谓宾省略、7% 聊跑题；口癖 50% 概率出现且单独一条；允许「？？？」这类网络标点，概率 2%。",
+          // 2026-11-06：学习人类说话的开关 + 可改提示词
+          learn_speak_on: true,
+          learn_speak_prompt: "",
         });
         // 2026-11-06：拉一次「学说话」的计数，人格页要显示
         React.useEffect(() => {
@@ -3664,6 +3667,9 @@ const [data, setData] = React.useState(null);
                 ai_flavor_on: parsed.ai_flavor_on !== false,
                 self_call_in_speech: parsed.self_call_in_speech === true,
                 ai_flavor: parsed.ai_flavor || "允许 2% 语法错误、7% 主谓宾省略、7% 聊跑题；口癖 50% 概率出现且单独一条；允许「？？？」这类网络标点，概率 2%。",
+                // 2026-11-06：漏了这两个，导致「学什么」的 textarea 永远是空的
+                learn_speak_on: parsed.learn_speak_on !== false,
+                learn_speak_prompt: parsed.learn_speak_prompt || "",
               });
             } catch { /* ignore */ }
             if (data.limits) setLimits(data.limits);
