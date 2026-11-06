@@ -1705,6 +1705,17 @@ function renderPersona(data, maxChars, proactive, opts = {}) {
     for (const r of rules) identityLines.push("· " + r);
   }
 
+  // 【学人说话】（2026-11-06）
+  // 开关 + 可改的提示词。只在开着时注入；关掉连这段都不出现。
+  // 措辞是「看到合适的就用」，不是「每轮必须用」——否则她会为了用而用。
+  if (identityObj.learn_speak_on !== false) {
+    const lsPrompt = String(identityObj.learn_speak_prompt ?? "").trim()
+      || '从聊天和评论区里学「人怎么说话」：口头禅、语气词、网络用语、情绪怎么表达、接话的方式。学的是**怎么说**，不是说什么。看到合适的场合就顺手用一下，不贴就别硬套——不用为了用而用。';
+    identityLines.push("");
+    identityLines.push("【学人说话】");
+    identityLines.push(lsPrompt);
+  }
+
   // 【你可以的】—— 这些不是禁令的反面，是明确给你的权利。
   // 单独一段，是因为混在铁律里会被当成「又一条限制」。
   if (Array.isArray(tabooAllow) && tabooAllow.length) {
