@@ -1816,6 +1816,21 @@ class Handler(BaseHTTPRequestHandler):
         __import__("os").environ.get("CMEM_DATA_DIR", DATA_DIR), "bili_tools.json"
     )
 
+    def _learn_speak_on(self) -> bool:
+        """「学习人类说话」开关。读 persona.identity 的 learn_speak_on，默认开。
+
+        2026-11-06：这个开关原来只管注入（renderPersona），不管抽取 ——
+        关掉之后 /bili/debrief 还在学热评。用户要求开关要同时管住「学不学」。
+        """
+        try:
+            row = store.conn.execute("SELECT identity FROM persona WHERE id=1").fetchone()
+            if not row or not row[0]:
+                return True
+            obj = json.loads(row[0])
+            return obj.get("learn_speak_on") is not False
+        except Exception:
+            return True
+
     BILI_TOOL_DEFAULTS = {
         "feed": "刷选题：按她的口味挑视频",
         "debrief": "看懂视频（字幕+弹幕+热评+画面九宫格）",
@@ -2548,7 +2563,7 @@ class Handler(BaseHTTPRequestHandler):
         # 私聊里学不到这些（全是「下班了」「吃了」这种陈述）。
         # 只在有热评时学，存 global（公用，任何聊天都能用）。
         try:
-            if comments and extractor is not None and extractor.enabled:
+            if comments and extractor is not None and extractor.enabled and self._learn_speak_on():
                 _blob = "\n".join(
                     f"{c.get('user') or '网友'}：{c.get('text') or ''}" for c in comments[:10])
                 _learned = extractor.learn_expressions_from(_blob, kind="bili_comment")

@@ -591,6 +591,17 @@ class Extractor:
                 return last
         return last or ([], [])
 
+    def learn_speak_enabled(self) -> bool:
+        """「学习人类说话」总开关。默认开。关掉后 learn_expressions* 直接返回空。"""
+        try:
+            row = self.store.conn.execute("SELECT identity FROM persona WHERE id=1").fetchone()
+            if not row or not row[0]:
+                return True
+            import json as _json
+            return _json.loads(row[0]).get("learn_speak_on") is not False
+        except Exception:
+            return True
+
     def learn_expressions_from(self, text: str, kind: str = "chat") -> list[dict]:
         """从任意语料学说话方式。
 
@@ -602,6 +613,8 @@ class Extractor:
         所以把素材来源放宽到公共评论区。
         """
         if not self.enabled:
+            return []
+        if not self.learn_speak_enabled():
             return []
         body = (text or "").strip()
         if len(body) < 8:
@@ -634,6 +647,8 @@ class Extractor:
         为什么单独调：混在 EXTRACT_SYSTEM 里（那个以抽事实为主）实测一条都抽不出来。
         """
         if not self.enabled:
+            return []
+        if not self.learn_speak_enabled():
             return []
         u = (user_text or "").strip()
         if len(u) < 4:
