@@ -2728,6 +2728,8 @@ const [data, setData] = React.useState(null);
         const [qqBind, setQqBind] = React.useState(null);   // 正在选会话重绑的 chat
         const [qqBusy, setQqBusy] = React.useState(false);
         const [qqMsg, setQqMsg] = React.useState(null);
+        // NapCat 工具权限（7 组开关，存在 dsh-remembers 的 napcat_tools.json）
+        const [napcatTools, setNapcatTools] = React.useState(null);
 
         const browse = async (path) => {
           setFsErr(null);
@@ -2758,6 +2760,7 @@ const [data, setData] = React.useState(null);
                 });
               } catch (e) { /* 忽略 */ }
             } catch (e) { /* 会话列表失败不影响配置 */ }
+            try { setNapcatTools(await call("/napcat/tools")); } catch (e) { setNapcatTools(null); }
           } catch (e) {
             setErr(e && e.message ? e.message : String(e));
           }
@@ -3312,6 +3315,48 @@ const [data, setData] = React.useState(null);
                 )
               : null,
           ),
+
+          // ---- 工具权限（7 组开关）----
+          napcatTools && napcatTools.groups
+            ? h("div", { style: { ...S.card, marginBottom: 14 } },
+                h("div", { style: S.label }, "工具权限（她能调用哪些 QQ 操作）"),
+                h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
+                  "QQ 插件原版把 127 个 NapCat 接口全开着。这里按危险程度分 7 组 —— "
+                  + "只读、发消息、QQ 空间、文件默认开；群管理、危险操作、账号凭证默认关。"
+                  + "关掉的组她调不动，会提示你打开。"),
+                h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } },
+                  ...(napcatTools.groups || []).map((g) =>
+                    h("div", {
+                      key: "napcat-" + g.id,
+                      onClick: async () => {
+                        try {
+                          const r = await call("/napcat/tools", {
+                            method: "POST",
+                            body: JSON.stringify({ group: g.id, enabled: !g.enabled }),
+                          });
+                          setNapcatTools(r);
+                        } catch (e) {
+                          setQqMsg({ kind: "error", text: "改不了：" + (e && e.message ? e.message : String(e)) });
+                        }
+                      },
+                      style: {
+                        padding: "10px 12px", borderRadius: 8, cursor: "pointer",
+                        border: g.enabled ? "1px solid #4084ff" : "1px solid rgba(0,0,0,.10)",
+                        background: g.enabled ? "rgba(64,132,255,.06)" : "#fff",
+                        transition: "border-color .15s, background .15s",
+                      },
+                    },
+                      h("div", { style: { display: "flex", alignItems: "baseline", gap: 6 } },
+                        h("div", { style: { fontSize: 13, fontWeight: 600, color: g.enabled ? "#4084ff" : "#333" } }, g.label),
+                        h("div", { style: { fontSize: 11, color: "#999" } }, g.count + " 项"),
+                      ),
+                      h("div", { style: { fontSize: 11, color: g.enabled ? "#4084ff" : "#999", marginTop: 3 } },
+                        g.enabled ? "开着" : (g.default ? "关着" : "关着（默认关）")),
+                    ),
+                  ),
+                ),
+              )
+            : null,
 
           // 保存按钮（固定在屏幕右侧中间，跟其他页签一致）
           h("div", {

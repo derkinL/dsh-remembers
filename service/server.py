@@ -338,6 +338,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, self._bili_qr_poll(key))
         elif path == "/bili/tools":
             self._json(200, self._bili_tools())
+        elif path == "/napcat/tools":
+            self._json(200, self._napcat_tools())
         elif path == "/emotion":
             days = int((query.get("days") or ["0"])[0])
             limit = int((query.get("limit") or ["50"])[0])
@@ -546,6 +548,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._post_meme_used())
         elif path == "/bili/tools":
             self._guard(lambda: self._set_bili_tools())
+        elif path == "/napcat/tools":
+            self._guard(lambda: self._set_napcat_tools())
         elif path == "/bili/run":
             self._guard(lambda: self._bili_run())
         elif path == "/emotion":
@@ -1592,6 +1596,106 @@ class Handler(BaseHTTPRequestHandler):
         )
         self._sync_mood(_label, _v, _a)
         self._json(200, {"ok": True, "id": mid})
+
+    # -- NapCat 工具白名单（按危险程度分组）---------------------------------------
+    # 0.9.17 把 NapCat API 白名单从 127 砍到 15（安全收紧），我们恢复成全量以保住功能。
+    # 但 127 项里有删好友/退群/改账号/拿 cookies，不该默认开——这里按危险程度分 7 组。
+    # 插件侧（dsh-onebot-qq/lib/tools.js）每次调用前读这个文件。
+    NAPCAT_TOOLS_FILE = __import__("os").path.join(
+        __import__("os").environ.get("CMEM_DATA_DIR", DATA_DIR), "napcat_tools.json"
+    )
+
+    NAPCAT_TOOL_GROUPS = {
+        "read": ("只读查询", True, [
+            "get_login_info", "get_status", "get_version_info", "can_send_image", "can_send_record", "get_msg",
+            "get_friend_list", "get_stranger_info", "get_group_list", "get_group_system_msg", "get_group_tags", "get_private_file_url",
+            "get_friend_msg_history", "get_image", "get_record", "get_group_ignored_notifies", "get_group_ignore_add_request", "get_profile_like",
+            "get_emoji_likes", "get_msg_emoji_likes", "get_friends_with_category", "get_recent_contact", "get_online_clients", "get_unidirectional_friend_list",
+            "get_doubt_friends_add_request", "get_collection_list", "get_group_info_ex", "get_group_detail_info", "get_file", "nc_get_packet_status",
+            "nc_get_user_status", "get_forward_msg", "get_mini_app_ark", "get_fileset_info", "get_flash_file_list", "list_filesets",
+            "get_flash_file_url", "get_share_link", "get_fileset_id", "get_qzone_msg_list", "get_qzone_msg_detail", "get_qzone_feeds",
+            "_get_friend_dress", "fetch_sys_faces", "fetch_face_entity", "search_sys_faces", "fetch_super_face_id", "_get_model_show",
+        ]),
+        "send": ("发消息", True, [
+            "send_custom_face", "send_msg", "send_private_msg", "send_like", "friend_poke", "send_poke",
+            "mark_group_msg_as_read", "mark_private_msg_as_read", "mark_msg_as_read", "_mark_all_as_read", "set_msg_emoji_like", "set_group_reaction",
+            "set_input_status", "send_forward_msg", "send_private_forward_msg", "forward_friend_single_msg", "forward_group_single_msg", "share_peer",
+            "send_ark_share", "send_tuwen_ark", "share_group_ex", "send_group_ark_share", "send_flash_msg",
+        ]),
+        "qzone": ("QQ 空间", True, [
+            "send_qzone_msg", "delete_qzone_msg", "set_qzone_msg_right", "like_qzone", "unlike_qzone", "comment_qzone",
+            "set_qzone_ban",
+        ]),
+        "file": ("文件", True, [
+            "upload_private_file", "upload_forward_msg", "upload_foward_msg", "trans_group_file", "download_file", "download_fileset",
+            "clean_stream_temp_file", "create_flash_task", "delete_flash_file", "rename_flash_file",
+        ]),
+        "manage": ("群 / 好友管理", False, [
+            "add_group_tag", "delete_group_tag", "set_friend_remark", "set_group_remark", "set_essence_msg", "delete_essence_msg",
+            "add_custom_face", "delete_custom_face", "modify_custom_face", "move_custom_face_to_front", "fetch_custom_face", "fetch_custom_face_detail",
+            "fetch_emoji_like", "set_friends_category", "_set_model_show", "set_doubt_friends_add_request", "create_collection", "check_url_safely",
+            "translate_en2zh",
+        ]),
+        "danger": ("危险操作", False, [
+            "delete_msg", "delete_friend", "set_friend_add_request", "set_group_add_request", "set_group_anonymous", "set_group_anonymous_ban",
+            "set_restart", "clean_cache", "bot_exit",
+        ]),
+        "credential": ("账号与凭证", False, [
+            "get_cookies", "get_csrf_token", "get_credentials", "get_clientkey", "set_qq_profile", "set_qq_avatar",
+            "set_online_status", "set_diy_online_status", "set_self_longnick", "request_decrypt_key", "get_rkey_server",
+        ]),
+    }
+
+    def _napcat_tools_cfg(self) -> dict:
+        import json as _json
+        raw = {}
+        try:
+            with open(self.NAPCAT_TOOLS_FILE, encoding="utf-8") as f:
+                raw = _json.load(f)
+        except Exception:
+            pass
+        return {g: bool(raw.get(g, spec[1])) for g, spec in self.NAPCAT_TOOL_GROUPS.items()}
+
+    def _napcat_tools(self) -> dict:
+        """GET /napcat/tools —— 返回分组 + 每组的 action 清单。"""
+        cfg = self._napcat_tools_cfg()
+        return {"ok": True, "enabled": cfg, "groups": [
+            {"id": g, "label": spec[0], "default": spec[1],
+             "enabled": cfg.get(g, spec[1]),
+             "actions": spec[2],
+             "count": len(spec[2])}
+            for g, spec in self.NAPCAT_TOOL_GROUPS.items()
+        ]}
+
+    def _set_napcat_tools(self) -> None:
+        """POST /napcat/tools —— 改一组的开关。"""
+        import json as _json
+        body = self._body()
+        gid = str(body.get("group") or "").strip()
+        if gid not in self.NAPCAT_TOOL_GROUPS:
+            self._json(400, {"ok": False, "error": "unknown group"})
+            return
+        raw = {}
+        try:
+            with open(self.NAPCAT_TOOLS_FILE, encoding="utf-8") as f:
+                raw = _json.load(f)
+        except Exception:
+            pass
+        raw[gid] = bool(body.get("enabled"))
+        import os as _os
+        _os.makedirs(_os.path.dirname(self.NAPCAT_TOOLS_FILE), exist_ok=True)
+        with open(self.NAPCAT_TOOLS_FILE, "w", encoding="utf-8") as f:
+            _json.dump(raw, f, ensure_ascii=False, indent=2)
+        self._json(200, self._napcat_tools())
+
+    def _napcat_allowed(self) -> set:
+        """给插件用：把已启用的组摊平成 action 集合。"""
+        cfg = self._napcat_tools_cfg()
+        out = set()
+        for g, spec in self.NAPCAT_TOOL_GROUPS.items():
+            if cfg.get(g, spec[1]):
+                out.update(spec[2])
+        return out
 
     # -- B 站 CLI 工具白名单 ----------------------------------------------------
 
