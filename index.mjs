@@ -342,31 +342,11 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
 
   // ---------- 6.5 学到的词 / 还没搞懂意思的词 ----------
   // 以前只有 recordSlang 在写，提示词里从不读 —— 攒了一堆词她一个没学会。
-  // 现在两头都接上：会说的自然带出来，不懂的自己找机会问。
+  // 2026-11-06：slang 的两段注入删掉了。
+  // 学说话统一走 expressions（词 + 场合一起学），不再是「词表 + 待教」两套并行。
   {
-    const learned = (Array.isArray(state.slang_learned) ? state.slang_learned : [])
-      .filter((s) => s && s.phrase && String(s.meaning || "").trim());
-    const pending = Array.isArray(state.slang_pending) ? state.slang_pending : [];
-    if (learned.length) {
-      const words = learned.slice(0, 4)
-        .map((s) => `${s.phrase}（${String(s.meaning).slice(0, 24)}）`)
-        .join("；");
-      const lh = hash("learned:" + learned.map((s) => s.phrase).join(","));
-      if (hashes.slangLearned !== lh) {
-        hashes.slangLearned = lh;
-        blocks.push("【你会跟着老大说的词】" + words
-          + "。用的时候要合场合，别为了用而硬塞。");
-      }
-    }
-    if (pending.length) {
-      const names = pending.slice(0, 3).map((s) => `${s.phrase}×${s.count}`).join("、");
-      const ph = hash("pending:" + pending.map((s) => s.phrase).join(","));
-      if (hashes.slangPending !== ph) {
-        hashes.slangPending = ph;
-        blocks.push("【这些词老大说了好几次，你还没搞懂意思】" + names
-          + "。想问就找个自然的时机问一句；搞懂了立刻用 learn_word 把意思记下来"
-          + "（必须带 meaning，不然不算学会）。");
-      }
+    const _unusedSlang = null;
+    if (false) {
     }
   }
 
@@ -1426,26 +1406,24 @@ async function scanSeen() {
         execute: async (args) => post("/notes", { text: args.text, author: args.author || "本澜" }),
       }));
       registerTool(defineTool({
-        name: "learn_word",
+        name: "learn_expression",
         description:
-          "老大教你一个新词/梗/黑话时，用它记下来。"
-          + "什么时候用：他说「记住这个词 X」「X 是这个意思」「你知道 X 吗」或者明显在解释一个你不懂的词；"
-          + "或者他某个词说了好几次你一直没搞懂，你主动问清楚之后也用它记。"
-          + "规矩：**必须把意思一起记下来**（meaning）。不知道意思就别记，先问清楚 ——"
-          + "库里不留「认识但不懂」的词。"
-          + "只记词本身（<=8 字），别把整句话塞进来。",
+          "学一句新的「什么场合怎么说」——老大教的、你从聊天里听来的、评论区看来的，都走这个。"
+          + "什么时候用：他说「以后遇到这种情况你可以这么说」「这个梗是这么用的」；"
+          + "或者你自己琢磨明白了一个说法该在什么场合接。"
+          + "两个参数都要给：situation（什么场合）+ style（可以怎么说）。"
+          + "学完立刻生效——每轮会自动挑几条贴现场的出来给你看。",
         parameters: {
-          phrase: { type: "string", required: true, description: "那个词/短语，尽量短" },
-          meaning: { type: "string", description: "什么意思。不确定就留空，会自动查" },
-          context: { type: "string", description: "当时的上下文，帮他判断词义" },
+          situation: { type: "string", required: true, description: "什么场合（≤20 字，比如「对方说了件倒霉事」）" },
+          style: { type: "string", required: true, description: "可以怎么说（≤20 字，比如「先来一句『啊这』」）" },
+          example: { type: "string", description: "原话例子（可选）" },
         },
         output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
-        execute: async (args) => post("/slang", {
-          phrase: args.phrase,
-          meaning: args.meaning || "",
-          context: args.context || "",
-          source: "taught",
-          count: 2,
+        execute: async (args) => post("/expressions", {
+          scope: "global",
+          situation: args.situation,
+          style: args.style,
+          example: args.example || "",
         }),
       }));
       registerTool(defineTool({
