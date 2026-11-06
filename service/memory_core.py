@@ -1250,6 +1250,21 @@ class MemoryStore:
         # 测试文本/图片占位
         if _re.search(r"(测试|重启后|\[图片|^（|^\()", phrase):
             return
+        # 2026-11-06：再收紧一层。上面那几条只拦了格式，语义上的噪音还会进来。
+        # 实测清掉 43 条全是这四类，所以干脆在入口拦掉：
+        #   寒暄（在吗/在干嘛/哈哈哈/晚安）、泛夸（真棒/真厉害/好看）、
+        #   短句陈述（下班了/到家了/开完了）、操作指令（帮我扫码/关掉/换成）。
+        if _re.search(r"^(在吗|在干嘛|你在干啥|干嘛呢|怎么了|哈+|晚安|早上好|早安|吃了|好的|嗯+|"
+                      r"在忙吗|我回来了|问你个事|现在几点了|真棒|真厉害|太厉害了|好看|"
+                      r"第一条|第二条|第三条|好的吧)$", phrase):
+            return
+        if _re.search(r"(下班了|到家了|开完了|吃完了|准备吃饭|准备下班|睡了|起了|走了|"
+                      r"我在玩游戏|还是要加班)$", phrase):
+            return
+        if _re.search(r"^(帮我|试试|关掉|打开|重启|扫码|换成|删掉|刷新)", phrase):
+            return
+        if _re.search(r"(宝宝|亲爱的|么么哒)$", phrase):
+            return
         now = time.time()
         self.conn.execute(
             "INSERT INTO slang(phrase, count, last_seen, meaning, example, source, memory_id) "
