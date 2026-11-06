@@ -2430,6 +2430,27 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 saved_mid = None
 
+        # 热评单独拎出来：它混在 2000+ 字的 text 里，她基本不会细看。
+        # 格式（实测）：  👍    9  回复  1  用户名: 内容
+        import re as _re2
+        comments = []
+        try:
+            seg = ""
+            m_c = _re2.search(r"⑤ 热评[^\n]*\n(.*?)(?:\n═+ ⑥|\Z)", out, _re2.S)
+            if m_c:
+                seg = m_c.group(1)
+            for ln in seg.split("\n"):
+                mm = _re2.match(r"^\s*👍\s*(?P<like>\d+)\s*回复\s*(?P<rep>\d+)\s+(?P<user>[^:：]+)[:：]\s*(?P<text>.+)$", ln)
+                if mm:
+                    comments.append({
+                        "user": mm.group("user").strip()[:20],
+                        "text": mm.group("text").strip()[:160],
+                        "like": int(mm.group("like")),
+                        "replies": int(mm.group("rep")),
+                    })
+        except Exception:
+            comments = []
+
         return {
             "ok": res.get("ok", False),
             "bv": bv,
@@ -2440,6 +2461,11 @@ class Handler(BaseHTTPRequestHandler):
             "paths": paths,
             "full_chars": len(out),
             "stderr": res.get("stderr"),
+            # 热评单独列出来（不再埋在 text 里）
+            "comments": comments,
+            "comment_hint": ("上面 %d 条是看完的人的想法（👍 是点赞数）。"
+                             "如果你有不同意见、或者想接一句，就用 bili_comment 去评论区说——"
+                             "用自己的话，别复读别人的。" % len(comments)) if comments else "",
             # 这次有没有落成记忆（没写 thought 就是 None）
             "saved_memory": saved_mid,
             "saved_hint": ("已记进 L3：" + (title[:30] if title else bv)) if saved_mid
