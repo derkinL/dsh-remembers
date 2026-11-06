@@ -427,3 +427,78 @@ cp -r lib lib.bak-before-upgrade
 ```
 
 升级前备份整个 `lib/`，出问题能立刻回退。
+
+---
+
+## 补丁 ⑥ · QQ 空间发不出去（2026-11-07）
+
+### 现象
+她发 QQ 空间图片失败。dsh-web 日志里没有 qzone 报错（错误被工具层吞了）。
+
+### 排查过程（走了弯路，记下来省下一次）
+
+1. 先怀疑 base64 转换 —— 一查，`fileToBase64()` 返回 `base64://<data>`，格式是对的（上次修对了）
+2. 再怀疑 NapCat 挂载 —— 确实只挂 `/app/.config`、`/app/data`、`/app/.local/share`，宿主机路径看不到
+3. **直接打 NapCat HTTP 才发现真因**
+
+### 真正的根因：参数名错了
+
+NapCat 的 `send_qzone_msg` 要 **`content`（纯文本字符串）**，不是 `message`（消息段数组）。
+
+实测（`http://127.0.0.1:3000`）：
+
+```
+{"content": "文字"}                                 → retcode 0   ✅
+{"content": "文字", "images": ["base64://…"]}       → retcode 0   ✅ 带图也成
+{"message": [{"type":"text","data":{"text":"…"}}]}  → retcode 1400
+                                                      "content: is required"   ❌
+```
+
+**她按 QQ 消息的习惯传 `message`，就必然报 `content: is required`。**
+
+### 修法（`lib/tools.js` 的 `qq_napcat_api` execute）
+
+在 `send_qzone_msg` 判断图片之前加一层兜底：
+
+```js
+if (a.action === 'send_qzone_msg') {
+    const hasContent = typeof params.content === 'string' && params.content.trim() !== '';
+    if (!hasContent && Array.isArray(params.message)) {
+        const txt = params.message
+            .filter((seg) => seg && seg.type === 'text')
+            .map((seg) => String((seg.data && seg.data.text) || ''))
+            .join('')
+            .trim();
+        if (txt) params.content = txt;
+    }
+    if (typeof params.content === 'string') delete params.message;
+}
+```
+
+**她怎么写都能成**：传 `content` 直接用；传 `message` 自动拼成 `content`。
+
+### NapCat 的 token / 端口（排查时要用）
+
+容器 `snowluma`，配置在容器内 `/app/data/config/onebot.json`：
+
+| 项 | 值 |
+|---|---|
+| HTTP 端口 | 3000 |
+| HTTP token | `fBo6aIvwCUuBOoin5tg_ktA-d_597i7ADQBP27i5BF0` |
+| WS 端口 | 3001 |
+| WS token | `gJFJ5e4ubHqWZaOGTo-grG7PJuOGSa5clzvlnNwal5k` |
+| 反向 WS 到 DSH 的 token | `1Liudezhi` ← **这个不是 HTTP 的**，别混 |
+
+测连通：
+```bash
+curl -s -X POST http://127.0.0.1:3000/get_status \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer fBo6aIvwCUuBOoin5tg_ktA-d_597i7ADQBP27i5BF0" \
+  -d '{}'
+```
+
+### 一个观察
+
+`/app/data` 里有 `qzone_1015.jpg`、`qzone_fri.jpg`、`qzone_whale.jpg` 等 ——
+**10-24 到 11-06 之间她是成功发过图的**。说明那时候传的是 `content`（用对了），
+后来改走 `message` 才坏的。不是从未成功过。
