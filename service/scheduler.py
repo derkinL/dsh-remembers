@@ -247,6 +247,12 @@ class Scheduler:
         if interval <= 0:
             interval = (min_gap + random.randint(0, max_gap - min_gap)) * 60
             st["bili_interval"] = interval
+            # 2026-11-06 修：原来只写 bili_interval，bili_last 还是初值 0，
+            # 于是下一次检查 now-0 是天文数字、必然 > interval，8 点一到立刻刷一次
+            # （看起来像「固定在 8 点刷」）。这里把 last 定成 now，
+            # 让第一次也必须等满一个随机间隔。
+            if not last:
+                st["bili_last"] = now
             _log(f"bili: next nudge in {int(interval // 60)} min")
             return True
         if now - last < interval:
