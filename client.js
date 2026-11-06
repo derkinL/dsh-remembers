@@ -2543,13 +2543,12 @@ window.__ModuleLoader__.load({
                 onClick: () => { setMode("notes"); void loadNotes(); },
               }, "便签" + (notesList ? ` ${notesList.length}` : "")),
               h("button", {
-                style: { ...S.btn(mode === "slang"), padding: "4px 10px", fontSize: 12 },
+                style: { ...S.btn(mode === "slang" || mode === "expr"), padding: "4px 10px", fontSize: 12 },
                 onClick: () => { setMode("slang"); void loadSlang(); },
-              }, "学会的词" + (slangList ? ` ${slangList.length}` : "")),
-              h("button", {
-                style: { ...S.btn(mode === "expr"), padding: "4px 10px", fontSize: 12 },
-                onClick: () => { setMode("expr"); void loadSlang(); },
-              }, "学来的说法" + (exprList ? ` ${exprList.length}` : "")),
+              }, "学说话"
+                + ((slangList || exprList)
+                  ? ` ${(slangList || []).filter((s) => (s.meaning || "").trim()).length + (exprList || []).length}`
+                  : "")),
               h("button", {
                 style: { ...S.btn(mode === "tasks"), padding: "4px 10px", fontSize: 12 },
                 onClick: () => { setMode("tasks"); void loadTasks(); },
@@ -2657,49 +2656,14 @@ window.__ModuleLoader__.load({
                   ),
                 )
               : h("div", { style: S.muted }, notesList ? "还没记过便签" : "读取中…")
-          ) : mode === "expr" ? (
-            !exprList ? h("div", { style: S.muted }, "读取中…")
-            : !exprList.length ? h("div", { style: S.muted }, "还没学到什么说法。她会在聊天里慢慢琢磨「什么场合该怎么接」。")
-            : h("div", null,
-              h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
-                "从聊天里学来的场合感：「当 X 时，可以 Y」。"
-                + "**梗是公用的**——不管从哪个群、哪个私聊、还是 B 站评论区学来的，在哪儿都能用。"
-                + "每轮最多挑 3 条给她看，跟当前话题沾边的优先，用过的会变重（越用越顺手）。删掉就不再用。"),
-              ...exprList.map((e) => h("div", {
-                key: "ex" + e.id,
-                style: {
-                  ...S.card, marginBottom: 8, padding: "10px 12px",
-                  display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8,
-                },
-              },
-                h("div", { style: { flex: 1, minWidth: 0 } },
-                  h("div", { style: { fontSize: 13, lineHeight: 1.5 } },
-                    "当", h("span", { style: { color: "#4084ff", fontWeight: 600 } }, e.situation),
-                    "时，可以", h("span", { style: { fontWeight: 600 } }, e.style)),
-                  e.example ? h("div", { style: { ...S.muted, fontSize: 11, marginTop: 4 } },
-                    "例：" + e.example) : null,
-                  h("div", { style: { ...S.muted, fontSize: 11, marginTop: 4 } },
-                    `见过 ${e.count || 1} 次 · ${e.scope}`),
-                ),
-                h("button", {
-                  style: { ...S.btn(false), fontSize: 11, padding: "2px 8px", flexShrink: 0 },
-                  onClick: async () => {
-                    try {
-                      await call("/expressions", { method: "POST", body: JSON.stringify({ op: "delete", id: e.id }) });
-                      setExprList((exprList || []).filter((x) => x.id !== e.id));
-                    } catch (err) { setMsg("删除失败：" + String(err && err.message || err)); }
-                  },
-                }, "删"),
-              )),
-            )
           ) : mode === "slang" ? (
             (() => {
-              if (!slangList) return h("div", { style: S.muted }, "读取中…")
-              if (!slangList.length) return h("div", { style: S.muted }, "还没学会什么词")
+              if (!slangList && !exprList) return h("div", { style: S.muted }, "读取中…")
               const _has = (s) => String((s && s.meaning) || "").trim() !== ""
-              const known = slangList.filter(_has)
-              const pending = slangList.filter((s) => !_has(s) && (Number(s.count) || 0) >= 6)
-              const seeds = slangList.filter((s) => !_has(s) && (Number(s.count) || 0) < 6)
+              const known = (slangList || []).filter(_has)
+              const pending = (slangList || []).filter((s) => !_has(s) && (Number(s.count) || 0) >= 6)
+              const seeds = (slangList || []).filter((s) => !_has(s) && (Number(s.count) || 0) < 6)
+              const exprs = exprList || []
               const chip = (s, warn) =>
                 h("span", {
                   key: "w-" + s.phrase,
@@ -2709,7 +2673,43 @@ window.__ModuleLoader__.load({
                     background: warn ? "rgba(240,128,60,.10)" : "rgba(64,132,255,.08)",
                   },
                 }, (s.phrase || s.word || "") + " ×" + (s.count || 0))
-              return h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+              return h("div", { style: { display: "flex", flexDirection: "column", gap: 16 } },
+                exprs.length > 0
+                  ? h("div", null,
+                      h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 4 } }, `学到的说法（场合感） ${exprs.length}`),
+                      h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 8, lineHeight: 1.5 } },
+                        "「当 X 时，可以 Y」。梗是公用的——不管从哪个群、哪个私聊、还是 B 站评论区学来的，在哪儿都能用。"
+                        + "每轮最多挑 3 条给她看，跟当前话题沾边的优先。"),
+                      h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+                        exprs.map((e) => h("div", {
+                          key: "ex" + e.id,
+                          style: {
+                            ...S.card, padding: "8px 12px", borderLeft: "3px solid #4084ff",
+                            display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8,
+                          },
+                        },
+                          h("div", { style: { flex: 1, minWidth: 0 } },
+                            h("div", { style: { fontSize: 13, lineHeight: 1.5 } },
+                              "当", h("span", { style: { color: "#4084ff", fontWeight: 600 } }, e.situation),
+                              "时，可以", h("span", { style: { fontWeight: 600 } }, e.style)),
+                            e.example ? h("div", { style: { ...S.muted, fontSize: 11, marginTop: 3 } },
+                              "例：" + e.example) : null,
+                            h("div", { style: { ...S.muted, fontSize: 11, marginTop: 3 } },
+                              `见过 ${e.count || 1} 次 · ${e.scope}`),
+                          ),
+                          h("button", {
+                            style: { ...S.btn(false), fontSize: 11, padding: "2px 8px", flexShrink: 0 },
+                            onClick: async () => {
+                              try {
+                                await call("/expressions", { method: "POST", body: JSON.stringify({ op: "delete", id: e.id }) });
+                                setExprList((exprList || []).filter((x) => x.id !== e.id));
+                              } catch (err) { setMsg("删除失败：" + String(err && err.message || err)); }
+                            },
+                          }, "删"),
+                        )),
+                      ),
+                    )
+                  : null,
                 known.length > 0
                   ? h("div", null,
                       h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 6 } }, "已学会（知道意思）"),
@@ -2732,9 +2732,12 @@ window.__ModuleLoader__.load({
                   : null,
                 seeds.length > 0
                   ? h("div", null,
-                      h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 6 } }, "候选（还没说够 6 次）"),
+                      h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 6 } }, `候选（还没说够 6 次） ${seeds.length}`),
                       h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } }, seeds.map((s) => chip(s, false))),
                     )
+                  : null,
+                (!exprs.length && !known.length && !pending.length && !seeds.length)
+                  ? h("div", { style: S.muted }, "还没学到什么。她会在聊天里慢慢琢磨「什么场合该怎么接」。")
                   : null,
               )
             })()
