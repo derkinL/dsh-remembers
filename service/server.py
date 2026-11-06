@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from embedding import Embedder
-from extractor import ExtractConfig, Extractor
+from extractor import learn_speak_prompt_text, learn_speak_prompt_path, LEARN_SPEAK_DEFAULT, ExtractConfig, Extractor
 from llm import LLM
 from memory_core import MemoryInput, MemoryStore
 from surprisal import SurprisalGate
@@ -392,6 +392,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, store.meme_list(emotion, q, limit, pack))
         elif path == "/slang":
             self._json(200, store.slang_list())
+        elif path == "/learn/prompt":
+            # 2026-11-06：可改的「学什么」prompt（决定抽取，不是注入人格那段）
+            self._guard(lambda: self._json(200, {
+                "ok": True,
+                "prompt": learn_speak_prompt_text(),
+                "isDefault": learn_speak_prompt_text() == LEARN_SPEAK_DEFAULT,
+            }))
         elif path == "/expressions":
             # 2026-11-06：学来的说法（「当 X 时，可以 Y」）
             self._guard(lambda: self._json(200, {
@@ -607,6 +614,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._delete_meme())
         elif path == "/slang":
             self._guard(lambda: self._post_slang())
+        elif path == "/learn/prompt":
+            self._guard(lambda: self._post_learn_prompt())
         elif path == "/expressions":
             self._guard(lambda: self._post_expressions())
         elif path == "/affinity":
@@ -2745,6 +2754,23 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"ok": True})
 
     # -- 学说话 / 亲和度 / 任务 / 便签 / 睡眠 --------------------------------
+
+    def _post_learn_prompt(self) -> None:
+        """写「学什么」的 prompt。传空字符串 = 恢复默认（删文件）。"""
+        import os as _os
+        body = self._body()
+        text = str(body.get("prompt") or "").strip()
+        try:
+            p = learn_speak_prompt_path()
+            _os.makedirs(_os.path.dirname(p), exist_ok=True)
+            if text:
+                open(p, "w", encoding="utf-8").write(text + "\n")
+            else:
+                if _os.path.exists(p):
+                    _os.remove(p)
+            self._json(200, {"ok": True, "prompt": learn_speak_prompt_text()})
+        except Exception as e:
+            self._json(500, {"ok": False, "error": str(e)})
 
     def _post_expressions(self) -> None:
         """POST 增一条 / DELETE 删一条。"""

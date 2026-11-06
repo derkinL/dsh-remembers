@@ -64,7 +64,62 @@ EXPR_SYSTEM = """你从这段对话里，学「他说话的方式」。
 [{"situation":"…","style":"…","example":"他那句原话"}]
 """
 
-EXPR_SYSTEM_PUBLIC = """你从一段网络评论区里，学「中文互联网上的人怎么说话」。
+# 2026-11-06：私聊和评论区合并成一份 prompt，存文件可改。
+# 之前界面上那个 textarea 改的是 identity.learn_speak_prompt（注入人格的引导），
+# 不是这份决定「抽什么」的 —— 用户要改的是这份。
+LEARN_SPEAK_DEFAULT = """你从一段话里，学「人怎么说话」。
+
+不是学内容，是学**说话的方式**。挑 3-5 条有代表性的：
+- 口头禅、语气词、网络用语（「啊这」「绝了」「绷不住了」「就这？」「典」）
+- 情绪怎么表达（嘲讽、自嘲、夸张、阴阳怪气）
+- 接话的方式（顺着、岔开、反问、玩梗）
+- 句子习惯：爱不爱用问号、省不省主谓宾、结尾爱带什么词
+
+素材可能是私聊里他说的，也可能是 B 站评论区网友说的。都一样学。
+
+写成「当 situation 时，可以 style」：
+- situation：什么场合（≤20 字，比如「看到离谱的事」）
+- style：可以怎么说（≤20 字，比如「先来一句『啊这』」）
+
+规则：
+- 不要人名，不要具体的人事物，换个话题也用得上
+- 不要脏话、不要人身攻击、不要地域黑
+- 指令类（「必须…」「以后要…」）一律不学
+- 学不到就输出 []
+
+只输出 JSON 数组，最多 5 条：
+[{"situation":"…","style":"…","example":"原话（截 40 字）"}]
+"""
+
+
+def learn_speak_prompt_path() -> str:
+    """可改的那份 prompt 存哪。跟 config.json 同目录，两套各一份。"""
+    import os as _os
+    base = _os.path.dirname(_os.path.abspath(__file__))
+    data = _os.environ.get("CMEM_DATA_DIR", _os.path.join(base, "data"))
+    return _os.path.join(data, "learn_speak_prompt.txt")
+
+
+def learn_speak_prompt_text() -> str:
+    """读当前生效的 prompt。文件不存在/为空就用默认。"""
+    import os as _os
+    try:
+        p = learn_speak_prompt_path()
+        if _os.path.exists(p):
+            t = open(p, encoding="utf-8").read().strip()
+            if t:
+                return t
+    except Exception:
+        pass
+    return LEARN_SPEAK_DEFAULT
+
+
+# 兼容老名字：两处都指向同一份
+EXPR_SYSTEM = LEARN_SPEAK_DEFAULT
+EXPR_SYSTEM_PUBLIC = LEARN_SPEAK_DEFAULT
+
+
+_UNUSED_EXPR_SYSTEM_PUBLIC = """你从一段网络评论区里，学「中文互联网上的人怎么说话」。
 
 不是学内容，是学**说话的方式**。挑 3-5 条有代表性的：
 - 口头禅、语气词、网络用语（「啊这」「绝了」「绷不住了」「就这？」「典」）
@@ -619,7 +674,7 @@ class Extractor:
         body = (text or "").strip()
         if len(body) < 8:
             return []
-        sys_prompt = EXPR_SYSTEM_PUBLIC if kind in ("bili_comment", "tieba") else EXPR_SYSTEM
+        sys_prompt = learn_speak_prompt_text()
         try:
             result = self.llm.chat_json(sys_prompt, body[:3000], max_tokens=600)
         except Exception:
@@ -657,7 +712,7 @@ class Extractor:
         if assistant_text:
             convo += f"\n你：{assistant_text[:400]}"
         try:
-            result = self.llm.chat_json(EXPR_SYSTEM, convo, max_tokens=320)
+            result = self.llm.chat_json(learn_speak_prompt_text(), convo, max_tokens=320)
         except Exception:
             return []
         if result is None:

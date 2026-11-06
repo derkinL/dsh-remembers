@@ -3634,7 +3634,11 @@ const [data, setData] = React.useState(null);
           learn_speak_on: true,
           learn_speak_prompt: "",
         });
-        // 2026-11-06：拉一次「学说话」的计数，人格页要显示
+        // 2026-11-06：「学什么」的抽取 prompt（存在服务端文件里，可改）
+        const [learnPrompt, setLearnPrompt] = React.useState("");
+        const [learnPromptDirty, setLearnPromptDirty] = React.useState(false);
+
+        // 拉「学说话」的计数 + 当前生效的 prompt
         React.useEffect(() => {
           (async () => {
             try {
@@ -3643,6 +3647,10 @@ const [data, setData] = React.useState(null);
               const words = Array.isArray(sr) ? sr : [];
               setWordCount(words.filter((x) => String((x && x.meaning) || "").trim()).length);
             } catch { /* 拿不到就显示 0，不挡页面 */ }
+            try {
+              const lp = await call("/learn/prompt");
+              setLearnPrompt(String((lp && lp.prompt) || ""));
+            } catch { /* 同上 */ }
           })();
         }, []);
         const setId = (k, v) => setIdFields((f) => ({ ...f, [k]: v }));
@@ -3762,6 +3770,14 @@ const [data, setData] = React.useState(null);
             // 只在用户真的改过画像时才保存画像（否则保存 taboo 等会误清空画像）
             if (profileDirty) {
               await call("/persona/user", { method: "POST", body: JSON.stringify({ user_profile: built }) });
+            }
+            // 「学什么」的 prompt 单独存（不是 identity 里的字段）
+            if (learnPromptDirty) {
+              await call("/learn/prompt", {
+                method: "POST",
+                body: JSON.stringify({ prompt: learnPrompt }),
+              });
+              setLearnPromptDirty(false);
             }
             const res = await call("/persona", {
               method: "POST",
@@ -4096,9 +4112,9 @@ const [data, setData] = React.useState(null);
                   h("span", { style: { ...S.muted, fontSize: 12 } }, "学什么（写进人格的原文，可改）"),
                   h("textarea", {
                     style: { ...S.input, minHeight: 72, resize: "vertical", fontFamily: "inherit", fontSize: 12 },
-                    value: idFields.learn_speak_prompt || "",
-                    placeholder: "例：从聊天和评论区里学「人怎么说话」：口头禅、语气词、网络用语…",
-                    onChange: (ev) => setId("learn_speak_prompt", ev.target.value),
+                    value: learnPrompt,
+                    placeholder: "这段决定她「学什么」。留空就用默认。",
+                    onChange: (ev) => { setLearnPrompt(ev.target.value); setLearnPromptDirty(true); },
                     disabled: idFields.learn_speak_on === false,
                   }),
                   h("span", { style: { fontSize: 11, color: "var(--dsw-color-text-secondary, #9ca3af)" } },
