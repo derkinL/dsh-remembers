@@ -2197,6 +2197,7 @@ window.__ModuleLoader__.load({
         const [notesList, setNotesList] = React.useState(null);
         const [slangList, setSlangList] = React.useState(null);
         const [exprList, setExprList] = React.useState(null);
+        const [newExpr, setNewExpr] = React.useState({ situation: "", style: "", example: "" });
         const [tasksList, setTasksList] = React.useState(null);
         const [stateInfo, setStateInfo] = React.useState(null);
         const [selfModel, setSelfModel] = React.useState(null);
@@ -2710,6 +2711,53 @@ window.__ModuleLoader__.load({
                       ),
                     )
                   : null,
+                // 手动教一条（2026-11-06）：自动抽的素材不够时，直接教
+                h("div", { style: { ...S.card, padding: "10px 12px", borderLeft: "3px solid #f0803c" } },
+                  h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 6 } }, "手动教一条"),
+                  h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+                    h("input", {
+                      style: { ...S.input, flex: "1 1 120px", minWidth: 100, fontSize: 12 },
+                      placeholder: "什么场合（对方说了件倒霉事）",
+                      value: newExpr.situation,
+                      onChange: (ev) => setNewExpr({ ...newExpr, situation: ev.target.value }),
+                    }),
+                    h("input", {
+                      style: { ...S.input, flex: "1 1 120px", minWidth: 100, fontSize: 12 },
+                      placeholder: "可以怎么说（先来一句「啊这」）",
+                      value: newExpr.style,
+                      onChange: (ev) => setNewExpr({ ...newExpr, style: ev.target.value }),
+                    }),
+                    h("button", {
+                      style: { ...S.btn(true), fontSize: 12, padding: "4px 12px" },
+                      onClick: async () => {
+                        if (!newExpr.situation.trim() || !newExpr.style.trim()) return;
+                        try {
+                          await call("/expressions", {
+                            method: "POST",
+                            body: JSON.stringify({
+                              scope: "global",
+                              situation: newExpr.situation.trim(),
+                              style: newExpr.style.trim(),
+                              example: newExpr.example.trim(),
+                            }),
+                          });
+                          setNewExpr({ situation: "", style: "", example: "" });
+                          const r = await call("/expressions");
+                          setExprList(Array.isArray(r && r.items) ? r.items : []);
+                          setMsg("教会她一条");
+                        } catch (err) {
+                          setMsg("保存失败：" + String((err && err.message) || err));
+                        }
+                      },
+                    }, "教她"),
+                  ),
+                  h("input", {
+                    style: { ...S.input, marginTop: 6, fontSize: 12 },
+                    placeholder: "原话例子（可选）",
+                    value: newExpr.example,
+                    onChange: (ev) => setNewExpr({ ...newExpr, example: ev.target.value }),
+                  }),
+                ),
                 known.length > 0
                   ? h("div", null,
                       h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 6 } }, "已学会（知道意思）"),
