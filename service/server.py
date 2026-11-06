@@ -1404,7 +1404,7 @@ class Handler(BaseHTTPRequestHandler):
             if key in body:
                 cur[key] = bool(body[key])
         # 2026-11-06：B 站节奏三件套。之前不在白名单里，前端发了也存不进去（静默丢弃）。
-        for key in ("biliBrowsePerDay", "biliMinGapMinutes", "biliMaxGapMinutes"):
+        for key in ("biliBrowsePerDay", "biliBrowseLimit", "biliMinGapMinutes", "biliMaxGapMinutes"):
             if key in body:
                 try:
                     v = int(body[key])
@@ -1412,6 +1412,8 @@ class Handler(BaseHTTPRequestHandler):
                     continue
                 if key == "biliBrowsePerDay":
                     cur[key] = max(0, min(20, v))       # 0 = 不刷，最多 20 次/天
+                elif key == "biliBrowseLimit":
+                    cur[key] = max(1, min(10, v))       # 每次存进见闻的条数
                 elif key == "biliMinGapMinutes":
                     cur[key] = max(5, min(720, v))      # 5 分钟 ~ 12 小时
                 else:
