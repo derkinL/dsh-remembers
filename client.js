@@ -1960,6 +1960,43 @@ window.__ModuleLoader__.load({
             ),
           ),
 
+          // ---- 她刷 B 站的节奏（2026-11-06）----
+          biliProactive ? (() => {
+            const perDay = Number(biliProactive.biliBrowsePerDay ?? 3);
+            const minGap = Number(biliProactive.biliMinGapMinutes ?? 60);
+            const maxGap = Number(biliProactive.biliMaxGapMinutes ?? 240);
+            const numInput = (key, val, lo, hi, step, hint) => h("div", {
+              style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 },
+            },
+              h("div", { style: { fontSize: 13, minWidth: 130 } }, hint),
+              h("input", {
+                type: "number", min: lo, max: hi, step: step || 1,
+                value: val,
+                onChange: (ev) => {
+                  const v = Number(ev.target.value);
+                  if (!Number.isFinite(v)) return;
+                  setBiliProactive({ ...biliProactive, [key]: Math.max(lo, Math.min(hi, v)) });
+                },
+                style: { ...S.input, width: 90 },
+              }),
+              h("div", { style: { ...S.muted, fontSize: 12 } },
+                key === "biliBrowsePerDay" ? "次/天" : "分钟"),
+            );
+            return h("div", { style: S.card },
+              h("div", { style: S.label }, "她刷 B 站的节奏"),
+              h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
+                "她一天刷几次、两次之间隔多久。间隔是随机的 —— 比如 60~240 分钟，"
+                + "每次在 1 到 4 小时之间随机挑一个，不是固定点。"),
+              numInput("biliBrowsePerDay", perDay, 0, 20, 1, "每天最多刷"),
+              numInput("biliMinGapMinutes", minGap, 5, 720, 5, "两次之间至少隔"),
+              numInput("biliMaxGapMinutes", maxGap, 5, 1440, 5, "最多隔"),
+              h("div", { style: { ...S.muted, fontSize: 11, marginTop: 4, lineHeight: 1.5 } },
+                "区间调得宽一点她刷得更像人（比如 90~300 分钟）；"
+                + "一天 3 次 + 间隔 1~4 小时的话，额度常常中午就用完了，下午晚上一次不刷。"
+                + (perDay === 0 ? "  现在是 0 次 = 不刷。" : "")),
+            );
+          })() : null,
+
           biliProactive ? h("div", { style: S.card },
             h("div", { style: S.label }, "她刷完 B 站能做什么"),
             h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },

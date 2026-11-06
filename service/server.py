@@ -1399,9 +1399,23 @@ class Handler(BaseHTTPRequestHandler):
         import json as _json
         body = self._body()
         cur = self._load_proactive()
-        for key in ("enabled", "talkEnabled", "biliShareToOwner", "biliShareToGroup", "biliComment", "biliMentionOwner"):
+        for key in ("enabled", "talkEnabled", "biliShareToOwner", "biliShareToGroup",
+                    "biliComment", "biliMentionOwner", "biliBrowseEnabled"):
             if key in body:
                 cur[key] = bool(body[key])
+        # 2026-11-06：B 站节奏三件套。之前不在白名单里，前端发了也存不进去（静默丢弃）。
+        for key in ("biliBrowsePerDay", "biliMinGapMinutes", "biliMaxGapMinutes"):
+            if key in body:
+                try:
+                    v = int(body[key])
+                except (TypeError, ValueError):
+                    continue
+                if key == "biliBrowsePerDay":
+                    cur[key] = max(0, min(20, v))       # 0 = 不刷，最多 20 次/天
+                elif key == "biliMinGapMinutes":
+                    cur[key] = max(5, min(720, v))      # 5 分钟 ~ 12 小时
+                else:
+                    cur[key] = max(5, min(1440, v))     # 5 分钟 ~ 24 小时
         for key in ("startHour", "endHour", "minGapMinutes", "maxGapMinutes", "silentRatio"):
             if key in body:
                 cur[key] = int(body[key])
