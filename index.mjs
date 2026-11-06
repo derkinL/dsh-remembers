@@ -1204,18 +1204,21 @@ async function scanSeen() {
       registerTool(defineTool({
         name: "bili_watch",
         description:
-          "看懂一条 B 站视频（字幕+弹幕+热评），不用真的点开。"
-          + "看完如果觉得有意思，主动把链接（https://www.bilibili.com/video/<BV号>）和你的感想发给老大——"
-          + "直接说一句「刚看了个视频…https://…」，别只在脑子里记着。"
-          + "跟老大聊到某个视频、或者他发了 BV 号的时候用。",
+          "看懂一条 B 站视频（字幕+弹幕+热评+九宫格画面），不用真的点开。"
+          + "看完**一定要传 thought**——一两句你真实的想法（哪个点戳到你、哪里有不同意见、弹幕很妙、标题骗人都算），"
+          + "thought 会一起记进 L3，成为你以后能想起来的「我看过什么」。不传就等于白看。"
+          + "如果觉得有意思，再主动把链接和感想发给老大。",
         parameters: {
           bv: { type: "string", required: true, description: "BV 号，比如 BV1U3n46GEzY" },
+          thought: { type: "string", description: "你看完的真实想法（一两句，随手写）。不传就只留素材不留记忆。" },
         },
         output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
         execute: async (args) => {
           const bv = String(args.bv || "").trim();
           if (!bv) return { ok: false, error: "bv required" };
-          const r = await get("/bili/debrief?bv=" + encodeURIComponent(bv));
+          const th = String(args.thought || "").trim();
+          const r = await get("/bili/debrief?bv=" + encodeURIComponent(bv)
+              + (th ? "&thought=" + encodeURIComponent(th) : ""));
           if (!r) return { ok: false, error: "unavailable" };
           // 每次看完都提一次：有想说的可以用 bili_comment 留一句。
           // 之前只在工具描述里写「看到特别喜欢的才评」，结果她从来不评。

@@ -1656,6 +1656,34 @@ class MemoryStore:
             )
             self.conn.commit()
 
+    def browsed_link_memory(self, url_part: str, memory_id: int) -> int:
+        """按 url 片段（BV 号）给 browsed 记录回填 memory_id。
+
+        以前这列永远是 NULL —— 刷了一堆标题，但追不到哪条后来真看透了。
+        """
+        try:
+            row = self.conn.execute(
+                "SELECT id FROM browsed WHERE url LIKE ? AND memory_id IS NULL "
+                "ORDER BY id DESC LIMIT 1", (f"%{url_part}%",)).fetchone()
+            if not row:
+                return 0
+            self.conn.execute("UPDATE browsed SET memory_id=? WHERE id=?",
+                              (int(memory_id), int(row[0])))
+            self.conn.commit()
+            return 1
+        except Exception:
+            return 0
+
+    def browsed_title_for(self, url_part: str) -> str:
+        """按 BV 号反查标题（debrief 输出里没有标题）。"""
+        try:
+            row = self.conn.execute(
+                "SELECT title FROM browsed WHERE url LIKE ? ORDER BY id DESC LIMIT 1",
+                (f"%{url_part}%",)).fetchone()
+            return str(row[0]) if row else ""
+        except Exception:
+            return ""
+
     def browsed_list(self, limit: int = 5) -> list[dict]:
         rows = self.conn.execute(
             "SELECT title, url, ts FROM browsed ORDER BY id DESC LIMIT ?",

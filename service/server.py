@@ -364,7 +364,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, self._bili_feed((query.get("thought") or [""])[0]))
         elif path == "/bili/debrief":
             bv = (query.get("bv") or [""])[0]
-            self._json(200, self._bili_debrief(bv))
+            thought = (query.get("thought") or [""])[0]
+            self._json(200, self._bili_debrief(bv, thought))
         elif path == "/browse":
             self._json(200, store.browsed_list())
         elif path == "/proactive":
@@ -2250,7 +2251,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _bili_feed(self, thought: str = "") -> dict:
         """她刷 B 站选题：优先用登录账号的 feed（带偏好），失败退回热门。
-        会排除已经看过/记过的视频，避免每次都刷到同几个。"""
+
+        返回每条都带 BV 号 —— 这是「刷完能接着看」的关键：以前只留标题，
+        她想用 bili_watch 看透都不知道该看哪条，于是永远停在「扫标题」。
+        """
         import re as _re
 
         # 已看过/已记过的标题（全量，用于排除）
@@ -2259,40 +2263,59 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             history = set()
 
-        # 先拿多一点（6 条），再从里面挑新的
+        HINT = ("挑一条你觉得有意思的，用 bili_watch 传它的 bv 看透——"
+                "它会给你字幕全文、弹幕、热评、九宫格画面。"
+                "看完如果被戳到（弹幕很妙/标题骗人/有不同意见都算），用 bili_comment 留一句你自己的话。")
+
+        # CLI 行格式（2026-11-06 实测）：
+        #   1. BV1DubxzVEPB   175s  弹幕 197670  播放 31744100  猫咪地铁站通车啦  @爱鼓捣的邢志磊 [猫咪]
+        LINE = _re.compile(
+            r"^\d+\.\s+(?P<bv>BV[0-9A-Za-z]{8,12})\s+"
+            r"(?P<dur>\d+)s\s+弹幕\s+(?P<dm>\d+)\s+播放\s+(?P<vw>\d+)\s+"
+            r"(?P<title>.+?)\s+@(?P<owner>\S+?)(?:\s+\[(?P<tag>[^\]]+)\])?$"
+        )
+
         res = self._run_bili(["feed", "--n", "6"], timeout=90)
         if res.get("ok") and res.get("stdout"):
             items = []
             seen = set()
             for ln in res["stdout"].split("\n"):
-                s = ln.strip()
-                if "BV" not in s or s.startswith("已看过"):
+                m = LINE.match(ln.strip())
+                if not m:
                     continue
-                # 只处理编号行（"1. BV1xxx 175s 弹幕 ... 播放 ... 标题 @up"），
-                # 排除 "看完跑：node bili.mjs debrief ..." 这类提示行
-                if not _re.match(r"^\s*\d+\.\s", s):
-                    continue
-                m = _re.search(r"播放\s+\d+\s+(.+?)(?:\s+@|$)", s)
-                title = (m.group(1) if m else s).strip()
+                title = m.group("title").strip()
                 if not title or title in seen:
                     continue
                 seen.add(title)
-                items.append(title[:120])
+                bv = m.group("bv")
+                items.append({
+                    "bv": bv,
+                    "title": title[:120],
+                    "url": "https://www.bilibili.com/video/" + bv,
+                    "duration": int(m.group("dur")),
+                    "danmaku": int(m.group("dm")),
+                    "views": int(m.group("vw")),
+                    "owner": m.group("owner"),
+                    "tag": (m.group("tag") or "").strip(),
+                })
                 if len(items) >= 12:
                     break
 
-            fresh = [x for x in items if x not in history]
+            fresh = [x for x in items if x["title"] not in history]
             if fresh:
                 picked = fresh[:3]
                 with _lock:
-                    for t_ in picked:
-                        store.browsed_add(t_, "")
+                    for it in picked:
+                        # url 以前传空字符串，现在带真实链接（能反查 BV）
+                        store.browsed_add(it["title"], it["url"])
                     try:
-                        store.log_activity("bili", "刷B站：" + "、".join(x[:18] for x in picked), thought)
+                        store.log_activity(
+                            "bili", "刷B站：" + "、".join(x["title"][:18] for x in picked), thought)
                     except Exception:
                         pass
-                return {"ok": True, "source": "bili-feed", "items": picked}
+                return {"ok": True, "source": "bili-feed", "items": picked, "hint": HINT}
             # 偏好池里没新的了 → 热门兜底（多样化）
+
         # 退回热门（翻页找新的，热门也排除已看过）
         try:
             import json as _json
@@ -2310,7 +2333,6 @@ class Handler(BaseHTTPRequestHandler):
 
             picked = []
             used_pages = []
-            # 随机挑 4 个页（1-8 页），大概率能翻出没看过的
             pages = _random.sample(range(1, 9), 4)
             for page in pages:
                 try:
@@ -2323,7 +2345,16 @@ class Handler(BaseHTTPRequestHandler):
                     bvid = str(it.get("bvid") or "")
                     if not title or not bvid or title in history:
                         continue
-                    picked.append({"title": title, "url": "https://www.bilibili.com/video/" + bvid})
+                    picked.append({
+                        "bv": bvid,
+                        "title": title,
+                        "url": "https://www.bilibili.com/video/" + bvid,
+                        "duration": int(it.get("duration") or 0),
+                        "danmaku": int(it.get("danmaku") or 0),
+                        "views": int(it.get("stat", {}).get("view") or 0),
+                        "owner": str((it.get("owner") or {}).get("name") or ""),
+                        "tag": "",
+                    })
                     if len(picked) >= 3:
                         break
                 if len(picked) >= 3:
@@ -2339,12 +2370,14 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
             if not picked:
-                return {"ok": True, "source": "popular", "items": [], "note": "热门也刷完了（翻了 %d 页）" % len(used_pages)}
-            return {"ok": True, "source": "popular", "items": picked, "pages": used_pages}
+                return {"ok": True, "source": "popular", "items": [],
+                        "note": "热门也刷完了（翻了 %d 页）" % len(used_pages)}
+            return {"ok": True, "source": "popular", "items": picked,
+                    "pages": used_pages, "hint": HINT}
         except Exception as e:
             return {"ok": False, "error": str(e), "items": []}
 
-    def _bili_debrief(self, bv: str) -> dict:
+    def _bili_debrief(self, bv: str, thought: str = "") -> dict:
         """看懂一条视频（字幕+弹幕+热评+抽帧），返回摘要素材。
 
         除了截断的摘要，还把各文件的**完整路径**单独给出来：
@@ -2375,15 +2408,42 @@ class Handler(BaseHTTPRequestHandler):
         if m:
             paths["cover"] = m.group(1)
 
+        # 看完记一笔：这是「看完有记忆」的关键。以前 debrief 只返回素材，
+        # 什么都没留下 —— 她刷了 182 条标题，memory_id 一列全空。
+        title = ""
+        saved_mid = None
+        try:
+            title = store.browsed_title_for(bv)
+        except Exception:
+            title = ""
+        if res.get("ok") and title and thought.strip():
+            try:
+                with _lock:
+                    saved_mid = store.add(MemoryInput(
+                        text="看了《" + title[:80] + "》：" + thought.strip()[:400],
+                        tier="L3",
+                        subject="self",
+                        tags=["bili", "bili_browse", bv],
+                        scope="global",
+                    ))
+                store.browsed_link_memory(bv, saved_mid)
+            except Exception:
+                saved_mid = None
+
         return {
             "ok": res.get("ok", False),
             "bv": bv,
+            "title": title,
             # 摘要只留尾巴：开头是元信息，尾巴是弹幕热区 + 抽帧路径
             "text": out[-3000:],
             # 完整内容的入口
             "paths": paths,
             "full_chars": len(out),
             "stderr": res.get("stderr"),
+            # 这次有没有落成记忆（没写 thought 就是 None）
+            "saved_memory": saved_mid,
+            "saved_hint": ("已记进 L3：" + (title[:30] if title else bv)) if saved_mid
+                          else ("想看透就带 thought 参数再调一次，把想法说出来我帮你记下" if title else ""),
         }
 
     def _post_browse(self) -> None:
