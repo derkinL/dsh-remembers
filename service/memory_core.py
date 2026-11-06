@@ -1313,11 +1313,14 @@ class MemoryStore:
             (scope, s, st)).fetchone()
         return int(row[0]) if row else 0
 
-    def expr_pick(self, scope: str, recent_text: str = "", n: int = 3) -> list[dict]:
+    def expr_pick(self, scope: str = "", recent_text: str = "", n: int = 3) -> list[dict]:
         """加权抽样：跟这轮话题沾边的优先，见过的次数多的优先。
 
         count 线性映射到 1-5 倍权重；situation 里至少两个二字片段在本轮话里出现 → ×3。
         不放回抽 n 条。（照抄 dsh-fish-soul 的 pickExpressions。）
+
+        2026-11-06：**不限 scope**。梗是公共资产 —— 从群里、私聊、B站评论区
+        哪儿学来的，在任何地方都能用。scope 只留着标记来源，不参与筛选。
         """
         import random as _random
 
@@ -1341,10 +1344,10 @@ class MemoryStore:
             return False
 
         try:
-            # 本 scope + global 的都能用（global 排在后面）
+            # 全库都参与 —— 梗不分场合来源，学到就能用
             rows = [dict(r) for r in self.conn.execute(
                 "SELECT id, scope, situation, style, example, count FROM expressions "
-                "WHERE scope IN (?, 'global') ORDER BY count DESC LIMIT 200", (scope,))]
+                "ORDER BY count DESC LIMIT 200")]
         except Exception:
             return []
         if not rows:

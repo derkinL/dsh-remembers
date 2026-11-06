@@ -492,11 +492,10 @@ class Handler(BaseHTTPRequestHandler):
                 st["slang"] = []
                 st["affinity"] = 0
                 st["open_tasks"] = 0
-            # 2026-11-06：学来的说法。scope 由 /state?scope= 传（private:<qq> / group:<gid>），
-            # 不传就跳过——每个聊天学自己的，群里的梗不带到私聊去。
+            # 2026-11-06：学来的说法。梗是公用的——不限 scope，全库挑 3 条。
+            # scope 参数还收（兼容旧调用），但不参与筛选，只标来源。
             try:
-                _scope = (query.get("scope") or [""])[0].strip()
-                st["expressions"] = store.expr_pick(_scope, "", 3) if _scope else []
+                st["expressions"] = store.expr_pick("", "", 3)
             except Exception:
                 st["expressions"] = []
             st["view_hour"] = hour
