@@ -2728,8 +2728,9 @@ const [data, setData] = React.useState(null);
         const [qqBind, setQqBind] = React.useState(null);   // 正在选会话重绑的 chat
         const [qqBusy, setQqBusy] = React.useState(false);
         const [qqMsg, setQqMsg] = React.useState(null);
-        // NapCat 工具权限（7 组开关，存在 dsh-remembers 的 napcat_tools.json）
+        // NapCat 工具权限（127 个 action 逐项开关，存在 dsh-remembers 的 napcat_tools.json）
         const [napcatTools, setNapcatTools] = React.useState(null);
+        const [napcatOpen, setNapcatOpen] = React.useState({});   // 组展开状态
 
         const browse = async (path) => {
           setFsErr(null);
@@ -3316,49 +3317,107 @@ const [data, setData] = React.useState(null);
               : null,
           ),
 
-          // ---- 工具权限（7 组开关）----
+          // ---- 工具权限（可展开，逐项开关）----
           napcatTools && napcatTools.groups
             ? h("div", { style: { ...S.card, marginBottom: 14 } },
                 h("div", { style: S.label }, "工具权限（她能调用哪些 QQ 操作）"),
                 h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
-                  "QQ 插件原版把 127 个 NapCat 接口全开着。这里按危险程度分 7 组 —— "
-                  + "只读、发消息、QQ 空间、文件默认开；群管理、危险操作、账号凭证默认关。"
-                  + "关掉的组她调不动，会提示你打开。"),
-                h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } },
-                  ...(napcatTools.groups || []).map((g) =>
-                    h("div", {
-                      key: "napcat-" + g.id,
-                      onClick: async () => {
-                        try {
-                          const r = await call("/napcat/tools", {
-                            method: "POST",
-                            body: JSON.stringify({ group: g.id, enabled: !g.enabled }),
-                          });
-                          setNapcatTools(r);
-                        } catch (e) {
-                          setQqMsg({ kind: "error", text: "改不了：" + (e && e.message ? e.message : String(e)) });
-                        }
+                  "QQ 插件的 127 个 NapCat 接口，逐项控制。点一组展开看里面具体是什么；"
+                  + "组头右边的按钮能一键全开/全关整组。现在开着 "
+                  + (napcatTools.enabledCount || 0) + " / " + (napcatTools.totalCount || 0) + " 个。"),
+
+                ...(napcatTools.groups || []).map((g) => {
+                  const open = !!napcatOpen[g.id];
+                  const allOn = g.on === g.total;
+                  return h("div", {
+                    key: "napcat-g-" + g.id,
+                    style: { borderBottom: "1px solid rgba(0,0,0,.06)", paddingBottom: 6, marginBottom: 6 },
+                  },
+                    // 组头：点标题展开，点右边按钮整组开关
+                    h("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "6px 0" } },
+                      h("div", {
+                        onClick: () => setNapcatOpen({ ...napcatOpen, [g.id]: !open }),
+                        style: { flex: 1, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" },
                       },
-                      style: {
-                        padding: "10px 12px", borderRadius: 8, cursor: "pointer",
-                        border: g.enabled ? "1px solid #4084ff" : "1px solid rgba(0,0,0,.10)",
-                        background: g.enabled ? "rgba(64,132,255,.06)" : "#fff",
-                        transition: "border-color .15s, background .15s",
-                      },
-                    },
-                      h("div", { style: { display: "flex", alignItems: "baseline", gap: 6 } },
-                        h("div", { style: { fontSize: 13, fontWeight: 600, color: g.enabled ? "#4084ff" : "#333" } }, g.label),
-                        h("div", { style: { fontSize: 11, color: "#999" } }, g.count + " 项"),
+                        h("div", { style: { fontSize: 13, fontWeight: 600, color: g.on > 0 ? "#4084ff" : "#333" } }, g.label),
+                        h("div", {
+                          style: {
+                            fontSize: 11, padding: "1px 7px", borderRadius: 999,
+                            background: g.on > 0 ? "rgba(64,132,255,.10)" : "rgba(0,0,0,.05)",
+                            color: g.on > 0 ? "#4084ff" : "#999",
+                          },
+                        }, g.on + "/" + g.total),
+                        h("div", { style: { fontSize: 11, color: "#aaa" } }, open ? "收起 ▴" : "展开 ▾"),
                       ),
-                      h("div", { style: { fontSize: 11, color: g.enabled ? "#4084ff" : "#999", marginTop: 3 } },
-                        g.enabled ? "开着" : (g.default ? "关着" : "关着（默认关）")),
+                      h("button", {
+                        style: {
+                          ...S.btn(false), fontSize: 11, padding: "3px 10px",
+                          border: "1px solid " + (allOn ? "#e5484d" : "#4084ff"),
+                          color: allOn ? "#e5484d" : "#4084ff",
+                        },
+                        onClick: async () => {
+                          try {
+                            const r = await call("/napcat/tools", {
+                              method: "POST",
+                              body: JSON.stringify({ group: g.id, enabled: !allOn }),
+                            });
+                            setNapcatTools(r);
+                          } catch (e) {
+                            setQqMsg({ kind: "error", text: "改不了：" + (e && e.message ? e.message : String(e)) });
+                          }
+                        },
+                      }, allOn ? "全关" : "全开"),
                     ),
-                  ),
-                ),
+                    // 展开内容：每个 action 一行开关
+                    open
+                      ? h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, padding: "4px 0 6px 4px" } },
+                          ...(g.items || []).map((it) =>
+                            h("div", {
+                              key: "napcat-a-" + it.action,
+                              onClick: async () => {
+                                try {
+                                  const r = await call("/napcat/tools", {
+                                    method: "POST",
+                                    body: JSON.stringify({ action: it.action, enabled: !it.enabled }),
+                                  });
+                                  setNapcatTools(r);
+                                } catch (e) {
+                                  setQqMsg({ kind: "error", text: "改不了：" + (e && e.message ? e.message : String(e)) });
+                                }
+                              },
+                              style: {
+                                display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
+                                padding: "4px 8px", borderRadius: 6,
+                                border: it.enabled ? "1px solid rgba(64,132,255,.45)" : "1px solid rgba(0,0,0,.08)",
+                                background: it.enabled ? "rgba(64,132,255,.05)" : "#fff",
+                                transition: "border-color .12s, background .12s",
+                              },
+                            },
+                              h("div", {
+                                style: {
+                                  width: 13, height: 13, borderRadius: 3, boxSizing: "border-box", flex: "0 0 auto",
+                                  border: it.enabled ? "4px solid #4084ff" : "1px solid rgba(0,0,0,.22)",
+                                  background: "#fff",
+                                },
+                              }),
+                              h("div", {
+                                style: {
+                                  fontSize: 11.5, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                                  color: it.enabled ? "#2b5fbf" : "#888",
+                                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                },
+                                title: it.action,
+                              }, it.action),
+                            ),
+                          ),
+                        )
+                      : null,
+                  );
+                }),
               )
             : null,
 
-          // 保存按钮（固定在屏幕右侧中间，跟其他页签一致）
+          // 保存按钮（固定在屏幕右侧中间，跟其他页签一致）          // 保存按钮（固定在屏幕右侧中间，跟其他页签一致）
           h("div", {
             key: "qq-dirty-save",
             style: {

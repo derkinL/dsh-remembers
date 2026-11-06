@@ -1646,7 +1646,13 @@ class Handler(BaseHTTPRequestHandler):
         ]),
     }
 
-    def _napcat_tools_cfg(self) -> dict:
+    def _napcat_cfg(self) -> dict:
+        """{'action': bool} —— 每个 action 独立开关，缺省按所属组的 default。
+
+        兼容两种旧格式：
+          {"manage": false}            → 展开成该组所有 action
+          {"delete_friend": false}     → 直接当月单项
+        """
         import json as _json
         raw = {}
         try:
@@ -1654,48 +1660,83 @@ class Handler(BaseHTTPRequestHandler):
                 raw = _json.load(f)
         except Exception:
             pass
-        return {g: bool(raw.get(g, spec[1])) for g, spec in self.NAPCAT_TOOL_GROUPS.items()}
+        flat = {}
+        for k, v in (raw or {}).items():
+            if not isinstance(v, bool):
+                continue
+            if k in self.NAPCAT_TOOL_GROUPS:
+                for a in self.NAPCAT_TOOL_GROUPS[k][2]:
+                    flat[a] = v
+            else:
+                flat[k] = v
+        out = {}
+        for g, spec in self.NAPCAT_TOOL_GROUPS.items():
+            for a in spec[2]:
+                out[a] = flat.get(a, spec[1])
+        return out
 
     def _napcat_tools(self) -> dict:
-        """GET /napcat/tools —— 返回分组 + 每组的 action 清单。"""
-        cfg = self._napcat_tools_cfg()
-        return {"ok": True, "enabled": cfg, "groups": [
-            {"id": g, "label": spec[0], "default": spec[1],
-             "enabled": cfg.get(g, spec[1]),
-             "actions": spec[2],
-             "count": len(spec[2])}
-            for g, spec in self.NAPCAT_TOOL_GROUPS.items()
-        ]}
+        """GET /napcat/tools —— 组的汇总 + 组内每个 action 的开关。"""
+        cfg = self._napcat_cfg()
+        groups = []
+        for g, spec in self.NAPCAT_TOOL_GROUPS.items():
+            label, default, items = spec
+            on = sum(1 for a in items if cfg.get(a, default))
+            groups.append({
+                "id": g,
+                "label": label,
+                "default": default,
+                "on": on,
+                "total": len(items),
+                "items": [{"action": a, "enabled": cfg.get(a, default)} for a in items],
+            })
+        return {"ok": True, "actions": cfg, "groups": groups,
+                "enabledCount": sum(1 for v in cfg.values() if v), "totalCount": len(cfg)}
 
     def _set_napcat_tools(self) -> None:
-        """POST /napcat/tools —— 改一组的开关。"""
+        """POST /napcat/tools —— 三种粒度：
+        {"action": "x", "enabled": true}      改一个
+        {"group": "danger", "enabled": false} 整组
+        {"actions": {"a": true, ...}}         批量
+        """
         import json as _json
         body = self._body()
-        gid = str(body.get("group") or "").strip()
-        if gid not in self.NAPCAT_TOOL_GROUPS:
-            self._json(400, {"ok": False, "error": "unknown group"})
+        cfg = self._napcat_cfg()
+        changed = 0
+        if isinstance(body.get("actions"), dict):
+            for k, v in body["actions"].items():
+                if k in cfg:
+                    cfg[k] = bool(v)
+                    changed += 1
+        elif body.get("group"):
+            gid = str(body["group"]).strip()
+            if gid not in self.NAPCAT_TOOL_GROUPS:
+                self._json(400, {"ok": False, "error": "unknown group"})
+                return
+            for a in self.NAPCAT_TOOL_GROUPS[gid][2]:
+                cfg[a] = bool(body.get("enabled"))
+                changed += 1
+        elif body.get("action"):
+            act = str(body["action"]).strip()
+            if act not in cfg:
+                self._json(400, {"ok": False, "error": "unknown action"})
+                return
+            cfg[act] = bool(body.get("enabled"))
+            changed = 1
+        else:
+            self._json(400, {"ok": False, "error": "need action / group / actions"})
             return
-        raw = {}
-        try:
-            with open(self.NAPCAT_TOOLS_FILE, encoding="utf-8") as f:
-                raw = _json.load(f)
-        except Exception:
-            pass
-        raw[gid] = bool(body.get("enabled"))
         import os as _os
         _os.makedirs(_os.path.dirname(self.NAPCAT_TOOLS_FILE), exist_ok=True)
         with open(self.NAPCAT_TOOLS_FILE, "w", encoding="utf-8") as f:
-            _json.dump(raw, f, ensure_ascii=False, indent=2)
-        self._json(200, self._napcat_tools())
+            _json.dump(cfg, f, ensure_ascii=False, indent=2, sort_keys=True)
+        out = self._napcat_tools()
+        out["changed"] = changed
+        self._json(200, out)
 
     def _napcat_allowed(self) -> set:
-        """给插件用：把已启用的组摊平成 action 集合。"""
-        cfg = self._napcat_tools_cfg()
-        out = set()
-        for g, spec in self.NAPCAT_TOOL_GROUPS.items():
-            if cfg.get(g, spec[1]):
-                out.update(spec[2])
-        return out
+        """给插件用：把开着的 action 摊平成集合。"""
+        return {a for a, on in self._napcat_cfg().items() if on}
 
     # -- B 站 CLI 工具白名单 ----------------------------------------------------
 
