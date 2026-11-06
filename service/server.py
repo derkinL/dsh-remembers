@@ -1404,6 +1404,13 @@ class Handler(BaseHTTPRequestHandler):
             if key in body:
                 cur[key] = bool(body[key])
         # 2026-11-06：B 站节奏三件套。之前不在白名单里，前端发了也存不进去（静默丢弃）。
+        # 2026-11-06 自检补：前端「唤醒规则」里有 wakeActionCount，
+        # 但白名单没它，改了会被静默丢弃
+        if "wakeActionCount" in body:
+            try:
+                cur["wakeActionCount"] = max(1, min(10, int(body["wakeActionCount"])))
+            except (TypeError, ValueError):
+                pass
         for key in ("biliBrowsePerDay", "biliBrowseLimit", "biliMinGapMinutes", "biliMaxGapMinutes"):
             if key in body:
                 try:
