@@ -261,25 +261,12 @@ class Scheduler:
         st["bili_last"] = now
         st["bili_interval"] = 0
         st["bili_count"] = count + 1
-        # 和唤醒一样的机制，但动作固定为「刷 B 站」
-        hints = []
-        if cfg.get("biliShareToOwner", True):
-            # 2026-11-06：原来写的是「把链接和你的想法发给老大」——读起来像派活，
-            # 她每次都报告。改成「被戳到才分享，没感觉就自己待着」，给她不说的余地。
-            hints.append("被什么戳到了就分享给他（链接 + 你自己的话）；没什么想说的就自己待着，不用汇报")
-        if cfg.get("biliShareToGroup", False):
-            hints.append("也可以分享到群里")
-        if cfg.get("biliComment", True):
-            hints.append("想评论就评论（bili_run comment）")
-        if cfg.get("biliMentionOwner", True):
-            hints.append("评论或分享时 @主人")
-        hint_text = ("；".join(hints) + "。") if hints else ""
-        msg = (
-            f"（你自己待着，现在是 {hour} 点。"
-            "抽到：刷一会儿 B 站。用 bili_feed 刷，把你的真实想法写进 bili_feed 的 thought 参数。"
-            + hint_text
-            + "想做什么就做，也可以不刷——这只是你自己的时间。）"
-        )
+        # 2026-11-06：这条以前是「抽到：刷 B 站 + 五条指令」——整段祈使句塞进唤醒消息，
+        # 她会把它当任务清单逐条执行（刷 → 写 thought → 分享 → 评论 → @主人），
+        # 所以每次都报告、每次都 @主人。
+        # 参照 ssamurias/dsh-fish 的做法：叫醒只给处境，做法常驻在人格的【平常会做的事】里。
+        # 这里只留一句内心状态，刷不刷、看不看、说不说，全由她自己决定。
+        msg = f"（现在 {hour} 点。你自己待着，这会儿有点想上 B 站逛逛。）"
         self._inject(msg, silent=False)
         _log(f"bili: nudged model ({count + 1}/{per_day} today)")
         return True

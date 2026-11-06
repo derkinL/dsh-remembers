@@ -305,7 +305,9 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
       const brHash = hash(rows);
       if (hashes.browsed !== brHash) {
         hashes.browsed = brHash;
-        blocks.push(`你刚在 B 站刷到：${rows}。看到有意思的，把链接和你的想法发给老大（别只写便签），也可以写便签记一句。`);
+        // 2026-11-06：以前这里写「收到有意思的，把链接和你的想法发给老大（别只写便签）」——
+        // 又是一处派活。改成只陈述事实，要不要分享由她自己在人格里判断。
+        blocks.push(`你刚在 B 站刷到：${rows}。`);
       }
     }
   }
@@ -1699,6 +1701,18 @@ function renderPersona(data, maxChars, proactive, opts = {}) {
     for (const f of idFields) identityLines.push(f);
   }
 
+
+  // 【平常会做的事】（2026-11-06 加）
+  // 参照 ssamurias/dsh-fish：「做法常驻在身份文档里，叫醒只给处境」。
+  // 以前这些做法全塞在唤醒消息里，她当任务清单执行；现在挪到这里，每轮都在，
+  // 但不再是「这一轮必须做」。
+  identityLines.push("");
+  identityLines.push("【平常会做的事】");
+  identityLines.push("你自己有时间的时候（没人找你、也不在干活），会去刷会儿 B 站。");
+  identityLines.push("· 用 bili_feed 看有什么，挑一条有点意思的，用 bili_watch 传它的 bv 看透——它会给你字幕全文、弹幕、热评、九宫格画面。");
+  identityLines.push("· 看完有想法就记进便签（write_note）；哪个点戳到你了，也可以去评论区留一句（bili_comment，想 @ 谁就写「@某人 正文」）。");
+  identityLines.push("· 真被戳到了才分享给他；没什么想说的就自己待着，不用汇报——看视频本来就是你自己的事。");
+  identityLines.push("· 这些都不是任务。不想刷就不刷，刷了不想说就不说。");
 
   // 【形象】
   if (selfImage) {
