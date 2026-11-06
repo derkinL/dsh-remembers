@@ -1607,42 +1607,52 @@ class Handler(BaseHTTPRequestHandler):
 
     NAPCAT_TOOL_GROUPS = {
         "read": ("只读查询", True, [
-            "get_login_info", "get_status", "get_version_info", "can_send_image", "can_send_record", "get_msg",
-            "get_friend_list", "get_stranger_info", "get_group_list", "get_group_system_msg", "get_group_tags", "get_private_file_url",
-            "get_friend_msg_history", "get_image", "get_record", "get_group_ignored_notifies", "get_group_ignore_add_request", "get_profile_like",
-            "get_emoji_likes", "get_msg_emoji_likes", "get_friends_with_category", "get_recent_contact", "get_online_clients", "get_unidirectional_friend_list",
-            "get_doubt_friends_add_request", "get_collection_list", "get_group_info_ex", "get_group_detail_info", "get_file", "nc_get_packet_status",
-            "nc_get_user_status", "get_forward_msg", "get_mini_app_ark", "get_fileset_info", "get_flash_file_list", "list_filesets",
-            "get_flash_file_url", "get_share_link", "get_fileset_id", "get_qzone_msg_list", "get_qzone_msg_detail", "get_qzone_feeds",
-            "_get_friend_dress", "fetch_sys_faces", "fetch_face_entity", "search_sys_faces", "fetch_super_face_id", "_get_model_show",
+            ("get_login_info", "获取登录信息"), ("get_status", "获取在线状态"), ("get_version_info", "获取版本信息"), ("can_send_image", "能否发图片"),
+            ("can_send_record", "能否发语音"), ("get_msg", "获取单条消息"), ("get_friend_list", "获取好友列表"), ("get_stranger_info", "获取陌生人信息"),
+            ("get_group_list", "获取群列表"), ("get_group_system_msg", "获取群系统消息"), ("get_group_tags", "获取群标签"), ("get_private_file_url", "获取私聊文件链接"),
+            ("get_friend_msg_history", "获取好友聊天记录"), ("get_image", "获取图片"), ("get_record", "获取语音"), ("get_group_ignored_notifies", "获取群忽略通知"),
+            ("get_group_ignore_add_request", "获取群忽略申请"), ("get_profile_like", "获取名片赞"), ("get_emoji_likes", "获取表情赞"), ("get_msg_emoji_likes", "获取消息表情赞"),
+            ("get_friends_with_category", "按分组取好友"), ("get_recent_contact", "获取最近会话"), ("get_online_clients", "获取在线设备"), ("get_unidirectional_friend_list", "获取单向好友"),
+            ("get_doubt_friends_add_request", "获取可疑好友申请"), ("get_collection_list", "获取收藏列表"), ("get_group_info_ex", "获取群详情"), ("get_group_detail_info", "获取群信息"),
+            ("get_file", "获取文件"), ("nc_get_packet_status", "获取封包状态"), ("nc_get_user_status", "获取用户状态"), ("get_forward_msg", "获取合并转发"),
+            ("get_mini_app_ark", "获取小程序卡片"), ("get_fileset_info", "获取文件集信息"), ("get_flash_file_list", "获取闪传文件列表"), ("list_filesets", "列出文件集"),
+            ("get_flash_file_url", "获取闪传链接"), ("get_share_link", "获取分享链接"), ("get_fileset_id", "获取文件集 ID"), ("get_qzone_msg_list", "看说说列表"),
+            ("get_qzone_msg_detail", "看说说详情"), ("get_qzone_feeds", "看好友动态"), ("_get_friend_dress", "获取好友装扮"), ("fetch_sys_faces", "获取系统表情"),
+            ("fetch_face_entity", "获取表情详情"), ("search_sys_faces", "搜索系统表情"), ("fetch_super_face_id", "获取超级表情"), ("_get_model_show", "获取机型展示"),
         ]),
         "send": ("发消息", True, [
-            "send_custom_face", "send_msg", "send_private_msg", "send_like", "friend_poke", "send_poke",
-            "mark_group_msg_as_read", "mark_private_msg_as_read", "mark_msg_as_read", "_mark_all_as_read", "set_msg_emoji_like", "set_group_reaction",
-            "set_input_status", "send_forward_msg", "send_private_forward_msg", "forward_friend_single_msg", "forward_group_single_msg", "share_peer",
-            "send_ark_share", "send_tuwen_ark", "share_group_ex", "send_group_ark_share", "send_flash_msg",
+            ("send_custom_face", "发自定义表情"), ("send_msg", "发消息"), ("send_private_msg", "发私聊消息"), ("send_like", "名片点赞"),
+            ("friend_poke", "戳好友"), ("send_poke", "戳一戳"), ("mark_group_msg_as_read", "群消息标已读"), ("mark_private_msg_as_read", "私聊标已读"),
+            ("mark_msg_as_read", "消息标已读"), ("_mark_all_as_read", "全部标已读"), ("set_msg_emoji_like", "给消息贴表情"), ("set_group_reaction", "给消息加反应"),
+            ("set_input_status", "设置正在输入"), ("send_forward_msg", "发合并转发"), ("send_private_forward_msg", "发私聊转发"), ("forward_friend_single_msg", "转发好友单条"),
+            ("forward_group_single_msg", "转发群单条"), ("share_peer", "分享联系人"), ("send_ark_share", "发卡片分享"), ("send_tuwen_ark", "发图文卡片"),
+            ("share_group_ex", "分享群"), ("send_group_ark_share", "群里发卡片"), ("send_flash_msg", "发闪传消息"),
         ]),
         "qzone": ("QQ 空间", True, [
-            "send_qzone_msg", "delete_qzone_msg", "set_qzone_msg_right", "like_qzone", "unlike_qzone", "comment_qzone",
-            "set_qzone_ban",
+            ("send_qzone_msg", "发说说"), ("delete_qzone_msg", "删说说"), ("set_qzone_msg_right", "设置说说权限"), ("like_qzone", "点赞说说"),
+            ("unlike_qzone", "取消点赞"), ("comment_qzone", "评论说说"), ("set_qzone_ban", "设置空间封禁"),
         ]),
         "file": ("文件", True, [
-            "upload_private_file", "upload_forward_msg", "upload_foward_msg", "trans_group_file", "download_file", "download_fileset",
-            "clean_stream_temp_file", "create_flash_task", "delete_flash_file", "rename_flash_file",
+            ("upload_private_file", "上传私聊文件"), ("upload_forward_msg", "上传合并转发"), ("upload_foward_msg", "上传合并转发（旧名）"), ("trans_group_file", "转存群文件"),
+            ("download_file", "下载文件"), ("download_fileset", "下载文件集"), ("clean_stream_temp_file", "清理临时文件"), ("create_flash_task", "创建闪传任务"),
+            ("delete_flash_file", "删除闪传文件"), ("rename_flash_file", "重命名闪传文件"),
         ]),
         "manage": ("群 / 好友管理", False, [
-            "add_group_tag", "delete_group_tag", "set_friend_remark", "set_group_remark", "set_essence_msg", "delete_essence_msg",
-            "add_custom_face", "delete_custom_face", "modify_custom_face", "move_custom_face_to_front", "fetch_custom_face", "fetch_custom_face_detail",
-            "fetch_emoji_like", "set_friends_category", "_set_model_show", "set_doubt_friends_add_request", "create_collection", "check_url_safely",
-            "translate_en2zh",
+            ("add_group_tag", "添加群标签"), ("delete_group_tag", "删除群标签"), ("set_friend_remark", "改好友备注"), ("set_group_remark", "改群备注"),
+            ("set_essence_msg", "设精华消息"), ("delete_essence_msg", "取消精华"), ("add_custom_face", "添加自定义表情"), ("delete_custom_face", "删除自定义表情"),
+            ("modify_custom_face", "修改自定义表情"), ("move_custom_face_to_front", "表情移到最前"), ("fetch_custom_face", "获取自定义表情"), ("fetch_custom_face_detail", "获取表情详情"),
+            ("fetch_emoji_like", "获取表情赞"), ("set_friends_category", "改好友分组"), ("_set_model_show", "设置机型展示"), ("set_doubt_friends_add_request", "处理可疑好友申请"),
+            ("create_collection", "创建收藏"), ("check_url_safely", "检查链接安全"), ("translate_en2zh", "英译中"),
         ]),
         "danger": ("危险操作", False, [
-            "delete_msg", "delete_friend", "set_friend_add_request", "set_group_add_request", "set_group_anonymous", "set_group_anonymous_ban",
-            "set_restart", "clean_cache", "bot_exit",
+            ("delete_msg", "撤回消息"), ("delete_friend", "删除好友"), ("set_friend_add_request", "处理好友申请"), ("set_group_add_request", "处理入群申请"),
+            ("set_group_anonymous", "设置匿名"), ("set_group_anonymous_ban", "匿名禁言"), ("set_restart", "重启机器人"), ("clean_cache", "清理缓存"),
+            ("bot_exit", "退出登录"),
         ]),
         "credential": ("账号与凭证", False, [
-            "get_cookies", "get_csrf_token", "get_credentials", "get_clientkey", "set_qq_profile", "set_qq_avatar",
-            "set_online_status", "set_diy_online_status", "set_self_longnick", "request_decrypt_key", "get_rkey_server",
+            ("get_cookies", "获取 Cookies"), ("get_csrf_token", "获取 CSRF 令牌"), ("get_credentials", "获取登录凭据"), ("get_clientkey", "获取客户端密钥"),
+            ("set_qq_profile", "改昵称签名"), ("set_qq_avatar", "改头像"), ("set_online_status", "改在线状态"), ("set_diy_online_status", "自定义在线状态"),
+            ("set_self_longnick", "改长昵称"), ("request_decrypt_key", "申请解密密钥"), ("get_rkey_server", "获取密钥服务器"),
         ]),
     }
 
@@ -1665,30 +1675,31 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(v, bool):
                 continue
             if k in self.NAPCAT_TOOL_GROUPS:
-                for a in self.NAPCAT_TOOL_GROUPS[k][2]:
+                for a, _zh in self.NAPCAT_TOOL_GROUPS[k][2]:
                     flat[a] = v
             else:
                 flat[k] = v
         out = {}
         for g, spec in self.NAPCAT_TOOL_GROUPS.items():
-            for a in spec[2]:
+            for a, _zh in spec[2]:
                 out[a] = flat.get(a, spec[1])
         return out
 
     def _napcat_tools(self) -> dict:
-        """GET /napcat/tools —— 组的汇总 + 组内每个 action 的开关。"""
+        """GET /napcat/tools —— 组汇总 + 组内每个 action 的中文名和开关。"""
         cfg = self._napcat_cfg()
         groups = []
         for g, spec in self.NAPCAT_TOOL_GROUPS.items():
             label, default, items = spec
-            on = sum(1 for a in items if cfg.get(a, default))
+            on = sum(1 for a, _zh in items if cfg.get(a, default))
             groups.append({
                 "id": g,
                 "label": label,
                 "default": default,
                 "on": on,
                 "total": len(items),
-                "items": [{"action": a, "enabled": cfg.get(a, default)} for a in items],
+                "items": [{"action": a, "label": zh, "enabled": cfg.get(a, default)}
+                          for a, zh in items],
             })
         return {"ok": True, "actions": cfg, "groups": groups,
                 "enabledCount": sum(1 for v in cfg.values() if v), "totalCount": len(cfg)}
@@ -1713,7 +1724,7 @@ class Handler(BaseHTTPRequestHandler):
             if gid not in self.NAPCAT_TOOL_GROUPS:
                 self._json(400, {"ok": False, "error": "unknown group"})
                 return
-            for a in self.NAPCAT_TOOL_GROUPS[gid][2]:
+            for a, _zh in self.NAPCAT_TOOL_GROUPS[gid][2]:
                 cfg[a] = bool(body.get("enabled"))
                 changed += 1
         elif body.get("action"):

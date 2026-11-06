@@ -3402,12 +3402,12 @@ const [data, setData] = React.useState(null);
                               }),
                               h("div", {
                                 style: {
-                                  fontSize: 11.5, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                                  fontSize: 12,
                                   color: it.enabled ? "#2b5fbf" : "#888",
                                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                                 },
-                                title: it.action,
-                              }, it.action),
+                                title: it.action,   // 悬停看英文 action
+                              }, it.label || it.action),
                             ),
                           ),
                         )
