@@ -2266,7 +2266,10 @@ window.__ModuleLoader__.load({
           setErr(null);
           try {
             const params = new URLSearchParams();
-            params.set("tier", t || tier);
+            // 「事实」原来绑死 L1，但 L1 和 L2 语义重叠、几乎不产出（第二套 0 条），
+            // 事实全在 L2 里。这里让它两个都查，否则那个标签永远是 0/0。
+            const _wantTier = (t || tier) === "L1" ? "L1,L2" : (t || tier);
+            params.set("tier", _wantTier);
             params.set("limit", "200");
             if ((query ?? q).trim()) params.set("q", (query ?? q).trim());
             setData(await call("/memories?" + params.toString()));

@@ -322,8 +322,14 @@ class MemoryStore:
         conds = []
         args: list = []
         if tier and tier != "all":
-            conds.append("tier = ?")
-            args.append(tier)
+            # 支持 "L1,L2" 这种多值 —— 前端「事实」标签要同时看原子事实和画像
+            _tiers = [t.strip().upper() for t in str(tier).split(",") if t.strip()]
+            if len(_tiers) == 1:
+                conds.append("tier = ?")
+                args.append(_tiers[0])
+            elif _tiers:
+                conds.append("tier IN (" + ",".join("?" * len(_tiers)) + ")")
+                args.extend(_tiers)
         if q:
             conds.append("(text LIKE ? OR summary LIKE ?)")
             args.extend([f"%{q}%", f"%{q}%"])

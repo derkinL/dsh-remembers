@@ -68,7 +68,9 @@ export function resolveConfig(input = {}, env = process.env) {
     profileSubject: value("profileSubject") ? String(value("profileSubject")) : "",
     // 自动把每轮原话写进 L0：不做 LLM 抽取，只保证「说过的话不丢」
     captureRaw: toBool(value("captureRaw"), true),
-    captureMinChars: toInt(value("captureMinChars"), 12, 1, 2000),
+    // 2026-11-06：原来 12。实测她俩聊天中位数才 9-11 字，"到家了""吃的好吃的"
+    // 这种全被挡在抽取门外（一半以上的对话根本没进流程）。降到 6。
+    captureMinChars: toInt(value("captureMinChars"), 6, 1, 2000),
     // 开关 2：LLM 抽取 + 逐条判定（服务端要配 CMEM_LLM_*）。默认关，因为要花钱
     extract: toBool(value("extract"), false),
     skipSubagentSessions: toBool(value("skipSubagentSessions"), true),
@@ -89,7 +91,9 @@ export function resolveConfig(input = {}, env = process.env) {
     // 服务端没配 LLM 时会静默跳过（日志记 episode_degraded），不影响对话。
     episodeEnabled: toBool(value("episodeEnabled"), true),
     // 攒够这么多轮就压一次。20 轮大概是一段完整话题的量
-    episodeEveryTurns: toInt(value("episodeEveryTurns"), 20, 3, 200),
+    // 2026-11-06：原来 20。episode 不受字数门槛限制，跑得比 extracted 勤快得多，
+    // 结果 80% 的高阶记忆都是"日记摘要"，单个事实很少。放宽到 40，给 extracted 让位。
+    episodeEveryTurns: toInt(value("episodeEveryTurns"), 40, 3, 200),
     // 或者从这一段开始算起超过这么久也压一次：夜里断断续续聊也能收住
     episodeMaxMinutes: toInt(value("episodeMaxMinutes"), 120, 5, 1440),
 

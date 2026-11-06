@@ -1512,6 +1512,36 @@ class Handler(BaseHTTPRequestHandler):
             _json.dump(cfg, f, ensure_ascii=False, indent=2)
         self._json(200, {"ok": True, "mode": mode, "count": len(items), "action": action})
 
+    # 情绪 → 心情标签。她注入给自己的「心情：开心/平常」原来永远是初始值，
+    # 因为插件侧只读 state.mood、从不写。这里在记录情绪时顺手同步。
+    _MOOD_BY_LABEL = {
+        "很开心": "happy", "开心": "happy", "兴奋": "happy", "向往": "happy",
+        "难过": "tired", "很难过": "tired", "有点低落": "tired", "累": "tired",
+        "委屈": "tired", "心疼": "tired",
+        "烦": "annoyed", "烦躁": "annoyed", "焦虑": "annoyed", "有点丧": "annoyed",
+        "无奈": "bored", "蔫": "bored", "无聊": "bored",
+    }
+
+    def _sync_mood(self, label: str, v: float, a: float) -> None:
+        """把当前情绪映射成 mood 落库（加锁，避免和别的写撞）。"""
+        mood = self._MOOD_BY_LABEL.get(str(label or "").strip())
+        if not mood:
+            if v > 0.25:
+                mood = "happy"
+            elif v < -0.35 and a > 0.55:
+                mood = "annoyed"
+            elif v < -0.35:
+                mood = "tired"
+            elif a < 0.3:
+                mood = "bored"
+            else:
+                mood = "normal"
+        try:
+            with _lock:
+                store.set_state(mood=mood)
+        except Exception:
+            pass
+
     def _post_emotion(self) -> None:
         """记录情感。auto=true 时用当前 state 的情绪，且只在变化够大时记。"""
         import math as _math
@@ -1524,7 +1554,9 @@ class Handler(BaseHTTPRequestHandler):
             if last:
                 dv = abs(v - last[0]["valence"])
                 da = abs(a - last[0]["arousal"])
-                if dv < 0.2 and da < 0.2:
+                # 2026-11-06：原来 0.2。valence 一旦稳定（比如连着三天 -0.45），
+                # 就永远够不到门槛 → 不记录 → 更不会变，陷入死循环。降到 0.1。
+                if dv < 0.1 and da < 0.1:
                     self._json(200, {"ok": True, "skipped": True, "dv": round(dv, 2), "da": round(da, 2)})
                     return
             label = ""
@@ -1545,15 +1577,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"ok": True, "skipped": True, "reason": "neutral"})
                 return
             mid = store.emotion_log_add(v, a, label, str(body.get("trigger") or "")[:200], "auto")
+            self._sync_mood(label, v, a)
             self._json(200, {"ok": True, "id": mid, "label": label, "valence": round(v, 2), "arousal": round(a, 2)})
             return
+        _v = float(body.get("valence") or 0)
+        _a = float(body.get("arousal") or 0)
+        _label = str(body.get("label") or "")
         mid = store.emotion_log_add(
-            valence=float(body.get("valence") or 0),
-            arousal=float(body.get("arousal") or 0),
-            label=str(body.get("label") or ""),
+            valence=_v,
+            arousal=_a,
+            label=_label,
             trigger=str(body.get("trigger") or ""),
             source=str(body.get("source") or "chat"),
         )
+        self._sync_mood(_label, _v, _a)
         self._json(200, {"ok": True, "id": mid})
 
     # -- B 站 CLI 工具白名单 ----------------------------------------------------
