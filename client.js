@@ -2778,13 +2778,7 @@ window.__ModuleLoader__.load({
                       h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } }, pending.map((s) => chip(s, true))),
                     )
                   : null,
-                seeds.length > 0
-                  ? h("div", null,
-                      h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 6 } }, `候选（还没说够 6 次） ${seeds.length}`),
-                      h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } }, seeds.map((s) => chip(s, false))),
-                    )
-                  : null,
-                (!exprs.length && !known.length && !pending.length && !seeds.length)
+                (!exprs.length && !known.length && !pending.length)
                   ? h("div", { style: S.muted }, "还没学到什么。她会在聊天里慢慢琢磨「什么场合该怎么接」。")
                   : null,
               )
@@ -4121,10 +4115,6 @@ const [data, setData] = React.useState(null);
                     "这段话会原样注入人格，每轮她都能看到。留空就用默认。"),
                 ),
 
-                h("button", {
-                  style: { ...S.btn(true), marginTop: 10, fontSize: 12, padding: "5px 14px" },
-                  onClick: () => { setTab && setTab("memory"); },
-                }, "看学到的说法 →"),
               ),
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 10 } },
                 h("span", { style: { ...S.muted, fontSize: 12 } }, "她的形象（可替换）"),
