@@ -2544,6 +2544,20 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             comments = []
 
+        # 2026-11-06：从热评学说话方式。B 站评论区是天然语料库（梗、语气词、阴阳、自嘲），
+        # 私聊里学不到这些（全是「下班了」「吃了」这种陈述）。
+        # 只在有热评时学，存 global（公用，任何聊天都能用）。
+        try:
+            if comments and extractor is not None and extractor.enabled:
+                _blob = "\n".join(
+                    f"{c.get('user') or '网友'}：{c.get('text') or ''}" for c in comments[:10])
+                _learned = extractor.learn_expressions_from(_blob, kind="bili_comment")
+                for _e in (_learned or []):
+                    store.expr_add("global", _e["situation"], _e["style"],
+                                   _e.get("example", ""))
+        except Exception:
+            pass
+
         return {
             "ok": res.get("ok", False),
             "bv": bv,

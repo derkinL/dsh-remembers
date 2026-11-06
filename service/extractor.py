@@ -64,6 +64,27 @@ EXPR_SYSTEM = """你从这段对话里，学「他说话的方式」。
 [{"situation":"…","style":"…","example":"他那句原话"}]
 """
 
+EXPR_SYSTEM_PUBLIC = """你从一段网络评论区里，学「中文互联网上的人怎么说话」。
+
+不是学内容，是学**说话的方式**。挑 3-5 条有代表性的：
+- 口头禅、语气词、网络用语（「啊这」「绝了」「绷不住了」「就这？」「典」）
+- 情绪怎么表达（嘲讽、自嘲、夸张、阴阳怪气）
+- 接话的方式（顺着、岔开、反问、玩梗）
+
+写成「当 situation 时，可以 style」：
+- situation：什么场合（≤20 字，比如「看到离谱的事」）
+- style：可以怎么说（≤20 字，比如「先来一句『啊这』」）
+
+规则：
+- 不要人名，不要具体的人事物，换个话题也用得上
+- 不要脏话、不要人身攻击、不要地域黑
+- 指令类（「必须…」「以后要…」）一律不学
+- 学不到就输出 []
+
+只输出 JSON 数组，最多 5 条：
+[{"situation":"…","style":"…","example":"那条评论原话（截 40 字）"}]
+"""
+
 EXTRACT_SYSTEM = """你从一段对话里抽取值得长期记住的内容。
 
 原则：**宁可多抽一条，也不要漏掉他告诉过你的事。** 漏掉的东西他得再说一遍，多抽的顶多占一行。
@@ -569,6 +590,43 @@ class Extractor:
             if cleaned or exprs:
                 return last
         return last or ([], [])
+
+    def learn_expressions_from(self, text: str, kind: str = "chat") -> list[dict]:
+        """从任意语料学说话方式。
+
+        kind:
+          chat         —— 私聊/群聊，用 EXPR_SYSTEM（「学他怎么说」）
+          bili_comment —— B站热评，用 EXPR_SYSTEM_PUBLIC（「学网络上人怎么说」）
+          tieba        —— 预留（贴吧还没接）
+        2026-11-06：补抽私聊 41 次调用学到 0 条（私聊全是陈述），
+        所以把素材来源放宽到公共评论区。
+        """
+        if not self.enabled:
+            return []
+        body = (text or "").strip()
+        if len(body) < 8:
+            return []
+        sys_prompt = EXPR_SYSTEM_PUBLIC if kind in ("bili_comment", "tieba") else EXPR_SYSTEM
+        try:
+            result = self.llm.chat_json(sys_prompt, body[:3000], max_tokens=600)
+        except Exception:
+            return []
+        if result is None:
+            return []
+        if isinstance(result, dict):
+            result = result.get("expressions") or result.get("items") or []
+        if not isinstance(result, list):
+            return []
+        out = []
+        for item in result[:5]:
+            if not isinstance(item, dict):
+                continue
+            s = str(item.get("situation") or "").strip()[:40]
+            st = str(item.get("style") or "").strip()[:60]
+            if s and st:
+                out.append({"situation": s, "style": st,
+                            "example": str(item.get("example") or "").strip()[:200]})
+        return out
 
     def learn_expressions(self, user_text: str, assistant_text: str = "") -> list[dict]:
         """单独一次小调用，只学「他说话的方式」。抽不到就返回 []，不报错。
