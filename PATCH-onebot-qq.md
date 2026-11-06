@@ -73,6 +73,60 @@ sed -n "/const NAPCAT_API_WHITELIST = \[/,/^\];/p" \
 只替换 `const NAPCAT_API_WHITELIST = [...]` 那个数组，**不要动 execute**——
 execute 的 `includes` 检查会随着数组恢复自动放行。
 
+### ⚠️ 后来做成「面板可配」时踩的坑：别做长缓存
+
+一开始把白名单做成前端面板（7 组 / 127 项逐项开关），插件侧读取时**缓存了 30 秒**。
+结果：用户在面板上关了开关、服务端和文件都改了，但她**最多还要 30 秒才认**，
+中途照样能调——看起来像「前端动画，实际没生效」。
+
+正确做法：
+
+```js
+let _napcatBackoffUntil = 0;   // 只有失败才退避，成功一律不缓存
+
+async function allowedNapcatActions() {
+    const now = Date.now();
+    if (now < _napcatBackoffUntil) return null;
+    try {
+        const r = await fetch(napcatMemoryEndpoint() + '/napcat/tools',
+                              { signal: AbortSignal.timeout(3000) });
+        if (!r.ok) { _napcatBackoffUntil = now + 30000; return null; }
+        const d = await r.json();
+        const set = new Set();
+        for (const [a, on] of Object.entries(d.actions || {})) if (on === true) set.add(a);
+        return set;   // 不缓存
+    }
+    catch {
+        _napcatBackoffUntil = now + 30000;   // 服务端挂了才退避
+        return null;
+    }
+}
+```
+
+**成功不缓存（本地 HTTP 几毫秒，换来面板一点就生效）；失败退避 30 秒（免得每次调用都等 3 秒超时）。**
+
+实测（改完立刻验证）：
+
+```
+单 action：关 → 立刻禁止 ✅   开 → 立刻允许 ✅
+整组：    开 → 立刻允许 ✅   关 → 立刻禁止 ✅
+```
+
+### 白名单现在怎么配
+
+不是改代码了，走前端面板：
+
+**设置 → QQ 通道 → 工具权限**
+
+- 7 组：只读查询 48 / 发消息 23 / QQ 空间 7 / 文件 10（默认开）
+  群-好友管理 19 / 危险操作 9 / 账号与凭证 11（默认关）
+- 组可展开，每个 action 一个开关；组头右上角整组全开/全关
+- **界面全中文**（"获取登录信息""发说说""删除好友"…），鼠标悬停才看英文 action 名
+
+存 `service/data/napcat_tools.json`（逐 action 的 `{action: bool}`）。
+
+而代码里那份 `NAPCAT_API_WHITELIST` 现在只当**兜底**用（服务端拿不到配置时全开）。
+
 ### 注意
 
 这是**故意的安全收紧**，不是 bug。上游可能觉得"全量 127 项"太危险
