@@ -2029,6 +2029,42 @@ window.__ModuleLoader__.load({
             ),
           ) : null,
 
+          // ---- 看视频时抽几帧画面（2026-11-06）----
+          st && st.frameGridOptions ? h("div", { style: S.card },
+            h("div", { style: S.label }, "看视频时抽几帧画面"),
+            h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
+              "她看一条视频时会抽若干帧拼成一张图。帧数多看得细，帧数少每帧更大。"
+              + "长视频、讲解类选 30 / 60；快节奏、画面切换密的选 9。"),
+            h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 } },
+              ...((st.frameGridOptions || []).map((o) => {
+                const on = Number(st.frameGrid) === Number(o.n);
+                return h("div", {
+                  key: "fg-" + o.n,
+                  onClick: async () => {
+                    try {
+                      const r = await call("/bili/toggle", {
+                        method: "POST",
+                        body: JSON.stringify({ frameGrid: o.n }),
+                      });
+                      setSt(r);
+                    } catch (e) { setErr(e && e.message ? e.message : String(e)); }
+                  },
+                  style: {
+                    padding: "10px 8px", borderRadius: 8, cursor: "pointer", textAlign: "center",
+                    border: on ? "1.5px solid #4084ff" : "1px solid rgba(0,0,0,.10)",
+                    background: on ? "rgba(64,132,255,.06)" : "#fff",
+                    transition: "border-color .15s, background .15s",
+                  },
+                },
+                  h("div", { style: { fontSize: 14, fontWeight: 600, color: on ? "#4084ff" : "#333" } }, o.n + " 帧"),
+                  h("div", { style: { fontSize: 11, color: "#999", marginTop: 3 } }, o.grid),
+                  h("div", { style: { fontSize: 10, color: "#bbb", marginTop: 2, lineHeight: 1.3 } },
+                    o.n === 16 ? "默认" : (o.n === 9 ? "画面最大" : (o.n === 30 ? "更细" : "最细"))),
+                );
+              })),
+            ),
+          ) : null,
+
           h("div", { style: S.card },
             h("div", { style: S.label }, "你在 B 站的 UID"),
             h("div", { style: { ...S.muted, marginBottom: 6 } },

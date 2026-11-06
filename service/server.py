@@ -1476,6 +1476,28 @@ class Handler(BaseHTTPRequestHandler):
 
     BILI_CFG = os.path.join(DATA_DIR, "bili.json")
 
+    # 2026-11-06：九宫格帧数改成阶梯可调。帧多了每帧就小一点，
+    # 不然拼出来的图超过模型能看清的密度，等于白抽。
+    BILI_FRAME_GRID = {
+        9:  ("3x3",  1280),   # 少而大，适合快节奏/画面信息密集的视频
+        16: ("4x4",  1280),   # 默认
+        30: ("5x6",  1080),
+        60: ("6x10",  960),   # 多而小，适合长视频/讲解类
+    }
+
+    def _bili_frame_grid(self) -> tuple:
+        """读配置里的 frameGrid，返回 (grid, tile)。"""
+        import json as _json
+        n = 16
+        try:
+            with open(self.BILI_CFG, encoding="utf-8") as f:
+                n = int((_json.load(f) or {}).get("frameGrid", 16))
+        except Exception:
+            pass
+        if n not in self.BILI_FRAME_GRID:
+            n = 16
+        return self.BILI_FRAME_GRID[n]
+
     # 按 HOME 分实例：主套 /home/ubuntu/.dsh/，第二套 /home/ubuntu/dsh2/.dsh/
     BILI_WHALE_CFG = os.path.expanduser("~/.dsh/bili-whale.config.json")
 
@@ -2214,6 +2236,16 @@ class Handler(BaseHTTPRequestHandler):
             "owner_mid": str((bw.get("owner") or {}).get("mid") or ""),
             "owner_name": str((bw.get("owner") or {}).get("name") or ""),
             "login_hint": "扫码登录 B 站（登录后按她的偏好刷）",
+            # 九宫格帧数（9/16/30/60），0 表示还没配过、走默认 16
+            "frameGrid": int(cfg.get("frameGrid", 16)),
+            "frameGridOptions": [
+                {"n": n, "grid": g, "tile": t,
+                 "hint": {9: "9 帧 · 画面最大，适合快节奏",
+                          16: "16 帧 · 默认，比较均衡",
+                          30: "30 帧 · 看得更细，单帧略小",
+                          60: "60 帧 · 长视频/讲解类，单帧最小"}.get(n, "")}
+                for n, (g, t) in self.BILI_FRAME_GRID.items()
+            ],
         }
 
     def _bili_toggle(self) -> None:
@@ -2230,6 +2262,24 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             cur["enabled"] = bool(body["enabled"])
+            with open(self.BILI_CFG, "w", encoding="utf-8") as f:
+                _json.dump(cur, f, ensure_ascii=False, indent=2)
+
+        # 九宫格帧数（2026-11-06）
+        if "frameGrid" in body:
+            cur = {"enabled": False}
+            try:
+                with open(self.BILI_CFG, encoding="utf-8") as f:
+                    cur.update(_json.load(f))
+            except Exception:
+                pass
+            try:
+                n = int(body["frameGrid"])
+            except Exception:
+                n = 16
+            if n not in self.BILI_FRAME_GRID:
+                n = 16
+            cur["frameGrid"] = n
             with open(self.BILI_CFG, "w", encoding="utf-8") as f:
                 _json.dump(cur, f, ensure_ascii=False, indent=2)
 
@@ -2386,7 +2436,13 @@ class Handler(BaseHTTPRequestHandler):
         """
         if not bv:
             return {"ok": False, "error": "bv required"}
-        res = self._run_bili(["debrief", bv], timeout=300)
+        # 帧数按配置走（9/16/30/60 → grid + tile）
+        try:
+            _grid, _tile = self._bili_frame_grid()
+        except Exception:
+            _grid, _tile = ("4x4", 1280)
+        res = self._run_bili(
+            ["debrief", bv, "--grid", _grid, "--tile", str(_tile)], timeout=300)
         out = res.get("stdout") or ""
 
         import re as _re
