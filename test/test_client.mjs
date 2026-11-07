@@ -101,16 +101,18 @@ const ctx = {
 };
 exportsObj.apply(ctx);
 
-console.log("\n[设置段]");
-// 2026-11-07 起只注册 1 个入口「她的记忆」：原来 7 个页签收进卡片，
-// 点卡片进二级页。侧边栏只剩这一条。
+console.log("\n[入口注册]");
+// 2026-11-07 起不再挂设置左侧导航：改成「插件」页面里的一个标签页。
+// 7 个功能收进「她的记忆」的卡片，点卡片进二级页。
 const EXPECT = [
-  { id: "dsh-remembers", label: "她的记忆", order: 32 },
+  { id: "dsh-remembers", label: "她的记忆", order: 100 },
 ];
 
-ok(`注册了 ${EXPECT.length} 个设置段`, () => assert.equal(registered.length, EXPECT.length));
-ok('slot 名都是 "settings.section"', () =>
-  assert.ok(registered.every((r) => r.meta?.name === "settings.section")));
+ok(`注册了 ${EXPECT.length} 个入口`, () => assert.equal(registered.length, EXPECT.length));
+ok('slot 名是 "plugins.tab"', () =>
+  assert.ok(registered.every((r) => r.meta?.name === "plugins.tab")));
+ok("没再注册 settings.section", () =>
+  assert.ok(registered.every((r) => r.meta?.name !== "settings.section")));
 
 for (const want of EXPECT) {
   const hit = registered.find((r) => r.meta?.id === want.id);

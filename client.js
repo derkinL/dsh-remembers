@@ -4577,15 +4577,16 @@ const [data, setData] = React.useState(null);
         try {
           const slots = ctx.get("slots");
           if (slots === undefined) {
-            console.warn("dsh-remembers: slots 服务不可用，设置页未注册");
+            console.warn("dsh-remembers: slots 服务不可用，入口未注册");
             return;
           }
-          // 只注册一个页签：7 个功能都收进「她的记忆」的卡片入口。
-          slots.inject("settings.section", () => slots.register(
+          // 不再挂到设置左侧导航，改成「插件」页面里的一个标签页：
+          // 点左边栏「插件」→ 顶部标签栏多一个「她的记忆」。
+          slots.inject("plugins.tab", () => slots.register(
             {
-              name: "settings.section",
+              name: "plugins.tab",
               id: "dsh-remembers",
-              order: 32,
+              order: 100,
               label: () => "她的记忆",
             },
             HerMemoryHub,
