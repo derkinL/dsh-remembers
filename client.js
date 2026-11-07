@@ -4465,7 +4465,7 @@ const [data, setData] = React.useState(null);
         }
 
         return h("div", { className: "dshm-ui", style: { display: "contents" } },
-          h("div", { style: { ...S.wrap, maxWidth: 1180, width: "100%", margin: "0 auto" } },
+          h("div", { style: { ...S.wrap, maxWidth: 1180, width: "100%", margin: "0 auto", minHeight: "calc(100vh - 160px)" } },
           h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
             h("div", {
               style: {
