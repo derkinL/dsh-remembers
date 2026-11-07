@@ -129,7 +129,17 @@ window.__ModuleLoader__.load({
           "transition:transform .2s ease,box-shadow .2s ease}",
           ".dshm-card:hover{transform:translateY(-4px);box-shadow:0 10px 24px rgba(0,0,0,.09)}",
           ".dshm-card:active{transform:translateY(0);box-shadow:0 2px 8px rgba(0,0,0,.05)}",
-          ".dshm-card:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4084ff);outline-offset:2px}",
+          // 勾选框统一换成开关样式（整个插件面板内有效，不污染宿主其它界面）
+      ".dshm-ui input[type=\"checkbox\"]{-webkit-appearance:none;appearance:none;flex:0 0 auto;",
+      "width:34px;height:20px;border-radius:999px;background:rgba(0,0,0,.18);position:relative;",
+      "cursor:pointer;transition:background .15s;margin:0;border:none;vertical-align:middle}",
+      ".dshm-ui input[type=\"checkbox\"]::after{content:\"\";position:absolute;top:2px;left:2px;",
+      "width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.22);",
+      "transition:left .15s}",
+      ".dshm-ui input[type=\"checkbox\"]:checked{background:#4084ff}",
+      ".dshm-ui input[type=\"checkbox\"]:checked::after{left:16px}",
+      ".dshm-ui input[type=\"checkbox\"]:disabled{opacity:.45;cursor:not-allowed}",
+      ".dshm-card:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4084ff);outline-offset:2px}",
           ".dshm-card:hover .dshm-title{color:var(--dsw-alias-state-business-primary,#4084ff)}",
           ".dshm-tile{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;",
           "border-radius:9px;background:rgba(64,132,255,.08);font-size:16px;line-height:1}",
@@ -4431,8 +4441,8 @@ const [data, setData] = React.useState(null);
 
         if (item) {
           const back = () => setPage(null);
-          return h(React.Fragment, null,
-            h("div", { style: { ...S.wrap, maxWidth: 1180, margin: "0 auto" } },
+          return h("div", { className: "dshm-ui", style: { display: "contents" } },
+            h("div", { style: { ...S.wrap, maxWidth: 1180, margin: "0 auto", minHeight: "calc(100vh - 160px)" } },
               h("button", {
                 type: "button",
                 className: "dshm-back",
@@ -4454,7 +4464,8 @@ const [data, setData] = React.useState(null);
           );
         }
 
-        return h("div", { style: { ...S.wrap, maxWidth: 960, width: "100%", margin: "0 auto" } },
+        return h("div", { className: "dshm-ui", style: { display: "contents" } },
+          h("div", { style: { ...S.wrap, maxWidth: 1180, width: "100%", margin: "0 auto" } },
           h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
             h("div", {
               style: {
@@ -4484,6 +4495,7 @@ const [data, setData] = React.useState(null);
                 style: { fontSize: 12, lineHeight: 1.6, color: "var(--dsw-alias-label-secondary, #6b7280)" },
               }, it.desc),
             )),
+          ),
           ),
         );
       }
