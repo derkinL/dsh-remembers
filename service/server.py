@@ -2155,6 +2155,11 @@ class Handler(BaseHTTPRequestHandler):
         cfg.setdefault("bars", list(self.TIEBA_DEFAULT_BARS))
         cfg.setdefault("enabled", False)
         cfg.setdefault("replyEnabled", False)
+        cfg.setdefault("browseEnabled", False)
+        cfg.setdefault("minGapMinutes", 120)
+        cfg.setdefault("maxGapMinutes", 480)
+        cfg.setdefault("perRound", 3)
+        cfg.setdefault("perDay", 4)
         os.makedirs(DATA_DIR, exist_ok=True)
         tmp = self._tieba_cfg_path() + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -2208,6 +2213,11 @@ class Handler(BaseHTTPRequestHandler):
             "enabled": bool(cfg.get("enabled")),
             "replyEnabled": bool(cfg.get("replyEnabled")),
             "bars": cfg.get("bars") or list(self.TIEBA_DEFAULT_BARS),
+            "browseEnabled": bool(cfg.get("browseEnabled")),
+            "minGapMinutes": int(cfg.get("minGapMinutes") or 120),
+            "maxGapMinutes": int(cfg.get("maxGapMinutes") or 480),
+            "perRound": int(cfg.get("perRound") or 3),
+            "perDay": int(cfg.get("perDay") or 4),
             "hint": who.get("hint") or st.get("error") or "",
         })
 
@@ -2316,6 +2326,20 @@ class Handler(BaseHTTPRequestHandler):
             bars = body.get("bars")
             if isinstance(bars, list):
                 patch["bars"] = [str(x).strip() for x in bars if str(x).strip()][:20]
+        if "browseEnabled" in body:
+            patch["browseEnabled"] = bool(body.get("browseEnabled"))
+        for key, lo, hi, dflt in (
+            ("minGapMinutes", 5, 1440, 120),
+            ("maxGapMinutes", 5, 1440, 480),
+            ("perRound", 1, 20, 3),
+            ("perDay", 1, 50, 4),
+        ):
+            if key in body:
+                try:
+                    v = int(body.get(key))
+                except Exception:
+                    v = dflt
+                patch[key] = max(lo, min(hi, v))
         cfg = self._tieba_save_cfg(**patch)
         self._json(200, {"ok": True, "config": cfg})
 

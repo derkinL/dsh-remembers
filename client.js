@@ -1365,22 +1365,6 @@ window.__ModuleLoader__.load({
           ),
 
           h("div", { style: S.card },
-            h("div", { style: S.label }, "B 站（她自己刷视频的节奏）"),
-            h("div", { style: { ...S.muted, marginBottom: 8 } },
-              "和唤醒分开管：她按自己的间隔去 B 站逛逛，刷到什么会记进见闻，下次聊天能提。"),
-            toggle("biliBrowseEnabled", "允许她按自己的节奏刷 B 站", "关掉 = 只有唤醒时抽到「刷 B 站」才去"),
-            h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 8 } },
-              num("biliMinGapMinutes", "至少隔（分钟）", "两次刷之间最少多久"),
-              num("biliMaxGapMinutes", "最多隔（分钟）", "两次刷之间最多多久"),
-              num("biliBrowseLimit", "每次刷几条", "存进见闻的条数"),
-              num("biliBrowsePerDay", "每天最多刷几次", "超过就不点醒她了"),
-            ),
-            h("div", { style: { ...S.muted, fontSize: 11, marginTop: 8, lineHeight: 1.5 } },
-              "间隔是随机的（比如 60~240 分钟 = 每次在 1 到 4 小时之间随机挑一个，不是固定点）。"
-              + "区间调宽一点她刷得更像人；一天 3 次 + 1~4 小时间隔的话，额度常常中午就用完了，下午晚上一次不刷。"),
-          ),
-
-          h("div", { style: S.card },
             h("div", { style: S.desc }, "唤醒规则"),
             h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
               "选一套预设，下面的参数自动套上并锁定。要自己调就点「自定义」解锁。"),
@@ -1607,8 +1591,19 @@ window.__ModuleLoader__.load({
                 biliShareToGroup: p.biliShareToGroup === true,
                 biliComment: p.biliComment !== false,
                 biliMentionOwner: p.biliMentionOwner !== false,
+                biliBrowseEnabled: p.biliBrowseEnabled === true,
+                biliMinGapMinutes: Number(p.biliMinGapMinutes) || 60,
+                biliMaxGapMinutes: Number(p.biliMaxGapMinutes) || 240,
+                biliBrowseLimit: Number(p.biliBrowseLimit) || 3,
+                biliBrowsePerDay: Number(p.biliBrowsePerDay) || 10,
               });
-            } catch { setBiliProactive({ biliShareToOwner: true, biliShareToGroup: false, biliComment: true, biliMentionOwner: true }); }
+            } catch {
+              setBiliProactive({
+                biliShareToOwner: true, biliShareToGroup: false, biliComment: true, biliMentionOwner: true,
+                biliBrowseEnabled: false, biliMinGapMinutes: 60, biliMaxGapMinutes: 240,
+                biliBrowseLimit: 3, biliBrowsePerDay: 10,
+              });
+            }
           } catch (e) {
             setErr(e && e.message ? e.message : String(e));
             setSt(null);
@@ -1793,6 +1788,47 @@ window.__ModuleLoader__.load({
                 "关掉后她不会用 bili_feed / bili_watch，也不会同步 B 站活动。"),
             ),
           ),
+
+          biliProactive ? h("div", { style: S.card },
+            h("div", { style: S.label }, "她自己刷 B 站的节奏"),
+            h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
+              "和唤醒分开管：她按自己的间隔去 B 站逛逛，刷到什么会记进见闻，下次聊天能提。"),
+            h("label", {
+              style: {
+                display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
+                padding: "10px 12px", borderRadius: 10,
+                border: "1.5px solid " + (biliProactive.biliBrowseEnabled ? "#4084ff" : "rgba(0,0,0,.10)"),
+                background: biliProactive.biliBrowseEnabled ? "rgba(64,132,255,.04)" : "#fff",
+              },
+            },
+              h("input", {
+                type: "checkbox", checked: !!biliProactive.biliBrowseEnabled, style: { marginTop: 3 },
+                onChange: (ev) => setBiliProactive({ ...biliProactive, biliBrowseEnabled: ev.target.checked }),
+              }),
+              h("div", { style: { display: "flex", flexDirection: "column", gap: 3 } },
+                h("span", { style: { fontSize: 13, fontWeight: 600 } }, "允许她按自己的节奏刷 B 站"),
+                h("span", { style: { ...S.muted, fontSize: 11 } }, "关掉 = 只有唤醒时抽到「刷 B 站」才去"),
+              ),
+            ),
+            h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 10 } },
+              ...[
+                ["biliMinGapMinutes", "至少隔（分钟）", "两次刷之间最少多久"],
+                ["biliMaxGapMinutes", "最多隔（分钟）", "两次刷之间最多多久"],
+                ["biliBrowseLimit", "每次刷几条", "存进见闻的条数"],
+                ["biliBrowsePerDay", "每天最多刷几次", "超过就不点醒她了"],
+              ].map(([key, label, hint]) => h("div", { key, style: { display: "flex", flexDirection: "column", gap: 4 } },
+                h("div", { style: { ...S.muted, fontSize: 12 } }, label),
+                h("input", {
+                  style: S.input, type: "number", min: 0, value: biliProactive[key] ?? "",
+                  onChange: (ev) => setBiliProactive({ ...biliProactive, [key]: Number(ev.target.value) || 0 }),
+                }),
+                h("div", { style: { ...S.muted, fontSize: 11 } }, hint),
+              )),
+            ),
+            h("div", { style: { ...S.muted, fontSize: 11, marginTop: 8, lineHeight: 1.5 } },
+              "间隔是随机的（比如 60~240 分钟 = 每次在 1 到 4 小时之间随机挑一个，不是固定点）。"
+              + "区间调宽一点她刷得更像人；一天 3 次 + 1~4 小时间隔的话，额度常常中午就用完了，下午晚上一次不刷。"),
+          ) : null,
 
           biliProactive ? h("div", { style: S.card },
             h("div", { style: S.label }, "她刷完 B 站能做什么"),
@@ -4565,6 +4601,34 @@ const [data, setData] = React.useState(null);
               rowCard(!!(st && st.replyEnabled), "允许回帖",
                 "开了她才能在人类吧里说话。建议先只读几天，再打开这个。",
                 () => void patchCfg({ replyEnabled: !(st && st.replyEnabled) })),
+            ),
+
+            h("div", { style: S.card },
+              h("div", { style: S.label }, "她自己逛贴吧的节奏"),
+              h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
+                "和唤醒分开管：她按自己的间隔去上面那几个吧逛逛，看到什么会记进她的见闻，下次聊天能提。"),
+              rowCard(!!(st && st.browseEnabled), "允许她按自己的节奏逛贴吧",
+                "关掉 = 只有唤醒时抽到「逛贴吧」才去",
+                () => void patchCfg({ browseEnabled: !(st && st.browseEnabled) })),
+              h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 10 } },
+                ...[
+                  ["minGapMinutes", "至少隔（分钟）", "两次逛之间最少多久"],
+                  ["maxGapMinutes", "最多隔（分钟）", "两次逛之间最多多久"],
+                  ["perRound", "每次看几帖", "存进见闻的条数"],
+                  ["perDay", "每天最多逛几次", "超过就不点醒她了"],
+                ].map(([key, label, hint]) => h("div", { key, style: { display: "flex", flexDirection: "column", gap: 4 } },
+                  h("div", { style: { ...S.muted, fontSize: 12 } }, label),
+                  h("input", {
+                    style: S.input, type: "number", min: 0,
+                    defaultValue: (st && st[key] != null) ? String(st[key]) : "",
+                    onBlur: (ev) => void patchCfg({ [key]: Number(ev.target.value) || 0 }),
+                  }),
+                  h("div", { style: { ...S.muted, fontSize: 11 } }, hint),
+                )),
+              ),
+              h("div", { style: { ...S.muted, fontSize: 11, marginTop: 8, lineHeight: 1.5 } },
+                "间隔是随机的（比如 120~480 分钟 = 每次在 2 到 8 小时之间随机挑一个）。"
+                + "贴吧比 B 站容易被风控，别把间隔调太短。"),
             ),
           ),
 

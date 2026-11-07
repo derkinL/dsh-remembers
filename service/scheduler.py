@@ -87,12 +87,16 @@ class Scheduler:
             st["date"] = today
             st["bili_count"] = 0
             st["evolve_count"] = 0
+            st["tieba_count"] = 0
             changed = True
 
         if self._tick_wake(st, now):
             changed = True
         if self._tick_bili(st, now):
             changed = True
+        if self._tick_tieba(st, now):
+            changed = True
+
         if self._tick_diary(st, now):
             changed = True
         if self._tick_evolve(st, now):
@@ -302,6 +306,56 @@ class Scheduler:
         msg = f"（现在 {hour} 点。你自己待着，这会儿有点想上 B 站逛逛。）"
         self._inject(msg, silent=False)
         _log(f"bili: nudged model ({count + 1}/{per_day} today)")
+        return True
+
+    def _tieba_cfg(self) -> dict:
+        try:
+            with open(os.path.join(self.data_dir, "tieba.json"), encoding="utf-8") as f:
+                c = json.load(f)
+                return c if isinstance(c, dict) else {}
+        except Exception:
+            return {}
+
+    def _tick_tieba(self, st: dict, now: float) -> bool:
+        """贴吧独立节奏：到点就注入一句「想去贴吧看看」，逛不逛她自己定。"""
+        cfg = self._tieba_cfg()
+        if not cfg.get("enabled") or not cfg.get("browseEnabled"):
+            return False
+
+        hour = datetime.datetime.now().hour
+        if hour < 8 or hour >= 23:
+            return False
+
+        per_day = int(cfg.get("perDay", 4) or 4)
+        count = int(st.get("tieba_count", 0))
+        if per_day <= 0 or count >= per_day:
+            return False
+
+        min_gap = max(5, int(cfg.get("minGapMinutes", 120) or 120))
+        max_gap = max(min_gap, int(cfg.get("maxGapMinutes", 480) or 480))
+
+        last = float(st.get("tieba_last", 0))
+        interval = float(st.get("tieba_interval", 0))
+        if interval <= 0:
+            interval = (min_gap + random.randint(0, max_gap - min_gap)) * 60
+            st["tieba_interval"] = interval
+            if not last:
+                st["tieba_last"] = now
+            _log(f"tieba: next nudge in {int(interval // 60)} min")
+            return True
+        if now - last < interval:
+            return False
+
+        st["tieba_last"] = now
+        st["tieba_interval"] = 0
+        st["tieba_count"] = count + 1
+
+        bars = cfg.get("bars") or []
+        bar = random.choice(bars) if bars else ""
+        where = f"{bar}吧" if bar else "贴吧"
+        msg = f"（现在 {hour} 点。你自己待着，这会儿有点想去{where}逛逛。）"
+        self._inject(msg, silent=False)
+        _log(f"tieba: nudged model ({count + 1}/{per_day} today, bar={bar or '-'})")
         return True
 
     # ---------- 3. 日记（23 点）----------
