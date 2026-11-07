@@ -114,9 +114,8 @@ def learn_speak_prompt_text() -> str:
     return LEARN_SPEAK_DEFAULT
 
 
-# 兼容老名字：两处都指向同一份
+# 兼容老名字
 EXPR_SYSTEM = LEARN_SPEAK_DEFAULT
-EXPR_SYSTEM_PUBLIC = LEARN_SPEAK_DEFAULT
 
 
 _UNUSED_EXPR_SYSTEM_PUBLIC = """你从一段网络评论区里，学「中文互联网上的人怎么说话」。
@@ -139,6 +138,11 @@ _UNUSED_EXPR_SYSTEM_PUBLIC = """你从一段网络评论区里，学「中文互
 只输出 JSON 数组，最多 5 条：
 [{"situation":"…","style":"…","example":"那条评论原话（截 40 字）"}]
 """
+
+# 2026-11-08：公共语料（B站热评 / 贴吧楼层）用另一套 prompt —— 学的是「网友怎么说」，
+# 不是「老大怎么说」。之前两处都指向 LEARN_SPEAK_DEFAULT，等于拿「学他说话」的
+# 提示词去读评论区，抽出来的经常是内容而不是说话方式。
+EXPR_SYSTEM_PUBLIC = _UNUSED_EXPR_SYSTEM_PUBLIC
 
 EXTRACT_SYSTEM = """你从一段对话里抽取值得长期记住的内容。
 
@@ -675,7 +679,8 @@ class Extractor:
         body = (text or "").strip()
         if len(body) < 8:
             return []
-        sys_prompt = learn_speak_prompt_text()
+        # chat 用可编辑的那份（学老大）；公共语料用网友版
+        sys_prompt = learn_speak_prompt_text() if kind == "chat" else EXPR_SYSTEM_PUBLIC
         try:
             result = self.llm.chat_json(sys_prompt, body[:3000], max_tokens=600)
         except Exception:

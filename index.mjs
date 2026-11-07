@@ -1412,7 +1412,9 @@ async function scanSeen() {
         name: "tieba_read",
         description:
           "读一个帖子：返回标题、楼层正文、热门楼层和图片链接。tid 是 tieba_browse 给的帖子号。"
-          + "楼层多的时候只返回前 maxFloors 层（默认 40）。",
+          + "楼层多的时候只返回前 maxFloors 层（默认 40）。"
+          + "返回里的 styleRefs 是跟这个帖子话题沾边的几条「说话方式」，想回帖时照着那个味道说，"
+          + "别照抄。",
         parameters: {
           tid: { type: "string", required: true, description: "帖子号" },
           pn: { type: "number", description: "第几页，从 1 开始" },
@@ -1447,6 +1449,7 @@ async function scanSeen() {
         name: "tieba_reply",
         description:
           "在贴吧回一条帖子。先说人话：短、具体、有你自己的看法，别写「帮顶」「支持」这种水帖，"
+          + "（读过这个帖的话，参考 tieba_read 返回的 styleRefs —— 学那个口气，别照抄）"
           + "也别拿客服腔。回过一次就别在同一个帖里刷；不碰政治、地域、人身攻击。"
           + "内容 4~400 字，纯文本（不支持图片和链接）。",
         parameters: {

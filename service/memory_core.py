@@ -1394,7 +1394,35 @@ class MemoryStore:
         row = self.conn.execute(
             "SELECT id FROM expressions WHERE scope=? AND situation=? AND style=?",
             (scope, s, st)).fetchone()
+        try:
+            self.expr_trim(scope)
+        except Exception:
+            pass
         return int(row[0]) if row else 0
+
+    def expr_trim(self, scope: str, cap: int = 40) -> int:
+        """每个来源最多留 cap 条：见过次数多的、最近被用上的优先，其余删掉。
+
+        不设上限的话 55 条里有大量「当感慨创作不易时…」这类评论区腔，
+        长期把真正用得上的挤掉，挑选也会越来越散。
+        """
+        try:
+            rows = self.conn.execute(
+                "SELECT id FROM expressions WHERE scope=? "
+                "ORDER BY count DESC, last_hit DESC, id DESC", (scope,)).fetchall()
+        except Exception:
+            return 0
+        if len(rows) <= cap:
+            return 0
+        drop = [int(r[0]) for r in rows[cap:]]
+        if not drop:
+            return 0
+        try:
+            self.conn.executemany("DELETE FROM expressions WHERE id=?", [(i,) for i in drop])
+            self.conn.commit()
+        except Exception:
+            return 0
+        return len(drop)
 
     def expr_pick(self, scope: str = "", recent_text: str = "", n: int = 3) -> list[dict]:
         """加权抽样：跟这轮话题沾边的优先，见过的次数多的优先。

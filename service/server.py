@@ -171,6 +171,13 @@ def _init() -> None:
         flush=True,
     )
 
+    # 启动时把每个来源的说法裁到上限（老库里可能已经堆到 55+）
+    try:
+        for _row in store.conn.execute("SELECT DISTINCT scope FROM expressions"):
+            store.expr_trim(str(_row[0]), 40)
+    except Exception:
+        pass
+
     # 内置调度（唤醒 + B 站；环境变量 CMEM_SCHEDULER=0 可关）
     global scheduler
     try:
@@ -2249,7 +2256,19 @@ class Handler(BaseHTTPRequestHandler):
             return
         pn = (query.get("pn") or ["1"])[0]
         maxf = (query.get("max") or ["40"])[0]
-        self._json(200, self._tieba_cli("read", "--tid", tid, "--pn", pn, "--max-floors", maxf))
+        r = self._tieba_cli("read", "--tid", tid, "--pn", pn, "--max-floors", maxf)
+        # 回帖参考：拿标题+前几层当话题，挑 3 条沾边的「学来的说法」。
+        # 照 tieba-dive 的做法 —— 风格库是回帖前检索出来的 few-shot，不是常驻提示词。
+        try:
+            topic = " ".join([str(r.get("title") or "")] + [str(x)[:60] for x in (r.get("floors") or [])[:3]])
+            r["styleRefs"] = store.expr_pick("", topic, 3)
+        except Exception:
+            r["styleRefs"] = []
+        try:
+            self._learn_from_tieba(r)
+        except Exception:
+            pass
+        self._json(200, r)
 
     def _get_tieba_sub(self, query) -> None:
         cfg = self._tieba_cfg()
@@ -2288,6 +2307,45 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(data)
         except Exception as e:
             self._json(500, {"ok": False, "error": str(e)})
+    def _learn_from_tieba(self, read_result: dict) -> None:
+        """从刚读的帖子里学「吧友怎么说话」。
+
+        和聊天学习分开：聊天学的是老大，这里学的是网友；写库 scope=tieba。
+        半小时最多一次 —— 每次读帖都调 LLM 太贵，而且也没必要那么勤。
+        """
+        cfg = self._tieba_cfg()
+        if not cfg.get("learnEnabled", True) or not read_result.get("ok"):
+            return
+        import time as _t
+        stamp_file = os.path.join(CMEM_DATA_DIR if "CMEM_DATA_DIR" in globals() else DATA_DIR,
+                                  "tieba-learn.json")
+        now = _t.time()
+        try:
+            last = float(json.load(open(stamp_file, encoding="utf-8")).get("last") or 0)
+        except Exception:
+            last = 0
+        if now - last < 1800:
+            return
+        floors = [str(x) for x in (read_result.get("floors") or [])[1:9] if str(x).strip()]
+        if len(floors) < 2:
+            return
+        blob = "\n".join([str(read_result.get("title") or "")] + floors)[:2500]
+        try:
+            learned = extractor.learn_expressions_from(blob, kind="tieba")
+        except Exception:
+            learned = []
+        for e in learned[:3]:
+            try:
+                store.expr_add("tieba", str(e.get("situation") or ""),
+                               str(e.get("style") or ""), str(e.get("example") or ""))
+            except Exception:
+                pass
+        try:
+            os.makedirs(os.path.dirname(stamp_file), exist_ok=True)
+            json.dump({"last": now}, open(stamp_file, "w", encoding="utf-8"))
+        except Exception:
+            pass
+
     def _post_tieba_login(self) -> None:
         body = self._body()
         bduss = str(body.get("bduss") or "").strip()
