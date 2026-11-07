@@ -361,6 +361,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, store.list_memories(tier=tier, q=q, limit=limit, offset=offset))
         elif path == "/bili/status":
             self._json(200, self._bili_status())
+        elif path.startswith("/static/"):
+            self._guard(lambda: self._serve_static(path))
         elif path == "/tieba/status":
             self._guard(lambda: self._get_tieba_status())
         elif path == "/tieba/browse":
@@ -2234,6 +2236,31 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._json(200, self._tieba_cli("sub", "--tid", tid, "--pid", pid))
 
+    def _serve_static(self, path: str) -> None:
+        """只读地发 static/ 下的图片（教程图这类）。"""
+        from urllib.parse import unquote
+        name = unquote(path[len("/static/"):])
+        if not name or "/" in name or "\\" in name or ".." in name:
+            self._json(404, {"ok": False, "error": "not found"})
+            return
+        base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+        fp = os.path.join(base, name)
+        if not os.path.isfile(fp):
+            self._json(404, {"ok": False, "error": "not found"})
+            return
+        ctype = "image/png" if name.lower().endswith(".png") else (
+            "image/jpeg" if name.lower().endswith((".jpg", ".jpeg")) else "application/octet-stream")
+        try:
+            with open(fp, "rb") as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.end_headers()
+            self.wfile.write(data)
+        except Exception as e:
+            self._json(500, {"ok": False, "error": str(e)})
     def _post_tieba_login(self) -> None:
         body = self._body()
         bduss = str(body.get("bduss") or "").strip()

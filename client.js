@@ -4545,7 +4545,16 @@ const [data, setData] = React.useState(null);
               ),
 
               h("div", { style: { ...S.muted, fontSize: 11, lineHeight: 1.6, marginTop: 6 } },
-                "拿法：电脑浏览器登录贴吧 → F12 → Application → Cookies → tieba.baidu.com → 复制 BDUSS 的值；整段 Cookie 直接粘进来也行，会自动挑出 BDUSS。"),
+                "拿法：电脑浏览器登录贴吧 → F12 → Network → 点任意请求 → 复制整段 Cookie 粘进来（会自动挑出 BDUSS）。"),
+              h("details", { style: { marginTop: 8 } },
+                h("summary", { style: { ...S.muted, fontSize: 12, cursor: "pointer" } }, "不会复制？点开看图示"),
+                h("img", {
+                  src: serviceUrl() + "/static/tieba-login.png",
+                  alt: "复制 Cookie 的图示",
+                  loading: "lazy",
+                  style: { width: "100%", marginTop: 8, borderRadius: 8, border: "1px solid rgba(0,0,0,.08)" },
+                }),
+              ),
               msg ? h("div", { style: { fontSize: 12, color: msg.includes("失败") || msg.includes("连不上") ? "#c0392b" : "#2fa36b", marginTop: 6 } }, msg) : null,
             ),
             h("div", { style: S.card },
