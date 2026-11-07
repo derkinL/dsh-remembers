@@ -234,8 +234,17 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
   blocks.push(`现在是 ${dateStr}（${phase}）。`);
 
   // ---------- 2. 困意（按档位变） ----------
-  if (hh >= 23 || hh < 6) blocks.push("你现在困得眼睛都睁不开了，回话短一点、慢一点，别硬撑。");
-  else if (hh >= 21) blocks.push("有点困了，说话懒一点。");
+  const sleepyText = (hh >= 23 || hh < 6)
+    ? "你现在困得眼睛都睁不开了，回话短一点、慢一点，别硬撑。"
+    : (hh >= 21 ? "有点困了，说话懒一点。" : "");
+  if (sleepyText) {
+    // 2026-11-07：同一档位的话是固定的，不该每轮重复追加
+    const sleepyHash = hash(sleepyText);
+    if (hashes.sleepy !== sleepyHash) {
+      hashes.sleepy = sleepyHash;
+      blocks.push(sleepyText);
+    }
+  }
 
   // ---------- 2.5 学来的说法（2026-11-06） ----------
   // 从聊天里学到的「当 X 时，可以 Y」。这是场合感，不是必答题——
@@ -245,10 +254,14 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
       .map((e) => `· 当${e.situation}时，可以${e.style}`)
       .filter(Boolean);
     if (lines.length) {
-      blocks.push(
-        "【学来的说法】这几个是你从聊天里听来的说话方式。碰到贴的场合就顺手用一下，不贴就别硬套——不是任务。\n"
-        + lines.join("\n"),
-      );
+      // 2026-11-07：服务端每小时才刷新一次，内容不变就别再追加一条
+      const exText = "【学来的说法】这几个是你从聊天里听来的说话方式。碰到贴的场合就顺手用一下，不贴就别硬套——不是任务。\n"
+        + lines.join("\n");
+      const exHash = hash(exText);
+      if (hashes.expressions !== exHash) {
+        hashes.expressions = exHash;
+        blocks.push(exText);
+      }
     }
   }
 
@@ -360,33 +373,21 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
     }
   }
 
-  // ---------- 7.5 思考链语言（每轮都提醒） ----------
-  // 系统提示词里那条权重不够（实测模型照旧英文推理），所以每轮在消息里再钉一次。
-  if (thinkCn) {
-    blocks.push("思考链（reasoning）用中文写。别用英文推理。");
-  }
+  // ---------- 7.5 思考链语言：2026-11-07 删掉 ----------
+  // 这句内容永不变化，却每轮往历史里再追加一句一模一样的话。
+  // 而 system prompt 里早就有三段更重的措辞（【最重要 · 违反这条就是错的】…）。
+  // 提醒要改就改 system prompt，不是靠往消息流里堆重复。
+  void thinkCn;
 
-  // ---------- 8. 表情包频率（每轮都带） ----------
-  // 这是行为指令，只在变化时塞一次的话她过几轮就忘了，所以不做 hash 去重。
-  // 一行几十字，比"她不发表情包"划算。
-  {
-    const raw = Number(proactive?.memeRate);
-    const rate = Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 0.2;
-    if (rate <= 0) {
-      blocks.push("表情包：现在设成不发了，别用 find_meme / qq_send_image 发表情。");
-    } else {
-      const every = Math.max(1, Math.round(1 / rate));
-      blocks.push(
-        `表情包：现在大约每 ${every} 句配一张（${Math.round(rate * 100)}%）。`
-        + "气氛对上了就 find_meme 找一张、用 qq_send_image 发出去；"
-        + "不是每句都要发，没合适的就只说话，别硬凑。",
-      );
-    }
-  }
+  // ---------- 8. 表情包频率：2026-11-07 搬到 system prompt ----------
+  // 它是"用户改了才变"的固定规则，放消息流里每轮追加纯属浪费；
+  // 放 system prompt 里则每轮都在、前缀缓存又稳定。见 renderPersona 的【表情包】段。
 
-  // ---------- 9. 文字颜 / emoji（每轮都带，但只在总开关打开时才说话） ----------
-  // 总开关关着就一个字都不注入 —— 默认不干预，让她按人格本来怎么说话就怎么说话。
-  if (proactive?.textStyleEnabled === true) {
+  // ---------- 9. 文字颜 / emoji：2026-11-07 搬到 system prompt ----------
+  // 同上：频率规则是固定值，只有随机示例想每轮换；但固定的假示例反而更容易被照抄成口头禅。
+  // 现在 system prompt 里只写频率 + 「按情绪自己组合」，示例全去掉。
+  // 下面这段留空占位，保持块编号不变。
+  if (false) {
     const pct = (r) => Math.round(r * 100);
     const freq = (r) => Math.max(1, Math.round(1 / r));
     const pick = (raw, dflt) => {
@@ -1600,7 +1601,7 @@ async function scanSeen() {
  * 冲突裁决写死在文本里。自我认知是会漂的那一半，必须让它知道谁说了算，
  * 否则「我发现自己其实可以不听硬边界」这种句子迟早会冒出来。
  */
-function renderPersona(data, maxChars, proactive, opts = {}) {
+export function renderPersona(data, maxChars, proactive, opts = {}) {
   const constitution = String(data?.constitution ?? "").trim();
   // 自我认知不进系统提示词：它每 30 轮会演化一次，一变就把这个会话整段历史的
   // prompt cache 打掉。改走 state 块的消息注入（哈希去重，只在真的变了才塞一条）。
@@ -1646,7 +1647,10 @@ function renderPersona(data, maxChars, proactive, opts = {}) {
     const _allow = _lines.filter((l) => /^(可以|能|允许|想)/.test(l));
     const _forbid = _lines.filter((l) => !/^(可以|能|允许|想)/.test(l));
     tabooAllow = _allow;
-    if (_forbid.length) rules.push(_forbid.join("\n"));
+    // 2026-11-07：以前是 join("\n") 成**一条** push —— 渲染时只给第一个加「· 」，
+    // 剩下 9 条成了裸行，还跟后面的工具速查连成一片，读起来就是"一大段"。
+    // 逐条 push 才真的成了清单。
+    for (const _f of _forbid) rules.push(_f);
   }
   if (identityObj.self_call_in_speech !== true) {
     const sc = String(identityObj.self_call ?? "").trim();
@@ -1667,11 +1671,14 @@ function renderPersona(data, maxChars, proactive, opts = {}) {
     }
   }
 
-  // 【工具速查】放在铁律里（永不变 → system prompt 缓存友好）
-  rules.push("[工具速查] 发图：find_meme(emotion) → qq_send_image(sources=[完整路径])；"
+  // 【工具速查】2026-11-07 从【铁律】里拆出去单独一段。
+  // 原来它跟行为禁令挤在同一个 rules 数组里，渲染出来「别硬编记忆」下面
+  // 紧跟「发图：find_meme…」—— 禁令的权重被工具说明摊薄了。
+  // 内容永不变，system prompt 缓存友好。
+  const toolboxText = "发图：find_meme(emotion) → qq_send_image(sources=[完整路径])；"
     + "学图：learn_meme；派任务：create_task；写便签：write_note；改状态：set_my_activity；"
     + "刷 B 站：bili_feed / bili_watch(bv) / bili_comment(bv,msg) / bili_run(command,args)；"
-    + "给自己找事：add_my_action；翻日记：read_diary；看活动：read_activities。");
+    + "给自己找事：add_my_action；翻日记：read_diary；看活动：read_activities。";
 
   // 【思考链语言】放在整个身份段的最前面。
   // 之前这条混在 rules 数组里排第 4-5 位，实测模型照旧用英文 reasoning。
@@ -1684,8 +1691,19 @@ function renderPersona(data, maxChars, proactive, opts = {}) {
   }
 
   if (rules.length) {
-    identityLines.push("【铁律】");
-    for (const r of rules) identityLines.push("· " + r);
+    // 2026-11-07：高频违规的条目排到最前面。
+    // 这些是"每句话都可能犯"的（念稿子、道歉式开场、客服腔），
+    // 跟"偶发"的（比如别把决定权推给对方）混在一起时权重不够。
+    const HOT_RE = /旁白|讨好|卑微|关心|叮嘱|念稿|有信息|客服腔|道歉|惩罚|低三下四|认错|求原谅|加保证/;
+    const _hot = rules.filter((r) => HOT_RE.test(r));
+    const _rest = rules.filter((r) => !HOT_RE.test(r));
+    identityLines.push("【铁律】下面这些不是建议，是硬约束。违反了老大能听出来，会说你的。");
+    for (const r of _hot) identityLines.push("· " + r);
+    for (const r of _rest) identityLines.push("· " + r);
+  }
+  if (toolboxText) {
+    identityLines.push("");
+    identityLines.push("【工具速查】" + toolboxText);
   }
 
   // 【学人说话】（2026-11-06）
@@ -1705,6 +1723,46 @@ function renderPersona(data, maxChars, proactive, opts = {}) {
     identityLines.push("");
     identityLines.push("【你可以的】");
     for (const a of tabooAllow) identityLines.push("· " + a);
+  }
+
+  // 【表情包 / 文字颜 / emoji】频率（2026-11-07 从 state 块搬上来）
+  // 这些是"用户改了才变"的固定规则：放消息流里每轮追加是纯浪费，
+  // 放 system prompt 里每轮都在、且前缀缓存稳定（改一次才失效一次）。
+  if (proactive) {
+    if (identityLines.length) identityLines.push("");
+    const _rateOf = (v, d) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : d;
+    };
+    const _everyOf = (r) => Math.max(1, Math.round(1 / r));
+
+    const _memeRate = _rateOf(proactive.memeRate, 0.2);
+    if (_memeRate <= 0) {
+      identityLines.push("【表情包】现在设成不发了，别用 find_meme / qq_send_image 发表情。");
+    } else {
+      identityLines.push("【表情包】大约每 " + _everyOf(_memeRate) + " 句配一张（"
+        + Math.round(_memeRate * 100) + "%）。气氛对上了就 find_meme 找一张、用 qq_send_image 发出去；"
+        + "不是每句都要发，没合适的就只说话，别硬凑。");
+    }
+
+    if (proactive.textStyleEnabled === true) {
+      const _kRate = _rateOf(proactive.kaomojiRate, 0.2);
+      if (_kRate <= 0) {
+        identityLines.push("【文字颜】现在不用，别加 (￣▽￣) 这类颜文字。");
+      } else {
+        identityLines.push("【文字颜】大约每 " + _everyOf(_kRate) + " 句带一个（"
+          + Math.round(_kRate * 100) + "%），放在句尾当表情，一次一个，别堆好几个。"
+          + "颜文字按当时的情绪自己组合出来，别老用同一个。");
+      }
+      const _eRate = _rateOf(proactive.emojiRate, 0.2);
+      if (_eRate <= 0) {
+        identityLines.push("【emoji】现在不用，别加 😊 这类 Unicode 表情。");
+      } else {
+        identityLines.push("【emoji】大约每 " + _everyOf(_eRate) + " 句带一个（"
+          + Math.round(_eRate * 100) + "%），一句最多一个，别连串。"
+          + "按当时情绪自己挑，别总用同样的几个。");
+      }
+    }
   }
 
   // 【说话风格】去 AI 味
