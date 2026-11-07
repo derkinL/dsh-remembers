@@ -155,7 +155,7 @@ window.__ModuleLoader__.load({
       }
 
       const S = {
-        wrap: { display: "flex", flexDirection: "column", gap: 16, maxWidth: 720 },
+        wrap: { display: "flex", flexDirection: "column", gap: 16, maxWidth: 960, width: "100%", margin: "0 auto" },
         desc: { fontSize: 13, lineHeight: 1.6, color: "var(--dsw-color-text-secondary, #6b7280)" },
         card: {
           border: "1px solid var(--dsw-color-border-subtle, rgba(0,0,0,.08))",
@@ -2680,7 +2680,7 @@ window.__ModuleLoader__.load({
               ),
               activityList && activityList.length > 0
                 ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
-                    activityList.map((a, i) => {
+                    pageSlice(activityList).map((a, i) => {
                       const d = new Date((a.ts || 0) * 1000);
                       const pad = (n) => String(n).padStart(2, "0");
                       const when = pad(d.getHours()) + ":" + pad(d.getMinutes());
@@ -2698,29 +2698,32 @@ window.__ModuleLoader__.load({
                           : null,
                       );
                     }),
+                  renderPager(activityList.length),
                   )
                 : h("div", { style: S.muted }, activityList ? "这天没做什么" : "读取中…"),
             )
           ) : mode === "browse" ? (
             browseList && browseList.length > 0
               ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
-                  browseList.map((b, i) =>
+                  pageSlice(browseList).map((b, i) =>
                     h("div", { key: i, style: { ...S.card, padding: "8px 12px", borderLeft: "3px solid #f0803c" } },
                       h("div", { style: { fontSize: 13, lineHeight: 1.6 } }, b.title || ""),
                       b.url ? h("div", { style: { ...S.muted, fontSize: 11, marginTop: 2, wordBreak: "break-all" } }, b.url) : null,
                     ),
                   ),
+                renderPager(browseList.length),
                 )
               : h("div", { style: S.muted }, browseList ? "还没刷到什么" : "读取中…")
           ) : mode === "notes" ? (
             notesList && notesList.length > 0
               ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
-                  notesList.map((n) =>
+                  pageSlice(notesList).map((n) =>
                     h("div", { key: n.id, style: { ...S.card, padding: "10px 12px", borderLeft: "3px solid #8b5cf6" } },
                       h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 4 } }, (n.author || "她") + " · " + (n.date || "")),
                       h("div", { style: { fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word" } }, n.text || ""),
                     ),
                   ),
+                renderPager(notesList.length),
                 )
               : h("div", { style: S.muted }, notesList ? "还没记过便签" : "读取中…")
           ) : mode === "slang" ? (
@@ -2827,11 +2830,12 @@ window.__ModuleLoader__.load({
                 (!exprs.length)
                   ? h("div", { style: S.muted }, "还没学到什么。她会在聊天里慢慢琢磨「什么场合该怎么接」。")
                   : null,
+              renderPager(emotionList.length),
               )
             })()
           ) : mode === "emotion" ? (
             emotionList && emotionList.length > 0 ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
-              emotionList.map((e) => {
+              pageSlice(emotionList).map((e) => {
                 const v = Number(e.valence) || 0;
                 const tone = v > 0.2 ? "#2fa36b" : v < -0.2 ? "#c0392b" : "#8b95a5";
                 const d = new Date((e.ts || 0) * 1000);
@@ -4565,7 +4569,7 @@ const [data, setData] = React.useState(null);
         if (item) {
           const back = () => setPage(null);
           return h(React.Fragment, null,
-            h("div", { style: { ...S.wrap, maxWidth: 1180 } },
+            h("div", { style: { ...S.wrap, maxWidth: 1180, margin: "0 auto" } },
               h("button", {
                 type: "button",
                 className: "dshm-back",
