@@ -2237,8 +2237,13 @@ class Handler(BaseHTTPRequestHandler):
     def _post_tieba_login(self) -> None:
         body = self._body()
         bduss = str(body.get("bduss") or "").strip()
+        cookie = str(body.get("cookie") or "").strip()
+        if not bduss and cookie:
+            m = re.search(r"BDUSS=([^;\s]+)", cookie, re.I)
+            if m:
+                bduss = m.group(1)
         if not bduss:
-            self._json(400, {"ok": False, "error": "缺少 bduss"})
+            self._json(400, {"ok": False, "error": "没找到 BDUSS（整段 Cookie 粘进来也行）"})
             return
         r = self._tieba_cli("login", "--bduss", bduss, timeout=40)
         self._json(200 if r.get("ok") else 400, r)

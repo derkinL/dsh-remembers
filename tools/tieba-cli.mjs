@@ -19,7 +19,7 @@ import {
   listBar, readThread, getSubReplies, reply, sign, followAndSign,
   setGap,
 } from './tieba.js'
-import { qrStart, qrPoll } from './tieba-qr.mjs'
+import { qrStart, qrPoll, qrRaw } from './tieba-qr.mjs'
 
 const args = process.argv.slice(2)
 const cmd = args[0] || 'help'
@@ -44,7 +44,14 @@ try {
     const me = await whoami()
     out({ ok: true, ...me })
   } else if (cmd === 'login') {
-    const bduss = opt('bduss')
+    // 支持两种贴法：只给 BDUSS 的值，或者整段 Cookie（里面有 BDUSS=…）
+    const cookie = opt('cookie')
+    let bduss = opt('bduss')
+    if (!bduss && cookie) {
+      const m = /BDUSS=([^;\s]+)/i.exec(cookie)
+      if (m) bduss = m[1]
+    }
+    if (!bduss) out({ ok: false, error: '没找到 BDUSS（粘贴时带上 BDUSS=… 也行）' }, 1)
     setCookie(bduss)
     const me = await whoami()
     out({ ok: true, ...me })
@@ -56,6 +63,8 @@ try {
     out({ ok: true, cleared: true })
   } else if (cmd === 'qr-start') {
     out({ ok: true, ...(await qrStart()) })
+  } else if (cmd === 'qr-raw') {
+    out(await qrRaw())
   } else if (cmd === 'qr-poll') {
     out(await qrPoll())
   } else if (cmd === 'status') {

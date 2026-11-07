@@ -120,3 +120,25 @@ export async function qrPoll() {
   try { fs.unlinkSync(statePath()) } catch { /* 用完清掉 */ }
   return { ok: true, status: 'done' }
 }
+
+/** 调试用：原样返回一次 unicast 的响应（排查扫码换 cookie 用） */
+export async function qrRaw() {
+  let st = {}
+  try { st = JSON.parse(fs.readFileSync(statePath(), 'utf8')) } catch { /* 没开始 */ }
+  if (!st.sign) return { ok: false, status: 'none' }
+  const q = new URLSearchParams({
+    channel_id: st.sign, tpl: 'netdisk', apiver: 'v3',
+    tt: String(Date.now()), callback: 'tangram_guid_callback',
+  })
+  const r = await curl(['-s', '-m', '15', '-A', UA, '-b', jarPath(), '-c', jarPath(),
+    `${BASE}/v2/api/unicast?${q.toString()}`])
+  return { ok: true, raw: r.out.toString('utf8').slice(0, 600), jarKeys: jarKeys() }
+}
+
+/** jar 里有哪些 cookie 名（值不返回） */
+export function jarKeys() {
+  try {
+    return fs.readFileSync(jarPath(), 'utf8').split('\n').filter(Boolean)
+      .map((l) => l.split('\t')).filter((c) => c.length >= 7).map((c) => c[5])
+  } catch { return [] }
+}
