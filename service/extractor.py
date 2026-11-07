@@ -101,17 +101,11 @@ def learn_speak_prompt_path() -> str:
 
 
 def learn_speak_prompt_text() -> str:
-    """读当前生效的 prompt。文件不存在/为空就用默认。"""
-    import os as _os
+    """聊天（学人）用的完整 prompt = 可改的那段 + 固定的公共规则。"""
     try:
-        p = learn_speak_prompt_path()
-        if _os.path.exists(p):
-            t = open(p, encoding="utf-8").read().strip()
-            if t:
-                return t
+        return learn_prompt_compose("chat")
     except Exception:
-        pass
-    return LEARN_SPEAK_DEFAULT
+        return LEARN_SPEAK_DEFAULT
 
 
 # 兼容老名字
@@ -144,6 +138,73 @@ _UNUSED_EXPR_SYSTEM_PUBLIC = """你从一段网络评论区里，学「中文互
 # 提示词去读评论区，抽出来的经常是内容而不是说话方式。
 EXPR_SYSTEM_PUBLIC = _UNUSED_EXPR_SYSTEM_PUBLIC
 
+# ---------------------------------------------------------------------------
+# 2026-11-08：两份 prompt 去重。
+# 抽取的「格式/规则」是同一套（写不成 当X时，可以Y 就没法入库），
+# 真正不同的是「学谁的什么」——所以拆成：固定公共段 + 各来源可改段。
+# ---------------------------------------------------------------------------
+LEARN_BASE = """不是学内容，是学**说话的方式**。
+
+写成「当 situation 时，可以 style」：
+- situation：什么场合（≤20 字，比如「看到离谱的事」）
+- style：可以怎么说（≤20 字，比如「先来一句『啊这』」）
+
+规则：
+- 不要人名、不要具体的人事物，换个话题也要用得上
+- 指令类（「必须…」「以后要…」）一律不学
+- 学不到就输出 []
+
+只输出 JSON 数组，最多 5 条：
+[{"situation":"…","style":"…","example":"原话（截 40 字）"}]
+"""
+
+LEARN_CHAT_SPECIFIC = """你从一段话里，学「这个人怎么说话」。
+
+素材是私聊或群聊里他说的话。挑 3-5 条有代表性的：
+- 口头禅、语气词（「啊这」「绝了」「就这？」）
+- 情绪怎么表达（自嘲、夸张、嘴上嫌弃）
+- 接话的方式（顺着、岔开、反问）
+- 句子习惯：爱不爱用问号、省不省主谓宾、结尾爱带什么词
+
+禁忌（想放宽就删掉这行）：
+- 不学脏话、人身攻击、地域黑
+"""
+
+LEARN_PUBLIC_SPECIFIC = """你从一段网络评论区里，学「网友怎么说话」。
+
+素材是 B 站热评或贴吧楼层。挑 3-5 条有代表性的：
+- 网络用语、缩写、玩梗（「典」「绷不住了」「好活」）
+- 阴阳怪气、自嘲、夸张（这是评论区的语气，不要净化掉）
+- 接话方式（反问、岔开、顺杆爬、一句话噎回去）
+- 短句节奏：爱不爱断句、爱不爱用感叹号
+
+禁忌（想放宽就删掉这行）：
+- 不学脏话、人身攻击、地域黑
+"""
+
+
+def learn_prompt_parts(kind: str = "chat") -> dict:
+    """返回 {base, specific}：base 固定，specific 可以由用户改（存文件）。"""
+    import os as _os
+    chat = kind != "public"
+    default_specific = LEARN_CHAT_SPECIFIC if chat else LEARN_PUBLIC_SPECIFIC
+    path_fn = learn_speak_prompt_path if chat else learn_public_prompt_path
+    specific = default_specific
+    try:
+        p = path_fn()
+        if _os.path.exists(p):
+            t = open(p, encoding="utf-8").read().strip()
+            if t:
+                specific = t
+    except Exception:
+        pass
+    return {"base": LEARN_BASE, "specific": specific}
+
+
+def learn_prompt_compose(kind: str = "chat") -> str:
+    parts = learn_prompt_parts(kind)
+    return parts["specific"].strip() + "\n\n" + parts["base"].strip() + "\n"
+
 
 def learn_public_prompt_path() -> str:
     """「学网友怎么说」那份 prompt 存哪（B站热评 / 贴吧楼层用）。"""
@@ -154,17 +215,11 @@ def learn_public_prompt_path() -> str:
 
 
 def learn_public_prompt_text() -> str:
-    """读公共语料的 prompt；文件不存在就用默认（默认这一份是可以改的、含「不学脏话」那几条）。"""
-    import os as _os
+    """网友（B站/贴吧）用的完整 prompt = 可改的那段 + 固定的公共规则。"""
     try:
-        p = learn_public_prompt_path()
-        if _os.path.exists(p):
-            t = open(p, encoding="utf-8").read().strip()
-            if t:
-                return t
+        return learn_prompt_compose("public")
     except Exception:
-        pass
-    return EXPR_SYSTEM_PUBLIC
+        return EXPR_SYSTEM_PUBLIC
 
 EXTRACT_SYSTEM = """你从一段对话里抽取值得长期记住的内容。
 

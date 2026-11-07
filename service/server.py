@@ -34,6 +34,7 @@ from urllib.parse import parse_qs, urlparse
 from embedding import Embedder
 from extractor import (learn_speak_prompt_text, learn_speak_prompt_path, LEARN_SPEAK_DEFAULT,
                        learn_public_prompt_text, learn_public_prompt_path,
+                       learn_prompt_parts, LEARN_CHAT_SPECIFIC, LEARN_PUBLIC_SPECIFIC,
                        EXPR_SYSTEM_PUBLIC, ExtractConfig, Extractor)
 from llm import LLM
 from memory_core import MemoryInput, MemoryStore
@@ -415,20 +416,22 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/slang":
             self._json(200, store.slang_list())
         elif path == "/learn/prompt":
-            # 两套 prompt：chat=学老大，public=学网友（B站/贴吧）
+            # 两套 prompt：chat=学人，public=学网友。返回拆开的 base / specific，
+            # 前端只编辑 specific，base 是固定的格式与结构规则（避免两份重复）。
             kind = (query.get("kind") or ["chat"])[0]
-            if kind == "public":
-                self._guard(lambda: self._json(200, {
-                    "ok": True, "kind": "public",
-                    "prompt": learn_public_prompt_text(),
-                    "isDefault": learn_public_prompt_text() == EXPR_SYSTEM_PUBLIC,
-                }))
-            else:
-                self._guard(lambda: self._json(200, {
-                    "ok": True, "kind": "chat",
-                    "prompt": learn_speak_prompt_text(),
-                    "isDefault": learn_speak_prompt_text() == LEARN_SPEAK_DEFAULT,
-                }))
+
+            def _lp():
+                parts = learn_prompt_parts(kind)
+                full = learn_public_prompt_text() if kind == "public" else learn_speak_prompt_text()
+                default_specific = LEARN_CHAT_SPECIFIC if kind != "public" else LEARN_PUBLIC_SPECIFIC
+                return {
+                    "ok": True, "kind": kind,
+                    "base": parts["base"],
+                    "specific": parts["specific"],
+                    "isDefault": parts["specific"].strip() == default_specific.strip(),
+                    "prompt": full,
+                }
+            self._guard(lambda: self._json(200, _lp()))
         elif path == "/learn/stats":
             self._guard(lambda: self._json(200, self._learn_stats()))
         elif path == "/expressions":

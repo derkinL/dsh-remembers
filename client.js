@@ -4509,6 +4509,7 @@ const [data, setData] = React.useState(null);
         const [on, setOn] = React.useState(true);
         const [stats, setStats] = React.useState(null);
         const [prompts, setPrompts] = React.useState({ chat: "", public: "" });
+        const [baseText, setBaseText] = React.useState("");
         const [msg, setMsg] = React.useState(null);
         const [busy, setBusy] = React.useState(false);
 
@@ -4523,7 +4524,9 @@ const [data, setData] = React.useState(null);
           try {
             const a = await call("/learn/prompt?kind=chat");
             const b = await call("/learn/prompt?kind=public");
-            setPrompts({ chat: (a && a.prompt) || "", public: (b && b.prompt) || "" });
+            // 只编辑「学什么」这段，格式规则是公共的，服务端会拼在前面
+            setPrompts({ chat: (a && a.specific) || "", public: (b && b.specific) || "" });
+            setBaseText((a && a.base) || "");
           } catch { /* 保持空 */ }
         };
         React.useEffect(() => { void load(); }, []);
@@ -4629,9 +4632,24 @@ const [data, setData] = React.useState(null);
           ),
           h("div", { style: { flex: "1 1 0", minWidth: 320, display: "flex", flexDirection: "column", gap: 12 } },
             editor("chat", "学聊天（私聊 / 群聊）",
-              "决定她从「你说话」里抽什么。这一段原样交给模型当抽取指令。"),
+              "只编辑「学什么」这段。输出格式和结构规则是公共的，自动拼在后面。"),
             editor("public", "学网友（B 站热评 / 贴吧）",
-              "决定她从公共评论区抽什么。贴吧和 B 站共用这一份，所以按「网友怎么说话」写。"),
+              "只编辑「学什么」这段。B 站和贴吧共用，默认保留了评论区的阴阳怪气。"),
+            baseText
+              ? h("div", { style: { ...S.card, background: "rgba(0,0,0,.02)" } },
+                  h("div", { style: S.label }, "公共规则（固定，两份共用）"),
+                  h("div", { style: { ...S.muted, fontSize: 11, lineHeight: 1.6, marginTop: 4 } },
+                    "这段在代码里，不随两份提示词重复；想改格式规则告诉我。"),
+                  h("pre", {
+                    style: {
+                      margin: "8px 0 0", padding: 10, borderRadius: 8, background: "#fff",
+                      border: "1px solid rgba(0,0,0,.08)", fontSize: 11.5, lineHeight: 1.6,
+                      whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "inherit",
+                      color: "var(--dsw-color-text-secondary, #6b7280)",
+                    },
+                  }, baseText),
+                )
+              : null,
           ),
         );
       }
