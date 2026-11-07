@@ -4503,6 +4503,14 @@ const [data, setData] = React.useState(null);
         );
       }
 
+      // 贴吧预设吧名：点一下收起/展出，不用手打。分组只是给人看的，存的是纯吧名。
+      const PRESET_BARS = [
+        ["科技 / 数码", ["显卡", "电脑", "手机", "数码", "人工智能", "编程", "程序员", "机械键盘", "耳机", "手机摄影"]],
+        ["兴趣 / 生活", ["猫", "狗", "宠物", "美食", "做饭", "摄影", "手办", "模型", "汽车", "摩托", "钓鱼", "骑行", "跑步"]],
+        ["游戏 / 二次元", ["单机游戏", "网络游戏", "steam", "我的世界", "原神", "英雄联盟", "动漫", "二次元", "cosplay", "桌游"]],
+        ["知识 / 文化", ["历史", "科普", "数学", "物理", "哲学", "读书", "电影", "音乐", "纪录片", "图灵完备"]],
+      ];
+
       // -- 贴吧 --------------------------------------------------------------
 
       function TiebaSection() {
@@ -4673,8 +4681,33 @@ const [data, setData] = React.useState(null);
             h("div", { style: S.card },
               h("div", { style: S.label }, "她常逛的吧"),
               h("div", { style: { ...S.muted, fontSize: 11, lineHeight: 1.6 } },
-                "填吧名就行，不要带「吧」字。她逛的时候会从这里面挑。"),
-              h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 } },
+                "点下面的标签选，也可以自己加。存的是吧名，不要带「吧」字。"),
+              ...PRESET_BARS.map(([group, items]) =>
+                h("div", { key: group, style: { marginTop: 10 } },
+                  h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 5 } }, group),
+                  h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+                    items.map((name) => {
+                      const on = bars.includes(name);
+                      return h("button", {
+                        key: name,
+                        type: "button",
+                        onClick: () => void patchCfg({
+                          bars: on ? bars.filter((x) => x !== name) : [...bars, name],
+                        }),
+                        style: {
+                          fontSize: 12, lineHeight: "20px", padding: "2px 10px", borderRadius: 999,
+                          cursor: "pointer",
+                          border: "1px solid " + (on ? "transparent" : "rgba(127,127,127,.28)"),
+                          background: on ? "rgba(64,132,255,.16)" : "transparent",
+                          color: on ? "#4084ff" : "inherit",
+                          transition: "background .15s, color .15s, border-color .15s",
+                        },
+                      }, name);
+                    }),
+                  ),
+                )),
+              h("div", { style: { ...S.muted, fontSize: 11, marginTop: 12 } }, "已选"),
+              h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 } },
                 bars.length
                   ? bars.map((b) => h("span", {
                       key: b,
