@@ -353,7 +353,8 @@ class Scheduler:
         bars = cfg.get("bars") or []
         bar = random.choice(bars) if bars else ""
         where = f"{bar}吧" if bar else "贴吧"
-        msg = f"（现在 {hour} 点。你自己待着，这会儿有点想去{where}逛逛。）"
+        tail = "看到有意思的可以发给老大。" if cfg.get("shareEnabled", True) else "自己看看就行，别打扰他。"
+        msg = f"（现在 {hour} 点。你自己待着，这会儿有点想去{where}逛逛。{tail}）"
         self._inject(msg, silent=False)
         _log(f"tieba: nudged model ({count + 1}/{per_day} today, bar={bar or '-'})")
         return True

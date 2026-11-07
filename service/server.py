@@ -2156,6 +2156,7 @@ class Handler(BaseHTTPRequestHandler):
         cfg.setdefault("enabled", False)
         cfg.setdefault("replyEnabled", False)
         cfg.setdefault("browseEnabled", False)
+        cfg.setdefault("shareEnabled", True)
         cfg.setdefault("minGapMinutes", 120)
         cfg.setdefault("maxGapMinutes", 480)
         cfg.setdefault("perRound", 3)
@@ -2214,6 +2215,7 @@ class Handler(BaseHTTPRequestHandler):
             "replyEnabled": bool(cfg.get("replyEnabled")),
             "bars": cfg.get("bars") or list(self.TIEBA_DEFAULT_BARS),
             "browseEnabled": bool(cfg.get("browseEnabled")),
+            "shareEnabled": bool(cfg.get("shareEnabled", True)),
             "minGapMinutes": int(cfg.get("minGapMinutes") or 120),
             "maxGapMinutes": int(cfg.get("maxGapMinutes") or 480),
             "perRound": int(cfg.get("perRound") or 3),
@@ -2328,6 +2330,8 @@ class Handler(BaseHTTPRequestHandler):
                 patch["bars"] = [str(x).strip() for x in bars if str(x).strip()][:20]
         if "browseEnabled" in body:
             patch["browseEnabled"] = bool(body.get("browseEnabled"))
+        if "shareEnabled" in body:
+            patch["shareEnabled"] = bool(body.get("shareEnabled"))
         for key, lo, hi, dflt in (
             ("minGapMinutes", 5, 1440, 120),
             ("maxGapMinutes", 5, 1440, 480),
