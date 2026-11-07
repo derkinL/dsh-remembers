@@ -178,7 +178,7 @@ window.__ModuleLoader__.load({
           width: "100%", boxSizing: "border-box", padding: "9px 12px", fontSize: 13,
           borderRadius: 8, border: "1px solid var(--dsw-color-border, rgba(0,0,0,.14))",
           background: "var(--dsw-color-bg, #fff)", color: "var(--dsw-color-text-primary, #111827)",
-          outline: "none", fontFamily: "inherit",
+          outline: "none", fontFamily: "inherit", minWidth: 0,
         },
         select: {
           width: "100%", boxSizing: "border-box", padding: "9px 12px", fontSize: 13,
@@ -191,6 +191,9 @@ window.__ModuleLoader__.load({
         footer: { display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 4 },
         btn: (primary) => ({
           padding: "8px 18px", fontSize: 13, borderRadius: 8, cursor: "pointer",
+          // 按钮永远不换行、不被压缩：以前「保存并测试」在窄列里会折成两行，
+          // 卡片跟着变高，页面就抖一下
+          whiteSpace: "nowrap", flexShrink: 0,
           border: primary ? "1px solid transparent" : "1px solid var(--dsw-color-border, rgba(0,0,0,.14))",
           background: primary ? "var(--dsw-color-accent, #111827)" : "var(--dsw-color-bg, #fff)",
           color: primary ? "var(--dsw-color-accent-text, #fff)" : "var(--dsw-color-text-primary, #111827)",
