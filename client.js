@@ -2100,6 +2100,9 @@ window.__ModuleLoader__.load({
         const [slangList, setSlangList] = React.useState(null);
         const [exprList, setExprList] = React.useState(null);
         const [newExpr, setNewExpr] = React.useState({ situation: "", style: "", example: "" });
+        // 改一条：编辑哪一行、改后的三个字段
+        const [editId, setEditId] = React.useState(null);
+        const [editForm, setEditForm] = React.useState({ situation: "", style: "", example: "" });
         const [stateInfo, setStateInfo] = React.useState(null);
         const [selfModel, setSelfModel] = React.useState(null);
         const [mode, setMode] = React.useState("memory");
@@ -2599,35 +2602,118 @@ window.__ModuleLoader__.load({
                   ? h("div", null,
                       h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 4 } }, `学到的说法（场合感） ${exprs.length}`),
                       h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 8, lineHeight: 1.5 } },
-                        "「当 X 时，可以 Y」。梗是公用的——不管从哪个群、哪个私聊、还是 B 站评论区学来的，在哪儿都能用。"
-                        + "每轮最多挑 3 条给她看，跟当前话题沾边的优先。"),
+                        "「当 X 时，可以 Y」。场景（X）是她读素材时自己总结的一句话，不是固定分类——素材多具体，场景就多具体。"
+                        + "注入按场景分：私聊/群聊只拿这个会话和网友学来的，贴吧只拿贴吧和网友的；每轮最多 3 条，跟当前话题沾边的优先。"),
                       h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
-                        pageSlice(exprs).map((e) => h("div", {
-                          key: "ex" + e.id,
-                          style: {
-                            ...S.card, padding: "8px 12px", borderLeft: "3px solid #4084ff",
-                            display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8,
-                          },
-                        },
-                          h("div", { style: { flex: 1, minWidth: 0 } },
-                            h("div", { style: { fontSize: 13, lineHeight: 1.5 } },
-                              "当", h("span", { style: { color: "#4084ff", fontWeight: 600 } }, e.situation),
-                              "时，可以", h("span", { style: { fontWeight: 600 } }, e.style)),
-                            e.example ? h("div", { style: { ...S.muted, fontSize: 11, marginTop: 3 } },
-                              "例：" + e.example) : null,
-                            h("div", { style: { ...S.muted, fontSize: 11, marginTop: 3 } },
-                              `见过 ${e.count || 1} 次 · ${e.scope}`),
-                          ),
-                          h("button", {
-                            style: { ...S.btn(false), fontSize: 11, padding: "2px 8px", flexShrink: 0 },
-                            onClick: async () => {
-                              try {
-                                await call("/expressions", { method: "POST", body: JSON.stringify({ op: "delete", id: e.id }) });
-                                setExprList((exprList || []).filter((x) => x.id !== e.id));
-                              } catch (err) { setMsg("删除失败：" + String(err && err.message || err)); }
+                        pageSlice(exprs).map((e) => {
+                          const editing = editId === e.id;
+                          const saveEdit = async () => {
+                            try {
+                              const r = await call("/expressions", {
+                                method: "POST",
+                                body: JSON.stringify({
+                                  op: "update", id: e.id,
+                                  situation: editForm.situation,
+                                  style: editForm.style,
+                                  example: editForm.example,
+                                }),
+                              });
+                              if (r && r.ok) {
+                                if (r.mergedInto) {
+                                  setExprList((exprList || []).filter((x) => x.id !== e.id));
+                                  setMsg("改完跟另一条重复了，已合并");
+                                } else {
+                                  setExprList((exprList || []).map((x) => (x.id === e.id
+                                    ? { ...x, situation: r.situation, style: r.style, example: r.example }
+                                    : x)));
+                                }
+                                setEditId(null);
+                              } else {
+                                setMsg("保存失败：" + ((r && r.error) || "未知"));
+                              }
+                            } catch (err) { setMsg("保存失败：" + String(err && err.message || err)); }
+                          };
+                          return h("div", {
+                            key: "ex" + e.id,
+                            style: {
+                              ...S.card, padding: "8px 12px",
+                              borderLeft: "3px solid " + (editing ? "#f0803c" : "#4084ff"),
+                              display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8,
                             },
-                          }, "删"),
-                        )),
+                          },
+                            h("div", { style: { flex: 1, minWidth: 0 } },
+                              editing
+                                ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+                                    h("input", {
+                                      style: { ...S.input, fontSize: 12 },
+                                      placeholder: "什么场合",
+                                      value: editForm.situation,
+                                      onChange: (ev) => setEditForm({ ...editForm, situation: ev.target.value }),
+                                    }),
+                                    h("input", {
+                                      style: { ...S.input, fontSize: 12 },
+                                      placeholder: "可以怎么说",
+                                      value: editForm.style,
+                                      onChange: (ev) => setEditForm({ ...editForm, style: ev.target.value }),
+                                    }),
+                                    h("input", {
+                                      style: { ...S.input, fontSize: 12 },
+                                      placeholder: "原话例子（可选）",
+                                      value: editForm.example,
+                                      onChange: (ev) => setEditForm({ ...editForm, example: ev.target.value }),
+                                    }),
+                                  )
+                                : h(React.Fragment, null,
+                                    h("div", { style: { fontSize: 13, lineHeight: 1.5 } },
+                                      "当", h("span", { style: { color: "#4084ff", fontWeight: 600 } }, e.situation),
+                                      "时，可以", h("span", { style: { fontWeight: 600 } }, e.style)),
+                                    e.example ? h("div", { style: { ...S.muted, fontSize: 11, marginTop: 3 } },
+                                      "例：" + e.example) : null,
+                                    h("div", { style: { ...S.muted, fontSize: 11, marginTop: 3 } },
+                                      `见过 ${e.count || 1} 次 · ${e.scope}`),
+                                  ),
+                            ),
+                            h("div", { style: { display: "flex", gap: 6, flexShrink: 0 } },
+                              editing
+                                ? [
+                                    h("button", {
+                                      key: "ok",
+                                      style: { ...S.btn(true), fontSize: 11, padding: "2px 8px" },
+                                      onClick: () => void saveEdit(),
+                                    }, "保存"),
+                                    h("button", {
+                                      key: "no",
+                                      style: { ...S.btn(false), fontSize: 11, padding: "2px 8px" },
+                                      onClick: () => setEditId(null),
+                                    }, "取消"),
+                                  ]
+                                : [
+                                    h("button", {
+                                      key: "ed",
+                                      style: { ...S.btn(false), fontSize: 11, padding: "2px 8px" },
+                                      onClick: () => {
+                                        setEditId(e.id);
+                                        setEditForm({
+                                          situation: e.situation || "",
+                                          style: e.style || "",
+                                          example: e.example || "",
+                                        });
+                                      },
+                                    }, "改"),
+                                    h("button", {
+                                      key: "del",
+                                      style: { ...S.btn(false), fontSize: 11, padding: "2px 8px" },
+                                      onClick: async () => {
+                                        try {
+                                          await call("/expressions", { method: "POST", body: JSON.stringify({ op: "delete", id: e.id }) });
+                                          setExprList((exprList || []).filter((x) => x.id !== e.id));
+                                        } catch (err) { setMsg("删除失败：" + String(err && err.message || err)); }
+                                      },
+                                    }, "删"),
+                                  ],
+                            ),
+                          );
+                        }),
                       ),
                     )
                   : null,

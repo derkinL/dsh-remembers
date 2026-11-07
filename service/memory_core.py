@@ -1530,6 +1530,42 @@ class MemoryStore:
         except Exception:
             return []
 
+    def expr_update(self, eid: int, situation: str = "", style: str = "",
+                    example: str = "") -> dict:
+        """改一条已学到的说法。三个字段给哪个改哪个；空串视为不改。
+
+        改完可能跟另一条撞（同 scope + 同 situation + 同 style 有唯一索引）：
+        撞上就把两条合并成一条（count 相加），不报错。
+        """
+        eid = int(eid)
+        row = self.conn.execute(
+            "SELECT id, scope, situation, style, example, count FROM expressions WHERE id=?",
+            (eid,)).fetchone()
+        if not row:
+            return {"ok": False, "error": "没这条"}
+        scope = str(row[1])
+        cur = {"situation": str(row[2]), "style": str(row[3]), "example": str(row[4] or "")}
+        if situation.strip():
+            cur["situation"] = situation.strip()[:40]
+        if style.strip():
+            cur["style"] = style.strip()[:60]
+        if example.strip():
+            cur["example"] = example.strip()[:200]
+        dup = self.conn.execute(
+            "SELECT id, count FROM expressions WHERE scope=? AND situation=? AND style=? AND id!=?",
+            (scope, cur["situation"], cur["style"], eid)).fetchone()
+        if dup:
+            self.conn.execute("UPDATE expressions SET count = count + ? WHERE id=?",
+                              (int(row[5] or 1), int(dup[0])))
+            self.conn.execute("DELETE FROM expressions WHERE id=?", (eid,))
+            self.conn.commit()
+            return {"ok": True, "mergedInto": int(dup[0])}
+        self.conn.execute(
+            "UPDATE expressions SET situation=?, style=?, example=? WHERE id=?",
+            (cur["situation"], cur["style"], cur["example"], eid))
+        self.conn.commit()
+        return {"ok": True, "id": eid, **cur}
+
     def expr_delete(self, eid: int) -> int:
         cur = self.conn.execute("DELETE FROM expressions WHERE id=?", (int(eid),))
         self.conn.commit()

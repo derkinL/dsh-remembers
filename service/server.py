@@ -3423,6 +3423,20 @@ class Handler(BaseHTTPRequestHandler):
     def _post_expressions(self) -> None:
         """POST 增一条 / DELETE 删一条。"""
         body = self._body()
+        if str(body.get("op") or "") == "update":
+            eid = body.get("id")
+            try:
+                r = store.expr_update(
+                    int(eid),
+                    str(body.get("situation") or ""),
+                    str(body.get("style") or ""),
+                    str(body.get("example") or ""),
+                )
+            except (TypeError, ValueError):
+                self._json(400, {"ok": False, "error": "bad id"})
+                return
+            self._json(200 if r.get("ok") else 400, r)
+            return
         if str(body.get("op") or "") == "delete":
             eid = body.get("id")
             try:
