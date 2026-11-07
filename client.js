@@ -122,8 +122,8 @@ window.__ModuleLoader__.load({
           ".dshm-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:18px}",
           "@media (max-width:760px){.dshm-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}",
           "@media (max-width:480px){.dshm-grid{grid-template-columns:minmax(0,1fr)}}",
-          ".dshm-card{display:flex;flex-direction:column;align-items:flex-start;gap:10px;width:100%;",
-          "padding:14px 16px;text-align:left;font-family:inherit;cursor:pointer;",
+          ".dshm-card{display:flex;flex-direction:column;align-items:flex-start;gap:8px;width:100%;",
+          "padding:12px 14px;text-align:left;font-family:inherit;cursor:pointer;",
           "border:1px solid var(--dsw-alias-border-l4,rgba(0,0,0,.16));border-radius:12px;",
           "background:var(--dsw-alias-bg-base,#fff);box-shadow:0 2px 8px rgba(0,0,0,.05);",
           "transition:transform .2s ease,box-shadow .2s ease}",
@@ -144,9 +144,9 @@ window.__ModuleLoader__.load({
           ".dshm-tabs{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}",
           "@media (max-width:900px){.dshm-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}}",
           "@media (max-width:600px){.dshm-tabs{grid-template-columns:repeat(3,minmax(0,1fr))}}",
-          ".dshm-tab{height:38px;display:flex;align-items:center;justify-content:center;gap:5px;min-width:0;padding:0 8px;",
+          ".dshm-tab{height:34px;display:flex;align-items:center;justify-content:center;gap:5px;min-width:0;padding:0 8px;",
           "border:1px solid var(--dsw-alias-border-l4,rgba(0,0,0,.16));border-radius:10px;background:#fff;cursor:pointer;",
-          "font-family:inherit;font-size:12.5px;color:var(--dsw-alias-label-primary,#111827);white-space:nowrap;",
+          "font-family:inherit;font-size:12px;color:var(--dsw-alias-label-primary,#111827);white-space:nowrap;",
           "overflow:hidden;text-overflow:ellipsis;transition:border-color .15s ease,background .15s ease}",
           ".dshm-tab:hover{border-color:rgba(64,132,255,.55)}",
           ".dshm-tab[data-on=\"1\"]{border-color:#4084ff;background:rgba(64,132,255,.06);font-weight:600;color:#2f6fe0}",
@@ -155,11 +155,11 @@ window.__ModuleLoader__.load({
       }
 
       const S = {
-        wrap: { display: "flex", flexDirection: "column", gap: 16, maxWidth: 960, width: "100%", margin: "0 auto" },
+        wrap: { display: "flex", flexDirection: "column", gap: 12, maxWidth: 960, width: "100%", margin: "0 auto" },
         desc: { fontSize: 13, lineHeight: 1.6, color: "var(--dsw-color-text-secondary, #6b7280)" },
         card: {
           border: "1px solid var(--dsw-color-border-subtle, rgba(0,0,0,.08))",
-          borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 14,
+          borderRadius: 12, padding: 12, display: "flex", flexDirection: "column", gap: 10,
           background: "var(--dsw-color-bg-subtle, #fafafa)",
         },
         field: { display: "flex", flexDirection: "column", gap: 6 },
@@ -1356,7 +1356,7 @@ window.__ModuleLoader__.load({
         const toggle = (key, label, hint) => h("label", {
           style: {
             display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
-            padding: "10px 12px", borderRadius: 8, marginBottom: 8,
+            padding: "8px 10px", borderRadius: 8, marginBottom: 8,
             border: "1.5px solid " + (cfg[key] ? "#4084ff" : "rgba(0,0,0,.10)"),
             background: cfg[key] ? "rgba(64,132,255,.04)" : "#ffffff",
             transition: "border-color .15s, background .15s",
@@ -1394,7 +1394,7 @@ window.__ModuleLoader__.load({
             h("div", {
               style: {
                 display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer",
-                padding: "10px 12px", borderRadius: 8, marginBottom: 8,
+                padding: "8px 10px", borderRadius: 8, marginBottom: 8,
                 border: "1.5px solid " + (cfg.autoScheduleEnabled !== false ? "#4084ff" : "rgba(0,0,0,.10)"),
                 background: cfg.autoScheduleEnabled !== false ? "rgba(64,132,255,.04)" : "#fff",
               },
@@ -1417,7 +1417,7 @@ window.__ModuleLoader__.load({
             h("div", {
               style: {
                 display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer",
-                padding: "10px 12px", borderRadius: 8,
+                padding: "8px 10px", borderRadius: 8,
                 border: "1.5px solid " + (cfg.autoShareEnabled !== false ? "#4084ff" : "rgba(0,0,0,.10)"),
                 background: cfg.autoShareEnabled !== false ? "rgba(64,132,255,.04)" : "#fff",
               },
@@ -1566,7 +1566,7 @@ window.__ModuleLoader__.load({
                   key: "wp-" + key,
                   onClick: () => setCfg({ ...cfg, ...params, wakePreset: key }),
                   style: {
-                    cursor: "pointer", padding: "10px 12px", borderRadius: 8,
+                    cursor: "pointer", padding: "8px 10px", borderRadius: 8,
                     border: "1.5px solid " + (on ? "#4084ff" : "rgba(0,0,0,.10)"),
                     background: on ? "rgba(64,132,255,.04)" : "#fff",
                     transition: "border-color .15s, background .15s",
@@ -2015,7 +2015,7 @@ window.__ModuleLoader__.load({
                   key: "bp-" + key,
                   style: {
                     display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
-                    padding: "10px 12px", borderRadius: 8, height: "100%", boxSizing: "border-box",
+                    padding: "8px 10px", borderRadius: 8, height: "100%", boxSizing: "border-box",
                     border: "1.5px solid " + (on ? "#4084ff" : "rgba(0,0,0,.10)"),
                     background: on ? "rgba(64,132,255,.04)" : "#ffffff",
                     transition: "border-color .15s, background .15s",
@@ -2046,7 +2046,7 @@ window.__ModuleLoader__.load({
                   key: tool.cmd,
                   style: {
                     display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
-                    padding: "10px 12px", borderRadius: 8, height: "100%", boxSizing: "border-box",
+                    padding: "8px 10px", borderRadius: 8, height: "100%", boxSizing: "border-box",
                     border: "1.5px solid " + (tool.enabled ? "#4084ff" : "rgba(0,0,0,.10)"),
                     background: tool.enabled ? "rgba(64,132,255,.04)" : "#ffffff",
                     transition: "border-color .15s, background .15s",
@@ -2423,7 +2423,7 @@ window.__ModuleLoader__.load({
         };
 
         // 主面板是整页的，左边放「怎么记」的配置，右边放记忆列表。
-        return h("div", { style: { display: "flex", gap: 24, alignItems: "flex-start", flexWrap: "wrap" } },
+        return h("div", { style: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" } },
           h("div", { style: { flex: "0 0 400px", minWidth: 340, display: "flex", flexDirection: "column", gap: 16 } },
           // 她的状态（常驻顶部，不用点 tab）
           h("div", { style: S.card },
@@ -2448,7 +2448,7 @@ window.__ModuleLoader__.load({
             h("label", {
               style: {
                 display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
-                padding: "10px 12px", borderRadius: 8,
+                padding: "8px 10px", borderRadius: 8,
                 border: "1.5px solid " + (memCfg && memCfg.extract ? "#4084ff" : "rgba(0,0,0,.10)"),
                 background: memCfg && memCfg.extract ? "rgba(64,132,255,.04)" : "#ffffff",
                 transition: "border-color .15s, background .15s",
@@ -2483,7 +2483,7 @@ window.__ModuleLoader__.load({
                     key: key,
                     style: {
                       display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
-                      padding: "10px 12px", borderRadius: 8,
+                      padding: "8px 10px", borderRadius: 8,
                       border: "1.5px solid " + (memCfg && memCfg[key] ? "#4084ff" : "rgba(0,0,0,.10)"),
                       background: memCfg && memCfg[key] ? "rgba(64,132,255,.04)" : "#ffffff",
                       transition: "border-color .15s, background .15s",
@@ -2519,7 +2519,7 @@ window.__ModuleLoader__.load({
                     key: "th" + v,
                     style: {
                       display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
-                      padding: "10px 12px", borderRadius: 8,
+                      padding: "8px 10px", borderRadius: 8,
                       border: "1.5px solid " + (memCfg && Math.abs(Number(memCfg.surprisal_threshold) - v) < 0.02 ? "#4084ff" : "rgba(0,0,0,.10)"),
                       background: memCfg && Math.abs(Number(memCfg.surprisal_threshold) - v) < 0.02 ? "rgba(64,132,255,.04)" : "#ffffff",
                       transition: "border-color .15s, background .15s",
@@ -2557,7 +2557,7 @@ window.__ModuleLoader__.load({
                     key: "em" + v,
                     style: {
                       display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
-                      padding: "10px 12px", borderRadius: 8,
+                      padding: "8px 10px", borderRadius: 8,
                       border: "1.5px solid " + (memCfg && Math.abs(Number(memCfg.emotion_threshold) - v) < 0.02 ? "#4084ff" : "rgba(0,0,0,.10)"),
                       background: memCfg && Math.abs(Number(memCfg.emotion_threshold) - v) < 0.02 ? "rgba(64,132,255,.04)" : "#ffffff",
                       transition: "border-color .15s, background .15s",
@@ -2855,7 +2855,7 @@ window.__ModuleLoader__.load({
           ) : data && data.items && data.items.length > 0 ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
             pageSlice(data.items).map((m) => h("div", {
               key: m.id,
-              style: { ...S.card, padding: "10px 12px" },
+              style: { ...S.card, padding: "8px 10px" },
             },
               h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 4 } },
                 h("span", {
@@ -2869,7 +2869,7 @@ window.__ModuleLoader__.load({
                 m.tags && m.tags.length ? h("span", { style: { ...S.muted, fontSize: 11 } },
                   m.tags.filter((x) => x !== "extracted" && x !== "raw").slice(0, 3).join(" · ")) : null,
               ),
-              h("div", { style: { fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word" } }, m.text),
+              h("div", { style: { fontSize: 13, lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word" } }, m.text),
               m.summary ? h("div", { style: { ...S.muted, fontSize: 12, marginTop: 4 } }, "摘要：" + m.summary) : null,
             )),
             renderPager(data.items.length),
@@ -3410,7 +3410,7 @@ const [data, setData] = React.useState(null);
                         h("div", {
                           key: "prof-" + p.user_id,
                           style: {
-                            display: "flex", gap: 10, padding: "10px 12px", borderRadius: 8,
+                            display: "flex", gap: 10, padding: "8px 10px", borderRadius: 8,
                             border: "1px solid rgba(0,0,0,.08)", background: "#fafafa",
                           },
                         },
@@ -4400,7 +4400,7 @@ const [data, setData] = React.useState(null);
                 h("label", {
                   style: {
                     display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
-                    padding: "10px 12px", borderRadius: 8,
+                    padding: "8px 10px", borderRadius: 8,
                     border: "1.5px solid " + (idFields.learn_speak_on !== false ? "#4084ff" : "rgba(0,0,0,.10)"),
                     background: idFields.learn_speak_on !== false ? "rgba(64,132,255,.04)" : "#ffffff",
                     transition: "border-color .15s, background .15s",
@@ -4635,7 +4635,7 @@ const [data, setData] = React.useState(null);
         return h("div", {
           style: {
             height: "100%", boxSizing: "border-box", overflowY: "auto",
-            padding: "28px 28px 56px",
+            padding: "20px 20px 40px",
           },
         },
           h("div", { style: { width: "100%", maxWidth: 1180, margin: "0 auto" } },

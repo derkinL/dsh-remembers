@@ -239,7 +239,7 @@ ok("记忆页的标签改成了固定卡片", () => {
   const n = (src.match(/className: "dshm-tab"/g) || []).length;
   assert.equal(n, 7, "标签按钮源里有 " + n + " 处");
   assert.ok(src.includes('"data-on"'), "没有选中态标记");
-  assert.ok(src.includes(".dshm-tab{height:38px"), "卡片没固定高度");
+  assert.ok(src.includes(".dshm-tab{height:34px"), "卡片没固定高度");
 });
 ok("5 个保存块里各有一颗返回，且在保存按钮之前", () => {
   const src = readFileSync(join(PLUGIN_ROOT, "client.js"), "utf8");
