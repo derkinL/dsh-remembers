@@ -494,6 +494,8 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
       persona.proactive = proactive;
       persona.ownerManual = String(data?.user_profile ?? "").trim();
       persona.selfModel = String(data?.self_model ?? "").trim();
+    // 口音样本：几条「她平时怎么说话」的原句，常驻人格段（低频刷新，稳定缓存）
+    persona.voice = Array.isArray(data?.voice) ? data.voice.map((x) => String(x || "").trim()).filter(Boolean) : [];
 
       // 手编画像整份缓存：只有 manual_profile 进系统提示词，profile（自动累积）不进
       const map = {};
@@ -1021,6 +1023,7 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
             ? `以下是正在跟你说话的人（${who}）的画像：`
             : "以下是老大是谁（他的画像，你该知道的基本信息）：",
           footer: notOwnerNote,
+          voice: persona.voice || [],
         });
       }
     }
@@ -1028,6 +1031,7 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
     return renderPersona(data, maxChars, proactive, {
       profileText: persona.ownerManual,
       profileHeader: "以下是老大是谁（他的画像，你该知道的基本信息）：",
+      voice: persona.voice || [],
     });
   }
 
@@ -1891,6 +1895,21 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
       }
       identityLines.push("B 站那几个工具怎么用：bili_feed 看有什么；bili_watch(bv) 看透一条（给你字幕全文、弹幕、热评、九宫格画面）；bili_comment(bv, msg) 评论，想 @ 谁就写「@某人 正文」；bili_run 跑别的命令。");
       identityLines.push("这些都不是任务。不想做就不做；做了不想说就不说——看视频、发呆、写便签，本来就是你自己的事。");
+    }
+  }
+
+  // 【口音样本】2026-11-08
+  // 之前每轮随机塞 3 条「当X时可以Y」，既破坏 prompt cache 又跟话题不搭。
+  // 现在改成：挑几条短原句常驻在这里，她每轮都看得到「自己平时怎么说话」。
+  // 低频刷新（跟人格一起），同一个会话内稳定。
+  {
+    const voice = (opts.voice || []).filter(Boolean).slice(0, 8);
+    if (voice.length) {
+      identityLines.push("");
+      identityLines.push("【你平时说话的样子】");
+      identityLines.push("下面几句是你会说的那种话。学的是那股味道（短、随口、带梗），不是让你照抄：");
+      for (const v of voice) identityLines.push("· 「" + v + "」");
+      identityLines.push("别主动说「我学会了一句」这种话，也别把它们当口头禅反复用。");
     }
   }
 

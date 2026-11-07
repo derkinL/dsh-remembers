@@ -855,6 +855,29 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- 人格设定（二合一里的「人」那一半） ---------------------------------
 
+    def _voice_samples(self, limit: int = 8) -> list[str]:
+        """挑几条「她平时怎么说话」的原句，给系统提示词当固定样本。
+
+        要短（2~24 字）、带赞/用过的优先。这是常驻口音，不是每轮现抽——
+        系统提示词是 prompt cache 的最顶层前缀，一变整段历史就废。
+        """
+        out = []
+        try:
+            rows = store.conn.execute(
+                "SELECT raw, count, likes, last_hit FROM expressions "
+                "WHERE raw != '' AND length(raw) BETWEEN 2 AND 24 "
+                "ORDER BY likes DESC, count DESC, last_hit DESC LIMIT ?",
+                (max(1, int(limit)),)).fetchall()
+            seen = set()
+            for r in rows:
+                t = str(r[0] or "").strip()
+                if t and t not in seen:
+                    seen.add(t)
+                    out.append(t)
+        except Exception:
+            return []
+        return out
+
     def _persona_payload(self, data: dict) -> dict:
         data = dict(data or {})
         data["user_profile"] = store.get_user_profile()
@@ -871,6 +894,7 @@ class Handler(BaseHTTPRequestHandler):
                 "constitution": MemoryStore.CONSTITUTION_MAX,
                 "self_model": MemoryStore.SELF_MODEL_MAX,
             },
+            "voice": self._voice_samples(8),
         }
 
     def _get_persona(self) -> None:
