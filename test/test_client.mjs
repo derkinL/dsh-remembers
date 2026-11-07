@@ -231,6 +231,16 @@ for (const page of PAGES) {
 
 // 那 5 个「保存」悬浮块在首屏是 loading 态，mock 里渲染不出来，
 // 所以这里查源码：每个块都得有返回按钮，而且排在保存按钮前面。
+// 标签在 data 加载完才渲染，mock 里首屏是 loading，所以查源码：
+// 7 处 className="dshm-tab"（其中 TIERS 那处 map 出 6 件，共渲染 12 张）。
+ok("记忆页的标签改成了固定卡片", () => {
+  const src = readFileSync(join(PLUGIN_ROOT, "client.js"), "utf8");
+  assert.ok(src.includes('className: "dshm-tabs"'), "没有标签网格");
+  const n = (src.match(/className: "dshm-tab"/g) || []).length;
+  assert.equal(n, 7, "标签按钮源里有 " + n + " 处");
+  assert.ok(src.includes('"data-on"'), "没有选中态标记");
+  assert.ok(src.includes(".dshm-tab{height:38px"), "卡片没固定高度");
+});
 ok("5 个保存块里各有一颗返回，且在保存按钮之前", () => {
   const src = readFileSync(join(PLUGIN_ROOT, "client.js"), "utf8");
   const back = (src.match(/props && props\.onBack/g) || []).length;

@@ -141,6 +141,15 @@ window.__ModuleLoader__.load({
           "display:flex;flex-direction:column;gap:8px;box-sizing:border-box;min-width:140px;",
           "padding:12px 16px;border-radius:12px;border:1px solid rgba(0,0,0,.08);background:#fff;",
           "box-shadow:0 8px 24px rgba(0,0,0,.12)}",
+          ".dshm-tabs{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}",
+          "@media (max-width:900px){.dshm-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}}",
+          "@media (max-width:600px){.dshm-tabs{grid-template-columns:repeat(3,minmax(0,1fr))}}",
+          ".dshm-tab{height:38px;display:flex;align-items:center;justify-content:center;gap:5px;min-width:0;padding:0 8px;",
+          "border:1px solid var(--dsw-alias-border-l4,rgba(0,0,0,.16));border-radius:10px;background:#fff;cursor:pointer;",
+          "font-family:inherit;font-size:12.5px;color:var(--dsw-alias-label-primary,#111827);white-space:nowrap;",
+          "overflow:hidden;text-overflow:ellipsis;transition:border-color .15s ease,background .15s ease}",
+          ".dshm-tab:hover{border-color:rgba(64,132,255,.55)}",
+          ".dshm-tab[data-on=\"1\"]{border-color:#4084ff;background:rgba(64,132,255,.06);font-weight:600;color:#2f6fe0}",
         ].join("");
         document.head.appendChild(_hub);
       }
@@ -2380,7 +2389,9 @@ window.__ModuleLoader__.load({
           L4: "#b3488f",
         };
 
-        return h("div", { style: S.wrap },
+        // 主面板是整页的，左边放「怎么记」的配置，右边放记忆列表。
+        return h("div", { style: { display: "flex", gap: 24, alignItems: "flex-start", flexWrap: "wrap" } },
+          h("div", { style: { flex: "0 0 400px", minWidth: 340, display: "flex", flexDirection: "column", gap: 16 } },
           h("div", { style: S.desc },
             "她记得的所有东西。L0 是原话、L1 是事实、L2 是你的画像、L3 是发生过的事、L4 是里程碑和约定。",
           ),
@@ -2542,41 +2553,43 @@ window.__ModuleLoader__.load({
                 "小游戏：" + (stateInfo.game_score || 0) + " 分（玩了 " + (stateInfo.game_plays || 0) + " 次）"),
             ) : h("div", { style: S.muted }, "读取中…"),
           ),
+          ),
 
+          h("div", { style: { flex: "1 1 520px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 } },
           data ? h("div", { style: S.card },
-            h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", minHeight: 66, alignContent: "flex-start" } },
+            h("div", { className: "dshm-tabs" },
               Object.entries(TIERS).map(([k, label]) =>
                 h("button", {
                   key: k,
-                  style: { ...S.btn(mode === "memory" && tier === k), padding: "4px 10px", fontSize: 12 },
+                  className: "dshm-tab", "data-on": mode === "memory" && tier === k ? "1" : "0",
                   onClick: () => { setMode("memory"); setTier(k); void load(k, q); },
                 }, label + (k !== "all" && data.counts && data.counts[k] != null ? ` ${data.counts[k]}` : "")),
               ),
               h("button", {
-                style: { ...S.btn(mode === "emotion"), padding: "4px 10px", fontSize: 12 },
+                className: "dshm-tab", "data-on": mode === "emotion" ? "1" : "0",
                 onClick: () => { setMode("emotion"); void loadEmotion(); },
               }, "情感" + (emotionList ? ` ${emotionList.length}` : "")),
               h("button", {
-                style: { ...S.btn(mode === "activity"), padding: "4px 10px", fontSize: 12 },
+                className: "dshm-tab", "data-on": mode === "activity" ? "1" : "0",
                 onClick: () => { setMode("activity"); void loadActivity(activityDate); },
               }, "今天干了什么"),
               h("button", {
-                style: { ...S.btn(mode === "browse"), padding: "4px 10px", fontSize: 12 },
+                className: "dshm-tab", "data-on": mode === "browse" ? "1" : "0",
                 onClick: () => { setMode("browse"); void loadBrowse(); },
               }, "见闻" + (browseList ? ` ${browseList.length}` : "")),
               h("button", {
-                style: { ...S.btn(mode === "notes"), padding: "4px 10px", fontSize: 12 },
+                className: "dshm-tab", "data-on": mode === "notes" ? "1" : "0",
                 onClick: () => { setMode("notes"); void loadNotes(); },
               }, "便签" + (notesList ? ` ${notesList.length}` : "")),
               h("button", {
-                style: { ...S.btn(mode === "slang" || mode === "expr"), padding: "4px 10px", fontSize: 12 },
+                className: "dshm-tab", "data-on": mode === "slang" || mode === "expr" ? "1" : "0",
                 onClick: () => { setMode("slang"); void loadSlang(); },
               }, "学说话"
                 + ((slangList || exprList)
                   ? ` ${(slangList || []).filter((s) => (s.meaning || "").trim()).length + (exprList || []).length}`
                   : "")),
               h("button", {
-                style: { ...S.btn(mode === "self"), padding: "4px 10px", fontSize: 12 },
+                className: "dshm-tab", "data-on": mode === "self" ? "1" : "0",
                 onClick: () => { setMode("self"); void loadSelfModel(); },
               }, "自我认知"),
             ),
@@ -2823,6 +2836,7 @@ window.__ModuleLoader__.load({
               m.summary ? h("div", { style: { ...S.muted, fontSize: 12, marginTop: 4 } }, "摘要：" + m.summary) : null,
             )),
           ) : (data ? h("div", { style: S.muted }, "没有匹配的记忆") : null),
+          ),
         );
       }
 
@@ -4517,7 +4531,7 @@ const [data, setData] = React.useState(null);
         if (item) {
           const back = () => setPage(null);
           return h(React.Fragment, null,
-            h("div", { style: { ...S.wrap, maxWidth: 760 } },
+            h("div", { style: { ...S.wrap, maxWidth: 1180 } },
               h("button", {
                 type: "button",
                 className: "dshm-back",
