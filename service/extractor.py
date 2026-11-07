@@ -144,6 +144,28 @@ _UNUSED_EXPR_SYSTEM_PUBLIC = """你从一段网络评论区里，学「中文互
 # 提示词去读评论区，抽出来的经常是内容而不是说话方式。
 EXPR_SYSTEM_PUBLIC = _UNUSED_EXPR_SYSTEM_PUBLIC
 
+
+def learn_public_prompt_path() -> str:
+    """「学网友怎么说」那份 prompt 存哪（B站热评 / 贴吧楼层用）。"""
+    import os as _os
+    base = _os.path.dirname(_os.path.abspath(__file__))
+    data = _os.environ.get("CMEM_DATA_DIR", _os.path.join(base, "data"))
+    return _os.path.join(data, "learn_public_prompt.txt")
+
+
+def learn_public_prompt_text() -> str:
+    """读公共语料的 prompt；文件不存在就用默认（默认这一份是可以改的、含「不学脏话」那几条）。"""
+    import os as _os
+    try:
+        p = learn_public_prompt_path()
+        if _os.path.exists(p):
+            t = open(p, encoding="utf-8").read().strip()
+            if t:
+                return t
+    except Exception:
+        pass
+    return EXPR_SYSTEM_PUBLIC
+
 EXTRACT_SYSTEM = """你从一段对话里抽取值得长期记住的内容。
 
 原则：**宁可多抽一条，也不要漏掉他告诉过你的事。** 漏掉的东西他得再说一遍，多抽的顶多占一行。
@@ -679,8 +701,8 @@ class Extractor:
         body = (text or "").strip()
         if len(body) < 8:
             return []
-        # chat 用可编辑的那份（学老大）；公共语料用网友版
-        sys_prompt = learn_speak_prompt_text() if kind == "chat" else EXPR_SYSTEM_PUBLIC
+        # 两套 prompt 都能改：chat 学老大，public 学网友（B站/贴吧）
+        sys_prompt = learn_speak_prompt_text() if kind == "chat" else learn_public_prompt_text()
         try:
             result = self.llm.chat_json(sys_prompt, body[:3000], max_tokens=600)
         except Exception:

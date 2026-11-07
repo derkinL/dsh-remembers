@@ -32,7 +32,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from embedding import Embedder
-from extractor import learn_speak_prompt_text, learn_speak_prompt_path, LEARN_SPEAK_DEFAULT, ExtractConfig, Extractor
+from extractor import (learn_speak_prompt_text, learn_speak_prompt_path, LEARN_SPEAK_DEFAULT,
+                       learn_public_prompt_text, learn_public_prompt_path,
+                       EXPR_SYSTEM_PUBLIC, ExtractConfig, Extractor)
 from llm import LLM
 from memory_core import MemoryInput, MemoryStore
 from surprisal import SurprisalGate
@@ -413,12 +415,22 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/slang":
             self._json(200, store.slang_list())
         elif path == "/learn/prompt":
-            # 2026-11-06：可改的「学什么」prompt（决定抽取，不是注入人格那段）
-            self._guard(lambda: self._json(200, {
-                "ok": True,
-                "prompt": learn_speak_prompt_text(),
-                "isDefault": learn_speak_prompt_text() == LEARN_SPEAK_DEFAULT,
-            }))
+            # 两套 prompt：chat=学老大，public=学网友（B站/贴吧）
+            kind = (query.get("kind") or ["chat"])[0]
+            if kind == "public":
+                self._guard(lambda: self._json(200, {
+                    "ok": True, "kind": "public",
+                    "prompt": learn_public_prompt_text(),
+                    "isDefault": learn_public_prompt_text() == EXPR_SYSTEM_PUBLIC,
+                }))
+            else:
+                self._guard(lambda: self._json(200, {
+                    "ok": True, "kind": "chat",
+                    "prompt": learn_speak_prompt_text(),
+                    "isDefault": learn_speak_prompt_text() == LEARN_SPEAK_DEFAULT,
+                }))
+        elif path == "/learn/stats":
+            self._guard(lambda: self._json(200, self._learn_stats()))
         elif path == "/expressions":
             # 2026-11-06：学来的说法（「当 X 时，可以 Y」）
             self._guard(lambda: self._json(200, {
@@ -665,6 +677,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._post_tieba_reply())
         elif path == "/tieba/config":
             self._guard(lambda: self._post_tieba_cfg())
+        elif path == "/learn/switch":
+            self._guard(lambda: self._post_learn_switch())
         elif path == "/learn/prompt":
             self._guard(lambda: self._post_learn_prompt())
         elif path == "/expressions":
@@ -3338,20 +3352,61 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- 学说话 / 亲和度 / 任务 / 便签 / 睡眠 --------------------------------
 
+    def _learn_stats(self) -> dict:
+        """学了多少条、各来源多少。给「学说话」页做概览。"""
+        out = {"ok": True, "byScope": {}, "total": 0, "slang": 0, "lastHit": 0}
+        try:
+            for row in store.conn.execute(
+                    "SELECT scope, COUNT(*), MAX(last_hit) FROM expressions GROUP BY scope"):
+                scope, n, last = str(row[0]), int(row[1]), float(row[2] or 0)
+                out["byScope"][scope] = n
+                out["total"] += n
+                out["lastHit"] = max(out["lastHit"], last)
+        except Exception as e:
+            out["error"] = str(e)
+        try:
+            out["slang"] = int(store.conn.execute(
+                "SELECT COUNT(*) FROM slang WHERE meaning IS NOT NULL AND meaning != ''").fetchone()[0])
+        except Exception:
+            pass
+        return out
+
+    def _post_learn_switch(self) -> None:
+        """「学说话」总开关：写 persona.identity.learn_speak_on。"""
+        body = self._body()
+        on = bool(body.get("on"))
+        try:
+            row = store.conn.execute("SELECT identity FROM persona WHERE id=1").fetchone()
+            ident = {}
+            if row and row[0]:
+                try:
+                    ident = json.loads(row[0]) or {}
+                except Exception:
+                    ident = {}
+            ident["learn_speak_on"] = on
+            store.conn.execute("UPDATE persona SET identity=? WHERE id=1",
+                               (json.dumps(ident, ensure_ascii=False),))
+            store.conn.commit()
+            self._json(200, {"ok": True, "on": on})
+        except Exception as e:
+            self._json(500, {"ok": False, "error": str(e)})
+
     def _post_learn_prompt(self) -> None:
-        """写「学什么」的 prompt。传空字符串 = 恢复默认（删文件）。"""
+        """写「学什么」的 prompt。传空字符串 = 恢复默认（删文件）。kind=chat|public"""
         import os as _os
         body = self._body()
         text = str(body.get("prompt") or "").strip()
+        kind = str(body.get("kind") or "chat")
         try:
-            p = learn_speak_prompt_path()
+            p = learn_public_prompt_path() if kind == "public" else learn_speak_prompt_path()
             _os.makedirs(_os.path.dirname(p), exist_ok=True)
             if text:
                 open(p, "w", encoding="utf-8").write(text + "\n")
             else:
                 if _os.path.exists(p):
                     _os.remove(p)
-            self._json(200, {"ok": True, "prompt": learn_speak_prompt_text()})
+            self._json(200, {"ok": True, "kind": kind,
+                             "prompt": learn_public_prompt_text() if kind == "public" else learn_speak_prompt_text()})
         except Exception as e:
             self._json(500, {"ok": False, "error": str(e)})
 

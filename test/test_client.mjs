@@ -153,7 +153,7 @@ ok("卡片一行三张", () => {
   assert.ok(src.includes("grid-template-columns:repeat(3,minmax(0,1fr))"), "不是三列");
 });
 
-ok("入口页有 8 张卡片", () => assert.equal(hubGrid().length, 8));
+ok("入口页有 9 张卡片", () => assert.equal(hubGrid().length, 9));
 
 /** 递归找带某个 className 的最外层节点（卡片改成横排后层级不一样了）。 */
 function findByClass(node, cls) {
@@ -176,7 +176,7 @@ function textOf(node) {
 
 ok("卡片的标题和顺序对", () => {
   const titles = hubGrid().map((card) => textOf(findByClass(card, "dshm-title")));
-  assert.deepEqual(titles, ["记忆", "人格设定", "表情包", "主动消息", "B 站", "贴吧", "QQ 通道", "记忆服务"]);
+  assert.deepEqual(titles, ["记忆", "人格设定", "表情包", "主动消息", "B 站", "贴吧", "QQ 通道", "学说话", "记忆服务"]);
 });
 
 ok("每张卡片都带说明和图标", () => {

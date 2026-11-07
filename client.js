@@ -4271,46 +4271,6 @@ const [data, setData] = React.useState(null);
                   );
                 })(),
               ),
-              h("div", { style: { ...S.card, marginTop: 10 } },
-                // 开关（2026-11-06）：默认开。关掉后人格里连【学人说话】这段都不出现
-                h("label", {
-                  style: {
-                    display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
-                    padding: "8px 10px", borderRadius: 8,
-                    border: "1.5px solid " + (idFields.learn_speak_on !== false ? "#4084ff" : "rgba(0,0,0,.10)"),
-                    background: idFields.learn_speak_on !== false ? "rgba(64,132,255,.04)" : "#ffffff",
-                    transition: "border-color .15s, background .15s",
-                  },
-                },
-                  h("input", {
-                    type: "checkbox",
-                    checked: idFields.learn_speak_on !== false,
-                    onChange: (ev) => setId("learn_speak_on", ev.target.checked),
-                    style: { marginTop: 2 },
-                  }),
-                  h("span", { style: { display: "flex", flexDirection: "column", gap: 2, flex: 1 } },
-                    h("span", { style: { fontSize: 13, fontWeight: 600 } }, "学习人类说话"),
-                    h("span", { style: { fontSize: 11, color: "var(--dsw-color-text-secondary, #9ca3af)" } },
-                      "从聊天和 B 站评论区学「什么场合怎么说」。关掉就不再学，也不再往人格里注入这段。"),
-                  ),
-                  h("span", { style: { fontSize: 11, color: "#4084ff", flexShrink: 0 } },
-                    `${exprCount} 条说法 · ${wordCount} 个词`),
-                ),
-                // 可改的提示词
-                h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 10 } },
-                  h("span", { style: { ...S.muted, fontSize: 12 } }, "学什么（写进人格的原文，可改）"),
-                  h("textarea", {
-                    style: { ...S.input, minHeight: 72, resize: "vertical", fontFamily: "inherit", fontSize: 12 },
-                    value: learnPrompt,
-                    placeholder: "这段决定她「学什么」。留空就用默认。",
-                    onChange: (ev) => { setLearnPrompt(ev.target.value); setLearnPromptDirty(true); },
-                    disabled: idFields.learn_speak_on === false,
-                  }),
-                  h("span", { style: { fontSize: 11, color: "var(--dsw-color-text-secondary, #9ca3af)" } },
-                    "这段话会原样注入人格，每轮她都能看到。留空就用默认。"),
-                ),
-
-              ),
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 10 } },
                 h("span", { style: { ...S.muted, fontSize: 12 } }, "她的形象（可替换）"),
                 h("textarea", {
@@ -4445,6 +4405,8 @@ const [data, setData] = React.useState(null);
           desc: "逛人类的吧：读帖、楼中楼；回帖要单独打开。", Comp: TiebaSection },
         { id: "qq", glyph: "🐧", icon: QQ_ICON, title: "QQ 通道", panel: true,
           desc: "桥、会话、谁能跟她说话、各自有什么权限。", Comp: QqSection },
+        { id: "learn", glyph: "🗣", title: "学说话", panel: false,
+          desc: "学来的说法、两套提示词、开关与统计。", Comp: LearnSection },
         { id: "service", glyph: "⚙", title: "记忆服务", panel: true,
           desc: "API 地址、模型与密钥、自动提炼的开关。", Comp: SettingsSection },
       ];
@@ -4540,6 +4502,139 @@ const [data, setData] = React.useState(null);
         ["游戏 / 二次元", ["单机游戏", "网络游戏", "steam", "我的世界", "原神", "英雄联盟", "动漫", "二次元", "cosplay", "桌游"]],
         ["知识 / 文化", ["历史", "科普", "数学", "物理", "哲学", "读书", "电影", "音乐", "纪录片", "图灵完备"]],
       ];
+
+      // -- 学说话 --------------------------------------------------------------
+
+      function LearnSection() {
+        const [on, setOn] = React.useState(true);
+        const [stats, setStats] = React.useState(null);
+        const [prompts, setPrompts] = React.useState({ chat: "", public: "" });
+        const [msg, setMsg] = React.useState(null);
+        const [busy, setBusy] = React.useState(false);
+
+        const load = async () => {
+          try {
+            const pr = await call("/persona");
+            let ident = {};
+            try { ident = JSON.parse((pr && pr.identity) || "{}"); } catch { ident = {}; }
+            setOn(ident.learn_speak_on !== false);
+          } catch { /* 读不到就当开着 */ }
+          try { setStats(await call("/learn/stats")); } catch { setStats(null); }
+          try {
+            const a = await call("/learn/prompt?kind=chat");
+            const b = await call("/learn/prompt?kind=public");
+            setPrompts({ chat: (a && a.prompt) || "", public: (b && b.prompt) || "" });
+          } catch { /* 保持空 */ }
+        };
+        React.useEffect(() => { void load(); }, []);
+
+        const toggle = async (next) => {
+          setOn(next);
+          try {
+            await call("/learn/switch", { method: "POST", body: JSON.stringify({ on: next }) });
+          } catch (e) {
+            setMsg("开关保存失败：" + String((e && e.message) || e));
+          }
+        };
+
+        const savePrompt = async (kind) => {
+          setBusy(true); setMsg(null);
+          try {
+            const r = await call("/learn/prompt", {
+              method: "POST",
+              body: JSON.stringify({ kind, prompt: prompts[kind] }),
+            });
+            setPrompts({ ...prompts, [kind]: (r && r.prompt) || prompts[kind] });
+            setMsg(kind === "chat" ? "聊天那份已保存" : "网友那份已保存");
+          } catch (e) {
+            setMsg("保存失败：" + String((e && e.message) || e));
+          } finally { setBusy(false); }
+        };
+
+        const resetPrompt = async (kind) => {
+          setBusy(true); setMsg(null);
+          try {
+            const r = await call("/learn/prompt", {
+              method: "POST",
+              body: JSON.stringify({ kind, prompt: "" }),
+            });
+            setPrompts({ ...prompts, [kind]: (r && r.prompt) || "" });
+            setMsg("已恢复默认");
+          } catch (e) {
+            setMsg("恢复失败：" + String((e && e.message) || e));
+          } finally { setBusy(false); }
+        };
+
+        const by = (stats && stats.byScope) || {};
+        const editor = (kind, title, hint) => h("div", { style: S.card },
+          h("div", { style: S.label }, title),
+          h("div", { style: { ...S.muted, fontSize: 11, lineHeight: 1.6, marginBottom: 6 } }, hint),
+          h("textarea", {
+            style: { ...S.input, minHeight: 260, resize: "vertical", fontFamily: "inherit", fontSize: 12.5, lineHeight: 1.6 },
+            value: prompts[kind],
+            onChange: (ev) => setPrompts({ ...prompts, [kind]: ev.target.value }),
+          }),
+          h("div", { style: { display: "flex", gap: 8, marginTop: 8 } },
+            h("button", { style: S.btn(true), disabled: busy, onClick: () => void savePrompt(kind) }, busy ? "…" : "保存这份"),
+            h("button", { style: S.btn(false), disabled: busy, onClick: () => void resetPrompt(kind) }, "恢复默认"),
+          ),
+        );
+
+        return h("div", { style: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" } },
+          h("div", { style: { flex: "0 0 380px", minWidth: 300, display: "flex", flexDirection: "column", gap: 12 } },
+            h("div", { style: S.card },
+              h("div", { style: S.label }, "总开关"),
+              h("label", {
+                style: {
+                  display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
+                  padding: "10px 12px", borderRadius: 10,
+                  border: "1.5px solid " + (on ? "#4084ff" : "rgba(0,0,0,.10)"),
+                  background: on ? "rgba(64,132,255,.04)" : "#fff",
+                  transition: "border-color .15s, background .15s",
+                },
+              },
+                h("input", { type: "checkbox", checked: on, style: { marginTop: 3 }, onChange: (ev) => void toggle(ev.target.checked) }),
+                h("div", { style: { display: "flex", flexDirection: "column", gap: 3 } },
+                  h("span", { style: { fontSize: 13, fontWeight: 600 } }, "学习人类说话"),
+                  h("span", { style: { ...S.muted, fontSize: 11 } }, "关掉就不再学，也不再往人格里注入这一段"),
+                ),
+              ),
+              msg ? h("div", { style: { fontSize: 12, marginTop: 8, color: msg.includes("失败") ? "#c0392b" : "#2fa36b" } }, msg) : null,
+            ),
+            h("div", { style: S.card },
+              h("div", { style: S.label }, "学到多少"),
+              h("div", { style: { ...S.muted, fontSize: 12, lineHeight: 1.8 } },
+                "一共 " + ((stats && stats.total) || 0) + " 条说法" +
+                (stats && stats.slang ? "、" + stats.slang + " 个词" : "")),
+              Object.keys(by).length
+                ? h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 } },
+                    Object.entries(by).map(([scope, n]) => h("span", {
+                      key: scope,
+                      style: { fontSize: 11, padding: "2px 8px", borderRadius: 999, background: "rgba(64,132,255,.10)", color: "#4084ff" },
+                    }, scope + " " + n)))
+                : null,
+              h("div", { style: { ...S.muted, fontSize: 11, marginTop: 8, lineHeight: 1.6 } },
+                "每个来源最多留 40 条（按见过次数和最近用上排序）。想看具体条目去「记忆 → 学说话」。"),
+            ),
+            h("div", { style: S.card },
+              h("div", { style: S.label }, "两套提示词分别管什么"),
+              h("div", { style: { ...S.muted, fontSize: 12, lineHeight: 1.7 } },
+                "· 左边这份（聊天）：学你、学群友怎么说话 —— 私聊和群聊用。"),
+              h("div", { style: { ...S.muted, fontSize: 12, lineHeight: 1.7, marginTop: 6 } },
+                "· 右边这份（网友）：学 B 站热评、贴吧楼层怎么说 —— 公共语料用。"),
+              h("div", { style: { ...S.muted, fontSize: 11, lineHeight: 1.6, marginTop: 8 } },
+                "两份都能改。默认那份写了「不学脏话、人身攻击、地域黑」，那是**默认值不是硬规则** —— "
+                + "想让她学得更粗放，删掉那几行就行；想更严，就在里面加自己的禁忌。"),
+            ),
+          ),
+          h("div", { style: { flex: "1 1 0", minWidth: 320, display: "flex", flexDirection: "column", gap: 12 } },
+            editor("chat", "学聊天（私聊 / 群聊）",
+              "决定她从「你说话」里抽什么。这一段原样交给模型当抽取指令。"),
+            editor("public", "学网友（B 站热评 / 贴吧）",
+              "决定她从公共评论区抽什么。贴吧和 B 站共用这一份，所以按「网友怎么说话」写。"),
+          ),
+        );
+      }
 
       // -- 贴吧 --------------------------------------------------------------
 
