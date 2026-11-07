@@ -119,7 +119,9 @@ window.__ModuleLoader__.load({
         const _hub = document.createElement("style");
         _hub.id = "dsh-mem-hub-style";
         _hub.textContent = [
-          ".dshm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(216px,1fr));gap:12px;margin-top:18px}",
+          ".dshm-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:18px}",
+          "@media (max-width:760px){.dshm-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}",
+          "@media (max-width:480px){.dshm-grid{grid-template-columns:minmax(0,1fr)}}",
           ".dshm-card{display:flex;flex-direction:column;align-items:flex-start;gap:10px;width:100%;",
           "padding:14px 16px;text-align:left;font-family:inherit;cursor:pointer;",
           "border:1px solid var(--dsw-alias-border-l4,rgba(0,0,0,.16));border-radius:12px;",
@@ -4537,7 +4539,7 @@ const [data, setData] = React.useState(null);
           );
         }
 
-        return h("div", { style: { ...S.wrap, maxWidth: 760 } },
+        return h("div", { style: { ...S.wrap, maxWidth: 960 } },
           h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
             h("div", {
               style: {

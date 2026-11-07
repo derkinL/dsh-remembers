@@ -148,6 +148,11 @@ ok("主面板外面有滚动容器", () => {
   assert.ok(tree.props && tree.props.style && tree.props.style.overflowY === "auto");
 });
 
+ok("卡片一行三张", () => {
+  const src = readFileSync(join(PLUGIN_ROOT, "client.js"), "utf8");
+  assert.ok(src.includes("grid-template-columns:repeat(3,minmax(0,1fr))"), "不是三列");
+});
+
 ok("入口页有 7 张卡片", () => assert.equal(hubGrid().length, 7));
 
 ok("卡片的标题和顺序对", () => {
