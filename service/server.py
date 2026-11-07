@@ -2212,6 +2212,10 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def _get_tieba_browse(self, query) -> None:
+        cfg = self._tieba_cfg()
+        if not cfg.get("enabled"):
+            self._json(403, {"ok": False, "error": "贴吧功能没开（设置 → 她的记忆 → 贴吧）"})
+            return
         kw = (query.get("kw") or [""])[0].strip()
         if not kw:
             self._json(400, {"ok": False, "error": "缺少 kw"})
@@ -2220,6 +2224,10 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, self._tieba_cli("browse", "--kw", kw, "--pn", pn))
 
     def _get_tieba_read(self, query) -> None:
+        cfg = self._tieba_cfg()
+        if not cfg.get("enabled"):
+            self._json(403, {"ok": False, "error": "贴吧功能没开（设置 → 她的记忆 → 贴吧）"})
+            return
         tid = (query.get("tid") or [""])[0].strip()
         if not tid:
             self._json(400, {"ok": False, "error": "缺少 tid"})
@@ -2229,6 +2237,10 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, self._tieba_cli("read", "--tid", tid, "--pn", pn, "--max-floors", maxf))
 
     def _get_tieba_sub(self, query) -> None:
+        cfg = self._tieba_cfg()
+        if not cfg.get("enabled"):
+            self._json(403, {"ok": False, "error": "贴吧功能没开（设置 → 她的记忆 → 贴吧）"})
+            return
         tid = (query.get("tid") or [""])[0].strip()
         pid = (query.get("pid") or [""])[0].strip()
         if not tid or not pid:
@@ -2284,6 +2296,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"ok": False, "error": "缺少 kw / tid / content"})
             return
         cfg = self._tieba_cfg()
+        if not cfg.get("enabled"):
+            self._json(403, {"ok": False, "error": "贴吧功能没开（设置 → 她的记忆 → 贴吧）"})
+            return
         if not cfg.get("replyEnabled"):
             self._json(403, {"ok": False, "error": "回帖开关没开（设置 → 贴吧）"})
             return
