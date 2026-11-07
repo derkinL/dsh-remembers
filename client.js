@@ -2555,7 +2555,7 @@ window.__ModuleLoader__.load({
           ),
           ),
 
-          h("div", { style: { flex: "1 1 520px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 } },
+          h("div", { style: { flex: "1 1 0", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 } },
           data ? h("div", { style: S.card },
             h("div", { className: "dshm-tabs" },
               Object.entries(TIERS).map(([k, label]) =>
@@ -2674,7 +2674,7 @@ window.__ModuleLoader__.load({
                   browseList.map((b, i) =>
                     h("div", { key: i, style: { ...S.card, padding: "8px 12px", borderLeft: "3px solid #f0803c" } },
                       h("div", { style: { fontSize: 13, lineHeight: 1.6 } }, b.title || ""),
-                      b.url ? h("div", { style: { ...S.muted, fontSize: 11, marginTop: 2 } }, b.url) : null,
+                      b.url ? h("div", { style: { ...S.muted, fontSize: 11, marginTop: 2, wordBreak: "break-all" } }, b.url) : null,
                     ),
                   ),
                 )
@@ -2685,7 +2685,7 @@ window.__ModuleLoader__.load({
                   notesList.map((n) =>
                     h("div", { key: n.id, style: { ...S.card, padding: "10px 12px", borderLeft: "3px solid #8b5cf6" } },
                       h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 4 } }, (n.author || "她") + " · " + (n.date || "")),
-                      h("div", { style: { fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" } }, n.text || ""),
+                      h("div", { style: { fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word" } }, n.text || ""),
                     ),
                   ),
                 )
@@ -4553,7 +4553,7 @@ const [data, setData] = React.useState(null);
           );
         }
 
-        return h("div", { style: { ...S.wrap, maxWidth: 960 } },
+        return h("div", { style: { ...S.wrap, maxWidth: 960, width: "100%", margin: "0 auto" } },
           h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
             h("div", {
               style: {
@@ -4592,14 +4592,17 @@ const [data, setData] = React.useState(null);
       // 左边栏那个「插件」下面要多一条，就得自己有主面板：侧栏的图标列表
       // 点谁就把谁挂到 main 里，所以这里注册一个 main（key 与图标 id 同值）。
       function HerMemoryPage() {
+        // 外层固定成一个 1180 的块，再让里面的内容自己排 —— 之前用 flex 居中，
+        // 容器宽度会跟着内容走，切到内容少的标签页整页会缩一下。
         return h("div", {
           style: {
             height: "100%", boxSizing: "border-box", overflowY: "auto",
-            display: "flex", justifyContent: "center",
             padding: "28px 28px 56px",
           },
         },
-          h(HerMemoryHub, null),
+          h("div", { style: { width: "100%", maxWidth: 1180, margin: "0 auto" } },
+            h(HerMemoryHub, null),
+          ),
         );
       }
 
