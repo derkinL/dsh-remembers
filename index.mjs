@@ -251,29 +251,9 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
     }
   }
 
-  // ---------- 2.5 学来的说法（2026-11-06） ----------
-  // 从聊天里学到的「当 X 时，可以 Y」。这是场合感，不是必答题——
-  // 所以措辞是「合适就用，不合适就按自己的说」。
-  if (Array.isArray(state.expressions) && state.expressions.length) {
-    const lines = state.expressions
-      .map((e) => {
-        const head = `· 当${e.situation}时，可以${e.style}`;
-        return e.example ? `${head}（例子：${String(e.example).slice(0, 60)}）` : head;
-      })
-      .filter(Boolean);
-    if (lines.length) {
-      // 2026-11-07：服务端每小时才刷新一次，内容不变就别再追加一条
-      const exText = "【学来的说法】这几个是你从聊天里听来的说话方式（挑的是跟眼下话题沾边的）。"
-        + "碰到贴的场合就顺手用一下，带例子就照着那个味道说，不贴就别硬套——不是任务。\n"
-        + lines.join("\n");
-      const exHash = hash(exText);
-      if (hashes.expressions !== exHash) {
-        hashes.expressions = exHash;
-        blocks.push(exText);
-      }
-    }
-  }
-
+  // ---------- 2.5 学来的说法：2026-11-08 起不在闲聊里注入 ----------
+  // 之前每轮随机塞 3 条「当X时，可以Y」，跟当前话题不搭、还占提示词。
+  // 现在只在真正要说话的场景（贴吧回帖 / B 站评论）按话题给原句当参考。
   // ---------- 3. 心情 + 情绪（变了才加） ----------
   const moodMap = { happy: "开心", tired: "累", annoyed: "烦", bored: "无聊", normal: "平常" };
   let moodText = `心情：${moodMap[state.mood] || "平常"}`;

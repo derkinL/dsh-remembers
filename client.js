@@ -2602,8 +2602,8 @@ window.__ModuleLoader__.load({
                   ? h("div", null,
                       h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 4 } }, `学到的说法（场合感） ${exprs.length}`),
                       h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 8, lineHeight: 1.5 } },
-                        "「当 X 时，可以 Y」。场景（X）是她读素材时自己总结的一句话，不是固定分类——素材多具体，场景就多具体。"
-                        + "注入按场景分：私聊/群聊只拿这个会话和网友学来的，贴吧只拿贴吧和网友的；每轮最多 3 条，跟当前话题沾边的优先。"),
+                        "存的是**原句**（照抄的那句话）+ 一个分类标签，不再把素材压成「当X时可以Y」——压完语气和节奏就没了。"
+                        + "**闲聊不再注入**这些；只有她真要说话时（贴吧回帖）才按帖子话题挑原句当参考。"),
                       h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
                         pageSlice(exprs).map((e) => {
                           const editing = editId === e.id;
@@ -2646,31 +2646,31 @@ window.__ModuleLoader__.load({
                                 ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
                                     h("input", {
                                       style: { ...S.input, fontSize: 12 },
-                                      placeholder: "什么场合",
-                                      value: editForm.situation,
-                                      onChange: (ev) => setEditForm({ ...editForm, situation: ev.target.value }),
-                                    }),
-                                    h("input", {
-                                      style: { ...S.input, fontSize: 12 },
-                                      placeholder: "可以怎么说",
+                                      placeholder: "原句（照抄那句，别改写）",
                                       value: editForm.style,
                                       onChange: (ev) => setEditForm({ ...editForm, style: ev.target.value }),
                                     }),
                                     h("input", {
                                       style: { ...S.input, fontSize: 12 },
-                                      placeholder: "原话例子（可选）",
-                                      value: editForm.example,
-                                      onChange: (ev) => setEditForm({ ...editForm, example: ev.target.value }),
+                                      placeholder: "分类（接梗/吐槽/自嘲/阴阳/共鸣/反问/抖机灵/客套）",
+                                      value: editForm.situation,
+                                      onChange: (ev) => setEditForm({ ...editForm, situation: ev.target.value }),
                                     }),
                                   )
                                 : h(React.Fragment, null,
-                                    h("div", { style: { fontSize: 13, lineHeight: 1.5 } },
-                                      "当", h("span", { style: { color: "#4084ff", fontWeight: 600 } }, e.situation),
-                                      "时，可以", h("span", { style: { fontWeight: 600 } }, e.style)),
-                                    e.example ? h("div", { style: { ...S.muted, fontSize: 11, marginTop: 3 } },
-                                      "例：" + e.example) : null,
-                                    h("div", { style: { ...S.muted, fontSize: 11, marginTop: 3 } },
-                                      `见过 ${e.count || 1} 次 · ${e.scope}`),
+                                    h("div", { style: { fontSize: 13.5, lineHeight: 1.6, fontWeight: 500 } },
+                                      "「" + (e.raw || e.style || "") + "」"),
+                                    h("div", { style: { display: "flex", alignItems: "center", gap: 6, marginTop: 4, flexWrap: "wrap" } },
+                                      h("span", {
+                                        style: {
+                                          fontSize: 11, padding: "1px 8px", borderRadius: 999,
+                                          background: "rgba(64,132,255,.12)", color: "#4084ff",
+                                        },
+                                      }, e.situation || "未分类"),
+                                      e.likes ? h("span", { style: { ...S.muted, fontSize: 11 } }, "赞 " + e.likes) : null,
+                                      h("span", { style: { ...S.muted, fontSize: 11 } },
+                                        `见过 ${e.count || 1} 次 · ${e.scope}${e.source ? " · " + e.source : ""}`),
+                                    ),
                                   ),
                             ),
                             h("div", { style: { display: "flex", gap: 6, flexShrink: 0 } },

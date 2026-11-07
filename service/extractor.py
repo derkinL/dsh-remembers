@@ -143,24 +143,27 @@ EXPR_SYSTEM_PUBLIC = _UNUSED_EXPR_SYSTEM_PUBLIC
 # 抽取的「格式/规则」是同一套（写不成 当X时，可以Y 就没法入库），
 # 真正不同的是「学谁的什么」——所以拆成：固定公共段 + 各来源可改段。
 # ---------------------------------------------------------------------------
-LEARN_BASE = """不是学内容，是学**说话的方式**。
+LEARN_BASE = """要的是**原句**，不是总结成道理。
 
-写成「当 situation 时，可以 style」：
-- situation：什么场合（≤20 字，比如「看到离谱的事」）
-- style：可以怎么说（≤20 字，比如「先来一句『啊这』」）
+每条给四个字段：
+- raw：原句，照抄，不要改写（≤60 字）
+- tag：这条在用来说什么，只能从这几个里选：
+  接梗 / 吐槽 / 自嘲 / 阴阳 / 共鸣 / 反问 / 抖机灵 / 客套
+- likes：热度（有赞数就填数字，没有填 0）
+- why：一句话，这条好在哪（≤20 字，可空）
 
 规则：
-- 不要人名、不要具体的人事物，换个话题也要用得上
-- 指令类（「必须…」「以后要…」）一律不学
+- 原句必须是素材里真出现过的字，不许自己编
+- 不要人名、不要具体隐私
 - 学不到就输出 []
 
 只输出 JSON 数组，最多 5 条：
-[{"situation":"…","style":"…","example":"原话（截 40 字）"}]
+[{"raw":"…","tag":"吐槽","likes":0,"why":"…"}]
 """
 
-LEARN_CHAT_SPECIFIC = """你从一段话里，学「这个人怎么说话」。
+LEARN_CHAT_SPECIFIC = """你从一段话里，挑出「这个人怎么说话」的原句。
 
-素材是私聊或群聊里他说的话。挑 3-5 条有代表性的：
+素材是私聊或群聊里他说的话。挑 3-5 条：
 - 口头禅、语气词（「啊这」「绝了」「就这？」）
 - 情绪怎么表达（自嘲、夸张、嘴上嫌弃）
 - 接话的方式（顺着、岔开、反问）
@@ -170,11 +173,11 @@ LEARN_CHAT_SPECIFIC = """你从一段话里，学「这个人怎么说话」。
 - 不学脏话、人身攻击、地域黑
 """
 
-LEARN_PUBLIC_SPECIFIC = """你从一段网络评论区里，学「网友怎么说话」。
+LEARN_PUBLIC_SPECIFIC = """你从一段网络评论区里，挑出「网友怎么说话」的原句。
 
-素材是 B 站热评或贴吧楼层。挑 3-5 条有代表性的：
+素材是 B 站热评或贴吧楼层。挑 3-5 条：
 - 网络用语、缩写、玩梗（「典」「绷不住了」「好活」）
-- 阴阳怪气、自嘲、夸张（这是评论区的语气，不要净化掉）
+- 阴阳怪气、自嘲、夸张（评论区的语气，不要净化掉）
 - 接话方式（反问、岔开、顺杆爬、一句话噎回去）
 - 短句节奏：爱不爱断句、爱不爱用感叹号
 
@@ -554,9 +557,11 @@ class Extractor:
             try:
                 if self.store.expr_add(
                     self._cur_scope,
-                    str(e.get("situation") or ""),
-                    str(e.get("style") or ""),
+                    str(e.get("tag") or e.get("situation") or ""),
+                    str(e.get("style") or e.get("raw") or ""),
                     str(e.get("example") or ""),
+                    raw=str(e.get("raw") or ""), source="chat",
+                    likes=int(e.get("likes") or 0),
                 ):
                     expr_added += 1
             except Exception:
@@ -772,11 +777,25 @@ class Extractor:
         for item in result[:5]:
             if not isinstance(item, dict):
                 continue
-            s = str(item.get("situation") or "").strip()[:40]
-            st = str(item.get("style") or "").strip()[:60]
-            if s and st:
-                out.append({"situation": s, "style": st,
-                            "example": str(item.get("example") or "").strip()[:200]})
+            raw = str(item.get("raw") or item.get("example") or "").strip()[:400]
+            tag = str(item.get("tag") or item.get("situation") or "").strip()[:20]
+            style = str(item.get("style") or "").strip()[:60]
+            # 新格式：有 raw 就够了；tag 缺省给个中性值
+            # 公共语料只收短句：超过 40 字的多半是交易/叙述，不是「怎么说话」
+            if kind != "chat" and raw and len(raw) > 40:
+                continue
+            if raw and (style or "raw"):
+                out.append({
+                    "raw": raw,
+                    "tag": tag or "接梗",
+                    "style": style or raw[:60],
+                    "situation": tag or "接梗",
+                    "example": raw[:200],
+                    "likes": int(item.get("likes") or 0) if str(item.get("likes") or "0").isdigit() else 0,
+                })
+            elif tag and style:
+                out.append({"raw": "", "tag": tag, "style": style, "situation": tag,
+                            "example": str(item.get("example") or "").strip()[:200], "likes": 0})
         return out
 
     def learn_expressions(self, user_text: str, assistant_text: str = "") -> list[dict]:

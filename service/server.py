@@ -2284,8 +2284,13 @@ class Handler(BaseHTTPRequestHandler):
         # 照 tieba-dive 的做法 —— 风格库是回帖前检索出来的 few-shot，不是常驻提示词。
         try:
             topic = " ".join([str(r.get("title") or "")] + [str(x)[:60] for x in (r.get("floors") or [])[:3]])
-            # 贴吧回帖只参考「贴吧学来的 + 网友的」
-            r["styleRefs"] = store.expr_pick("", topic, 3, scopes=["tieba", "global"])
+            # 贴吧回帖只参考「贴吧学来的 + 网友的」，而且给原句
+            _refs = store.expr_pick("", topic, 4, scopes=["tieba", "global"])
+            r["styleRefs"] = [{
+                "raw": (x.get("raw") or x.get("style") or ""),
+                "tag": (x.get("situation") or ""),
+                "likes": int(x.get("likes") or 0),
+            } for x in _refs if (x.get("raw") or x.get("style"))]
         except Exception:
             r["styleRefs"] = []
         try:
@@ -2360,8 +2365,11 @@ class Handler(BaseHTTPRequestHandler):
             learned = []
         for e in learned[:3]:
             try:
-                store.expr_add("tieba", str(e.get("situation") or ""),
-                               str(e.get("style") or ""), str(e.get("example") or ""))
+                store.expr_add("tieba", str(e.get("tag") or e.get("situation") or ""),
+                               str(e.get("style") or e.get("raw") or ""),
+                               str(e.get("example") or ""),
+                               raw=str(e.get("raw") or ""), source="tieba",
+                               likes=int(e.get("likes") or 0))
             except Exception:
                 pass
         try:
@@ -3184,8 +3192,11 @@ class Handler(BaseHTTPRequestHandler):
                     f"{c.get('user') or '网友'}：{c.get('text') or ''}" for c in comments[:10])
                 _learned = extractor.learn_expressions_from(_blob, kind="bili_comment")
                 for _e in (_learned or []):
-                    store.expr_add("global", _e["situation"], _e["style"],
-                                   _e.get("example", ""))
+                    store.expr_add("global", _e.get("tag") or _e.get("situation", ""),
+                                   _e.get("style") or _e.get("raw", ""),
+                                   _e.get("example", ""),
+                                   raw=_e.get("raw", ""), source="bili",
+                                   likes=int(_e.get("likes") or 0))
         except Exception:
             pass
 

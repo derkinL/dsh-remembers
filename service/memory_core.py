@@ -199,6 +199,7 @@ class MemoryStore:
         # memory.scope    private:<qq> | group:<gid> | global
         # emotion_log.target_user / target_group  情绪对谁/对哪个群
         self._migrate_multi_user()
+        self._ensure_expr_columns()
 
     def _migrate_multi_user(self) -> None:
         """幂等地给老库补多用户隔离字段。"""
@@ -1372,8 +1373,29 @@ class MemoryStore:
         } for r in rows]
 
     # -- 学来的说法（2026-11-06）--------------------------------------------
+    def _ensure_expr_columns(self) -> None:
+        """老库补列（sqlite 没有 ADD COLUMN IF NOT EXISTS）。"""
+        try:
+            cols = {r[1] for r in self.conn.execute("PRAGMA table_info(expressions)")}
+        except Exception:
+            return
+        for name, ddl in (("raw", "TEXT NOT NULL DEFAULT ''"),
+                          ("source", "TEXT NOT NULL DEFAULT ''"),
+                          ("likes", "INTEGER NOT NULL DEFAULT 0")):
+            if name in cols:
+                continue
+            try:
+                self.conn.execute(f"ALTER TABLE expressions ADD COLUMN {name} {ddl}")
+            except Exception:
+                pass
+        try:
+            self.conn.commit()
+        except Exception:
+            pass
+
     def expr_add(self, scope: str, situation: str, style: str,
-                 example: str = "", n: int = 1) -> int:
+                 example: str = "", n: int = 1,
+                 raw: str = "", source: str = "", likes: int = 0) -> int:
         """记一条「当 situation 时，可以 style」。同 scope 下同样的组合只累加 count。"""
         s = str(situation or "").strip()[:40]
         st = str(style or "").strip()[:60]
@@ -1383,11 +1405,17 @@ class MemoryStore:
         # 跟 slang_add 一样用 UPSERT：单条 INSERT ... ON CONFLICT 是原子的，
         # 不需要额外加锁（MemoryStore 也只有 _cache_lock，没有通用的 _lock）。
         self.conn.execute(
-            "INSERT INTO expressions(scope, situation, style, example, count, ts, last_hit) "
-            "VALUES (?,?,?,?,?,?,?) "
+            "INSERT INTO expressions(scope, situation, style, example, raw, source, likes, "
+            "count, ts, last_hit) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(scope, situation, style) DO UPDATE SET "
-            "  count = count + ?, last_hit = ?",
-            (scope, s, st, str(example or "")[:200], max(1, int(n)), now, now,
+            "  count = count + ?, last_hit = ?, "
+            "  raw = CASE WHEN excluded.raw != '' THEN excluded.raw ELSE expressions.raw END, "
+            "  source = CASE WHEN excluded.source != '' THEN excluded.source ELSE expressions.source END, "
+            "  likes = MAX(expressions.likes, excluded.likes)",
+            (scope, s, st, str(example or "")[:200], str(raw or "")[:400],
+             str(source or "")[:80], max(0, int(likes or 0)),
+             max(1, int(n)), now, now,
              max(1, int(n)), now),
         )
         self.conn.commit()
@@ -1463,12 +1491,12 @@ class MemoryStore:
             if scopes:
                 _ph = ",".join("?" for _ in scopes)
                 rows = [dict(r) for r in self.conn.execute(
-                    "SELECT id, scope, situation, style, example, count FROM expressions "
+                    "SELECT id, scope, situation, style, example, raw, source, likes, count FROM expressions "
                     f"WHERE scope IN ({_ph}) ORDER BY count DESC LIMIT 200",
                     tuple(scopes))]
             else:
                 rows = [dict(r) for r in self.conn.execute(
-                    "SELECT id, scope, situation, style, example, count FROM expressions "
+                    "SELECT id, scope, situation, style, example, raw, source, likes, count FROM expressions "
                     "ORDER BY count DESC LIMIT 200")]
         except Exception:
             return []
@@ -1525,7 +1553,7 @@ class MemoryStore:
     def expr_list(self, limit: int = 100) -> list[dict]:
         try:
             return [dict(r) for r in self.conn.execute(
-                "SELECT id, scope, situation, style, example, count, last_hit "
+                "SELECT id, scope, situation, style, example, raw, source, likes, count, last_hit "
                 "FROM expressions ORDER BY count DESC, id DESC LIMIT ?", (max(1, int(limit)),))]
         except Exception:
             return []
@@ -1549,6 +1577,8 @@ class MemoryStore:
             cur["situation"] = situation.strip()[:40]
         if style.strip():
             cur["style"] = style.strip()[:60]
+            # 新模型里 style 就是原句，改它等于改 raw
+            self.conn.execute("UPDATE expressions SET raw=? WHERE id=?", (cur["style"], eid))
         if example.strip():
             cur["example"] = example.strip()[:200]
         dup = self.conn.execute(

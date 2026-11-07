@@ -189,6 +189,9 @@ CREATE TABLE IF NOT EXISTS expressions (
   situation  TEXT NOT NULL,                  -- 场合，如「对方说了件倒霉事」
   style      TEXT NOT NULL,                  -- 说法，如「先回一个"啊这"再接一句吐槽」
   example    TEXT NOT NULL DEFAULT '',       -- 原话例子
+  raw        TEXT NOT NULL DEFAULT '',       -- 原句（2026-11-08：学味道靠这句，不靠抽象）
+  source     TEXT NOT NULL DEFAULT '',       -- 来源，如 tieba:显卡 / bili / chat
+  likes      INTEGER NOT NULL DEFAULT 0,     -- 真实赞数/互动数，质量门槛
   count      INTEGER NOT NULL DEFAULT 1,     -- 见过几次（加权抽样用）
   ts         REAL NOT NULL DEFAULT 0,
   last_hit   REAL NOT NULL DEFAULT 0,
