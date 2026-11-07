@@ -2392,7 +2392,10 @@ window.__ModuleLoader__.load({
               h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } },
                 ...[
                   ["diary_enabled", "写日记", "每天 23:00 把当天的事写成第一人称日记"],
-                  ["evolve_enabled", "演化自我认知", "每 30 轮悟一句「我发现自己……」"],
+                  // 2026-11-07：这条已经从「记忆」页移走。
+                  // 原来它控制的是「每 30 轮由系统替她编一句自我认知」，
+                  // 那条路已经关了；现在改成每天给她一份真实台账、她自己写，
+                  // 开关在「人格」页 →「演化设置」里（selfEvolveEnabled）。
                   ["episode_enabled", "事件总结", "长对话攒够后压成一条「这段时间发生了什么」"],
                 ].map(([key, label, desc]) =>
                   h("label", {
@@ -3592,6 +3595,18 @@ const [data, setData] = React.useState(null);
         const [notice, setNotice] = React.useState(null);
         const [saved, setSaved] = React.useState({ constitution: "", self_model: "", self_image: "", identity: "" });
         const [draft, setDraft] = React.useState({ constitution: "", self_model: "", self_image: "", identity: "" });
+        // ---- 自我认知演化设置（2026-11-07）----
+        const [selfCfg, setSelfCfg] = React.useState({
+          selfEvolveEnabled: true, selfEvolveHour: 22, selfEvolvePerDay: 1,
+          selfAllowAiWrite: true, selfMaxLines: 10, selfOverflow: "merge",
+          selfDedupe: 0.6, selfVersionKeep: 30,
+          selfFacts: ["turns", "memory", "expr", "slang", "browse", "praise", "corrected"],
+        });
+        const [selfFactsData, setSelfFactsData] = React.useState(null);
+        const [selfVersions, setSelfVersions] = React.useState([]);
+        const [selfOpen, setSelfOpen] = React.useState(false);
+        const [selfSaving, setSelfSaving] = React.useState(false);
+        const [selfNotice, setSelfNotice] = React.useState(null);
         // 学说话的两个计数（2026-11-06）：人格设定页的「她怎么学说话」卡片要显示
         const [exprCount, setExprCount] = React.useState(0);
         const [wordCount, setWordCount] = React.useState(0);
@@ -3627,6 +3642,274 @@ const [data, setData] = React.useState(null);
             } catch { /* 同上 */ }
           })();
         }, []);
+        // ---- 自我认知演化：拉配置 / 台账 / 版本（2026-11-07）----
+        React.useEffect(() => {
+          (async () => {
+            try {
+              const pr = await call("/proactive");
+              if (pr && typeof pr === "object") {
+                setSelfCfg((c) => ({
+                  ...c,
+                  selfEvolveEnabled: pr.selfEvolveEnabled !== false,
+                  selfEvolveHour: Number.isFinite(pr.selfEvolveHour) ? pr.selfEvolveHour : 22,
+                  selfEvolvePerDay: Number.isFinite(pr.selfEvolvePerDay) ? pr.selfEvolvePerDay : 1,
+                  selfAllowAiWrite: pr.selfAllowAiWrite !== false,
+                  selfMaxLines: Number.isFinite(pr.selfMaxLines) ? pr.selfMaxLines : 10,
+                  selfOverflow: ["merge", "drop-oldest", "reject"].includes(pr.selfOverflow) ? pr.selfOverflow : "merge",
+                  selfDedupe: Number.isFinite(pr.selfDedupe) ? pr.selfDedupe : 0.6,
+                  selfVersionKeep: Number.isFinite(pr.selfVersionKeep) ? pr.selfVersionKeep : 30,
+                  selfFacts: Array.isArray(pr.selfFacts) && pr.selfFacts.length
+                    ? pr.selfFacts.map(String)
+                    : ["turns", "memory", "expr", "slang", "browse", "praise", "corrected"],
+                }));
+              }
+            } catch { /* 读不到就用默认值，不挡页面 */ }
+            try {
+              const fr = await call("/self/facts");
+              setSelfFactsData(fr && fr.facts ? fr.facts : null);
+            } catch { /* 同上 */ }
+          })();
+        }, []);
+
+        const loadSelfVersions = React.useCallback(async () => {
+          try {
+            const vr = await call("/persona/versions");
+            setSelfVersions(Array.isArray(vr && vr.versions) ? vr.versions : []);
+          } catch { setSelfVersions([]); }
+        }, []);
+
+        const saveSelfCfg = async () => {
+          setSelfSaving(true);
+          setSelfNotice(null);
+          try {
+            await call("/proactive", { method: "POST", body: JSON.stringify(selfCfg) });
+            setSelfNotice({ kind: "ok", text: "已保存，下一轮就生效。" });
+          } catch (err) {
+            setSelfNotice({ kind: "error", text: "保存失败：" + (err && err.message ? err.message : String(err)) });
+          } finally {
+            setSelfSaving(false);
+          }
+        };
+
+        const rollbackTo = async (v) => {
+          if (!window.confirm("回滚到 " + (v.at || v.file) + " 那一版？\n当前内容会先存一份快照，丢不了。")) return;
+          try {
+            const r = await call("/persona/rollback", { method: "POST", body: JSON.stringify({ file: v.file }) });
+            const sm = (r && r.persona && r.persona.self_model) || "";
+            if (sm) {
+              setDraft((d) => ({ ...d, self_model: sm }));
+              setSaved((s) => ({ ...s, self_model: sm }));
+            }
+            setSelfNotice({ kind: "ok", text: "已回滚到 " + (v.at || v.file) });
+            await loadSelfVersions();
+          } catch (err) {
+            setSelfNotice({ kind: "error", text: "回滚失败：" + (err && err.message ? err.message : String(err)) });
+          }
+        };
+
+        const SELF_FACT_OPTS = [
+          ["turns", "聊了多少轮 / 存了多少原话"],
+          ["memory", "整理出的事件 / 约定"],
+          ["expr", "学到的说话方式"],
+          ["slang", "学会的词"],
+          ["browse", "刷了多少 B 站"],
+          ["tieba", "逛了多少贴吧"],
+          ["notes", "写了多少便签"],
+          ["diary", "写了多少日记"],
+          ["tasks", "互相派的活完成几件"],
+          ["praise", "老大夸过几次"],
+          ["corrected", "被纠正过几次"],
+        ];
+
+        const selfFactPreview = (f, want) => {
+          if (!f) return "（还没算出来）";
+          const has = (k) => want.includes(k);
+          const parts = [];
+          if (has("turns")) parts.push("聊了 " + (f.turns || 0) + " 轮");
+          if (has("memory")) parts.push("事件 " + (f.l3 || 0) + " / 约定 " + (f.l4 || 0));
+          if (has("expr")) parts.push("说法 " + (f.expr || 0) + " 条");
+          if (has("slang")) parts.push("词 " + (f.slang || 0) + " 个");
+          if (has("browse")) parts.push("刷 B 站 " + (f.browsed || 0));
+          if (has("tieba")) parts.push("逛贴吧 " + (f.tieba || 0));
+          if (has("notes")) parts.push("便签 " + (f.notes || 0));
+          if (has("diary")) parts.push("日记 " + (f.diary || 0));
+          if (has("tasks")) parts.push("完成任务 " + (f.tasks_done || 0));
+          if (has("praise")) parts.push("被夸 " + (f.praise || 0));
+          if (has("corrected")) parts.push("被纠正 " + (f.corrected || 0));
+          return parts.length ? parts.join(" · ") : "（一项都没勾，她会收到空账单）";
+        };
+
+        const renderSelfEvolve = () => h("div", { style: { marginTop: 2 } },
+          h("button", {
+            type: "button",
+            style: S.disclosure,
+            onClick: () => {
+              const next = !selfOpen;
+              setSelfOpen(next);
+              if (next && !selfVersions.length) void loadSelfVersions();
+            },
+          }, (selfOpen ? "▾ " : "▸ ") + "演化设置 —— 她怎么想自己"),
+          !selfOpen ? null : h("div", { style: { ...S.card, marginTop: 10, gap: 12 } },
+            // 两个开关
+            ...[
+              ["selfEvolveEnabled", "到点让她想想自己",
+                "按下面的时间和次数给她一份真实台账（聊了多少轮、学了什么、刷了多少），写不写她自己决定。"],
+              ["selfAllowAiWrite", "允许她改自我认知",
+                "关掉之后 persona_update 会被服务端拒掉，这一段就只有你能改。"],
+            ].map(([key, label, desc]) => h("label", {
+              key: key,
+              style: { display: "flex", gap: 8, alignItems: "flex-start", cursor: "pointer" },
+            },
+              h("input", {
+                type: "checkbox",
+                checked: !!selfCfg[key],
+                onChange: (ev) => setSelfCfg((c) => ({ ...c, [key]: ev.target.checked })),
+                style: { marginTop: 3 },
+              }),
+              h("span", { style: { display: "flex", flexDirection: "column", gap: 2 } },
+                h("span", { style: { fontSize: 13 } }, label),
+                h("span", { style: { fontSize: 11, color: "var(--dsw-color-text-secondary, #9ca3af)" } }, desc),
+              ),
+            )),
+
+            // 时间 + 次数
+            h("div", { style: { ...S.row, flexWrap: "wrap" } },
+              h("span", { style: { ...S.label, minWidth: 56 } }, "提醒时间"),
+              h("select", {
+                style: { ...S.select, width: 96 },
+                value: selfCfg.selfEvolveHour,
+                onChange: (ev) => setSelfCfg((c) => ({ ...c, selfEvolveHour: Number(ev.target.value) })),
+              }, ...Array.from({ length: 24 }, (_, i) =>
+                h("option", { key: i, value: i }, String(i).padStart(2, "0") + ":00"))),
+              h("span", { style: { ...S.label, marginLeft: 12 } }, "每天"),
+              h("select", {
+                style: { ...S.select, width: 80 },
+                value: selfCfg.selfEvolvePerDay,
+                onChange: (ev) => setSelfCfg((c) => ({ ...c, selfEvolvePerDay: Number(ev.target.value) })),
+              }, ...[1, 2, 3].map((n) => h("option", { key: n, value: n }, n + " 次"))),
+            ),
+
+            // 台账勾选
+            h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+              h("span", { style: S.label }, "账单里给她看什么"),
+              h("span", { style: { fontSize: 11, color: "var(--dsw-color-text-secondary, #9ca3af)" } },
+                "勾掉的她看不到。这些都是从记忆库里真实算的，不是她猜的。"),
+              h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 10px" } },
+                ...SELF_FACT_OPTS.map(([key, label]) => h("label", {
+                  key: key,
+                  style: { display: "flex", gap: 6, alignItems: "center", cursor: "pointer", fontSize: 12 },
+                },
+                  h("input", {
+                    type: "checkbox",
+                    checked: selfCfg.selfFacts.includes(key),
+                    onChange: (ev) => setSelfCfg((c) => ({
+                      ...c,
+                      selfFacts: ev.target.checked
+                        ? [...c.selfFacts, key]
+                        : c.selfFacts.filter((x) => x !== key),
+                    })),
+                  }),
+                  h("span", {}, label),
+                )),
+              ),
+            ),
+
+            // 台账预览
+            h("div", {
+              style: {
+                fontSize: 12, lineHeight: 1.7, padding: "8px 10px", borderRadius: 8,
+                background: "var(--dsw-color-bg, #fff)",
+                border: "1px solid var(--dsw-color-border-subtle, rgba(0,0,0,.06))",
+                color: "var(--dsw-color-text-secondary, #6b7280)",
+              },
+            }, "她今晚会看到：" + selfFactPreview(selfFactsData, selfCfg.selfFacts)),
+
+            // 条数 / 溢出 / 去重
+            h("div", { style: { ...S.row, flexWrap: "wrap" } },
+              h("span", { style: { ...S.label, minWidth: 56 } }, "最多"),
+              h("input", {
+                type: "number", min: 1, max: 50,
+                style: { ...S.input, width: 72 },
+                value: selfCfg.selfMaxLines,
+                onChange: (ev) => setSelfCfg((c) => ({ ...c, selfMaxLines: Number(ev.target.value) || 10 })),
+              }),
+              h("span", { style: S.muted }, "条，满了"),
+              h("select", {
+                style: { ...S.select, width: 128 },
+                value: selfCfg.selfOverflow,
+                onChange: (ev) => setSelfCfg((c) => ({ ...c, selfOverflow: ev.target.value })),
+              },
+                h("option", { value: "merge" }, "合并相近的"),
+                h("option", { value: "drop-oldest" }, "淘汰最旧的"),
+                h("option", { value: "reject" }, "不收新的"),
+              ),
+            ),
+
+            h("div", { style: { ...S.row, flexWrap: "wrap" } },
+              h("span", { style: { ...S.label, minWidth: 56 } }, "相似度 ≥"),
+              h("input", {
+                type: "number", min: 0, max: 1, step: 0.05,
+                style: { ...S.input, width: 80 },
+                value: selfCfg.selfDedupe,
+                onChange: (ev) => setSelfCfg((c) => ({ ...c, selfDedupe: Number(ev.target.value) })),
+              }),
+              h("span", { style: S.muted }, "就不收（0.6 大概「换了个说法」就挡；调低更容易收重复）"),
+            ),
+
+            // 版本
+            h("div", { style: { ...S.row, flexWrap: "wrap" } },
+              h("span", { style: { ...S.label, minWidth: 56 } }, "留历史"),
+              h("input", {
+                type: "number", min: 0, max: 200,
+                style: { ...S.input, width: 72 },
+                value: selfCfg.selfVersionKeep,
+                onChange: (ev) => setSelfCfg((c) => ({ ...c, selfVersionKeep: Number(ev.target.value) })),
+              }),
+              h("span", { style: S.muted }, "个"),
+              h("button", {
+                type: "button",
+                style: { ...S.btn(false), padding: "5px 12px", fontSize: 12 },
+                onClick: loadSelfVersions,
+              }, "看历史版本（" + selfVersions.length + "）"),
+            ),
+
+            !selfVersions.length ? null : h("div", {
+              style: {
+                maxHeight: 168, overflow: "auto", padding: "6px 10px", borderRadius: 8,
+                background: "var(--dsw-color-bg, #fff)",
+                border: "1px solid var(--dsw-color-border-subtle, rgba(0,0,0,.06))",
+              },
+            }, ...selfVersions.slice().reverse().map((v) => h("div", {
+              key: v.file,
+              style: { display: "flex", gap: 8, alignItems: "center", padding: "3px 0", fontSize: 12 },
+            },
+              h("span", { style: { flex: 1, color: "var(--dsw-color-text-secondary, #6b7280)" } },
+                (v.at || v.file) + " · " + (v.reason || "—") + " · " + (v.chars || 0) + " 字"),
+              h("button", {
+                type: "button",
+                style: { ...S.btn(false), padding: "2px 10px", fontSize: 11 },
+                onClick: () => rollbackTo(v),
+              }, "回滚"),
+            ))),
+
+            h("div", { style: { ...S.footer, alignItems: "center" } },
+              selfNotice ? h("span", {
+                style: {
+                  fontSize: 12, marginRight: "auto",
+                  color: selfNotice.kind === "error" ? "#c0392b" : "#2fa36b",
+                },
+              }, selfNotice.text) : h("span", { style: { marginRight: "auto", fontSize: 11, color: "var(--dsw-color-text-secondary, #9ca3af)" } },
+                "这几项存在主动消息配置里，改完立刻生效。"),
+              h("button", {
+                type: "button",
+                style: S.btn(true),
+                onClick: saveSelfCfg,
+                disabled: selfSaving,
+              }, selfSaving ? "保存中…" : "保存演化设置"),
+            ),
+          ),
+        );
+
         const setId = (k, v) => setIdFields((f) => ({ ...f, [k]: v }));
 
         const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
@@ -4175,6 +4458,7 @@ const [data, setData] = React.useState(null);
               }),
               h("div", { style: S.muted },
                 draft.self_model.length + " / " + limits.self_model + " 字符"),
+              renderSelfEvolve(),
             ),
           ),
 

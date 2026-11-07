@@ -800,10 +800,15 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
     state.turnUser = "";
     state.turnAssistant = "";
     console.log("[dsh-remembers-debug] flush cfg extract=" + config.extract + " captureRaw=" + config.captureRaw + " userLen=" + user.length + " asstLen=" + assistant.length);
-    // 每 30 轮让她演化一次自我认知
-    if (state.turns % 30 === 0 && user && assistant) {
-      void requestEvolve(user, assistant);
-    }
+    // 2026-11-07：自动演化关掉了，只留「她自己写」这条路。
+    //
+    // 原来这里每 30 轮由系统拿**一段对话**替她编一句「我发现自己……」，追加进她的
+    // 自我认知區，然后在注入时告诉她「以下是你对自己的认知」。问题是：
+    //   · 编这句话的小模型从来没见过前面几行，所以 7 行全是同一个模板
+    //   · 她本人不知道自己「写过」这些 —— 等于有人替她写日记还念给她听
+    // 现在改成 scheduler 每天到点给她一份**真实台账**（聊了多少轮、学了什么、
+    // 刷了多少），她想写才用 persona_update 自己写。
+    // requestEvolve 函数和服务端 /evolve 端点都保留，需要时仍可手动调。
     // 亲密度：只有「老大真的说话」才涨（唤醒剥完就没内容了，不会走到这）
     if (keptUser && assistant) {
       void bumpIntimacy(1.0);

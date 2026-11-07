@@ -86,6 +86,7 @@ class Scheduler:
         if st.get("date") != today:
             st["date"] = today
             st["bili_count"] = 0
+            st["evolve_count"] = 0
             changed = True
 
         if self._tick_wake(st, now):
@@ -320,17 +321,111 @@ class Scheduler:
         return True
 
     # ---------- 4. 自我认知演化（22 点）----------
-    def _tick_evolve(self, st: dict, now: float) -> bool:
-        today = datetime.date.today().isoformat()
-        if st.get("evolve_date") == today:
-            return False
+    # 台账里每一项怎么念给她听
+    _FACT_LINES = {
+        "turns":     lambda f: "一共聊了 %d 轮，你存下了 %d 句原话" % (f.get("turns", 0), f.get("l0_recent", 0)),
+        "memory":    lambda f: "整理成 %d 条事件、%d 条约定、%d 条画像" % (f.get("l3", 0), f.get("l4", 0), f.get("l2", 0)),
+        "expr":      lambda f: "从聊天里学到 %d 条说话方式" % f.get("expr", 0),
+        "slang":     lambda f: "学会 %d 个词" % f.get("slang", 0),
+        "browse":    lambda f: "刷了 %d 条 B 站" % f.get("browsed", 0),
+        "tieba":     lambda f: "逛了 %d 次贴吧" % f.get("tieba", 0),
+        "notes":     lambda f: "写了 %d 条便签" % f.get("notes", 0),
+        "diary":     lambda f: "写了 %d 篇日记" % f.get("diary", 0),
+        "tasks":     lambda f: "跟老大互相派的活，完成了 %d 件" % f.get("tasks_done", 0),
+        "praise":    lambda f: "老大夸过你 %d 次" % f.get("praise", 0),
+        "corrected": lambda f: "纠正过你 %d 次" % f.get("corrected", 0),
+    }
+
+    def _build_evolve_msg(self, cfg: dict) -> str:
+        """拼那条「给自己记一笔」的提醒。带真实数字，不是空口反思。"""
         dt = datetime.datetime.now()
-        if dt.hour < 22:
+        want = cfg.get("selfFacts")
+        if not isinstance(want, list) or not want:
+            want = ["turns", "memory", "expr", "slang", "browse", "praise", "corrected"]
+
+        facts = {}
+        try:
+            if hasattr(self.store, "self_facts"):
+                facts = self.store.self_facts(days=60) or {}
+        except Exception as e:
+            _log(f"evolve: 台账算不出来（{e}），这次只给空提醒")
+
+        lines = []
+        for key in want:
+            fn = self._FACT_LINES.get(str(key))
+            if not fn:
+                continue
+            try:
+                lines.append("- " + fn(facts))
+            except Exception:
+                continue
+
+        existing = ""
+        try:
+            existing = str((self.store.get_persona() or {}).get("self_model") or "").strip()
+        except Exception:
+            pass
+        n_exist = len([x for x in existing.split("\n") if x.strip()])
+        try:
+            max_lines = int(cfg.get("selfMaxLines", 10))
+        except (TypeError, ValueError):
+            max_lines = 10
+
+        parts = ["（%d 月 %d 日，坐下想想自己。" % (dt.month, dt.day)]
+        if lines:
+            parts.append("这阵子的真实数据（不是你猜的）：")
+            parts.extend(lines)
+        parts.append("")
+        if existing:
+            parts.append("你现在对自己的认知是这样（%d 条，最多 %d 条）：" % (n_exist, max_lines))
+            parts.append(existing)
+            parts.append("")
+            parts.append("想补一条、想推翻旧的、想说一个变化，都可以 —— 用 persona_update 写。"
+                         "不写也行，明天还有。")
+        else:
+            parts.append("你还没写过自我认知。想写就用 persona_update。")
+        parts.append("）")
+        return "\n".join(parts)
+
+    def _tick_evolve(self, st: dict, now: float) -> bool:
+        cfg = self._proactive_cfg()
+        if not cfg.get("selfEvolveEnabled", True):
             return False
+
+        try:
+            hour = int(cfg.get("selfEvolveHour", 22))
+        except (TypeError, ValueError):
+            hour = 22
+        hour = max(0, min(23, hour))
+
+        today = datetime.date.today().isoformat()
+        try:
+            per_day = int(cfg.get("selfEvolvePerDay", 1))
+        except (TypeError, ValueError):
+            per_day = 1
+        per_day = max(1, min(3, per_day))
+
+        done = int(st.get("evolve_count", 0)) if st.get("evolve_date") == today else 0
+        if done >= per_day:
+            return False
+
+        dt = datetime.datetime.now()
+        if done == 0:
+            # 第一轮：过了配置的钟点才提醒
+            if dt.hour < hour:
+                return False
+        else:
+            # 后续轮：跟上一轮至少隔 3 小时，别连着催
+            last = float(st.get("evolve_last", 0))
+            if now - last < 3 * 3600:
+                return False
+
         st["evolve_date"] = today
-        msg = "（回头想想这段时间的自己。有什么变化、有什么新发现？想说就记一句，不用回消息。）"
+        st["evolve_count"] = done + 1
+        st["evolve_last"] = now
+        msg = self._build_evolve_msg(cfg)
         self._inject(msg, silent=True)
-        _log("evolve: nudged model to reflect")
+        _log("evolve: nudged (%d/%d), msg %d chars" % (done + 1, per_day, len(msg)))
         return True
 
     # ---------- 工具 ----------

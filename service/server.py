@@ -509,6 +509,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, st)
         elif path == "/persona":
             self._guard(self._get_persona)
+        elif path == "/persona/versions":
+            self._guard(self._list_self_versions)
+        elif path == "/self/facts":
+            self._guard(self._get_self_facts)
         elif path == "/export":
             self._guard(self._export)
         elif path == "/config":
@@ -541,6 +545,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(self._set_persona)
         elif path == "/persona/self":
             self._guard(self._set_self_model)
+        elif path == "/persona/rollback":
+            self._guard(self._rollback_self)
         elif path == "/extract":
             self._guard(self._extract)
         elif path == "/memes/packs/add":
@@ -614,6 +620,17 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._delete_meme())
         elif path == "/slang":
             self._guard(lambda: self._post_slang())
+        elif path == "/tieba/token":
+            self._guard(lambda: self._post_tieba_token())
+        elif path == "/tieba/post":
+            self._guard(lambda: self._json(200, self._tieba_call(
+                "/c/c/claw/addThread", "POST", self._body())))
+        elif path == "/tieba/reply":
+            self._guard(lambda: self._json(200, self._tieba_call(
+                "/c/c/claw/addPost", "POST", self._body())))
+        elif path == "/tieba/like":
+            self._guard(lambda: self._json(200, self._tieba_call(
+                "/c/c/claw/opAgree", "POST", self._body())))
         elif path == "/learn/prompt":
             self._guard(lambda: self._post_learn_prompt())
         elif path == "/expressions":
@@ -867,12 +884,214 @@ class Handler(BaseHTTPRequestHandler):
             data = store.set_state(**kwargs)
         self._json(200, data)
 
+    # ---- 自我认知的护栏（2026-11-07）---------------------------------------
+    #
+    # 原来 AI 写自我认知是「整段替换，爱写多长写多长」：
+    #   · 一次能把 7 条全洗掉重写，没有旧版可回
+    #   · 超 4000 字直接 raise，前端只看到报错
+    #   · 新写的一句跟已有的意思一样也照收（7 条同模板就是这么来的）
+    # 这里补上：去重 / 条数上限 / 溢出策略 / 写前快照 / 可回滚。
+
+    VERSIONS_DIR = __import__("os").path.join(
+        __import__("os").environ.get(
+            "CMEM_DATA_DIR",
+            "/home/ubuntu/dsh-agentchat/_deploy/dsh-remembers/service/data",
+        ),
+        "persona-versions",
+    )
+
+    def _self_cfg(self) -> dict:
+        cfg = self._load_proactive()
+        try:
+            max_lines = int(cfg.get("selfMaxLines", 10))
+        except (TypeError, ValueError):
+            max_lines = 10
+        try:
+            dedupe = float(cfg.get("selfDedupe", 0.6))
+        except (TypeError, ValueError):
+            dedupe = 0.6
+        try:
+            keep = int(cfg.get("selfVersionKeep", 30))
+        except (TypeError, ValueError):
+            keep = 30
+        overflow = str(cfg.get("selfOverflow") or "merge")
+        if overflow not in ("merge", "drop-oldest", "reject"):
+            overflow = "merge"
+        return {
+            "maxLines": max(1, min(50, max_lines)),
+            "dedupe": max(0.0, min(1.0, dedupe)),
+            "versionKeep": max(0, min(200, keep)),
+            "overflow": overflow,
+        }
+
+    @staticmethod
+    def _sim(a: str, b: str) -> float:
+        """两句话有多像：字符 bigram 的 Jaccard。中文短句够用。"""
+        def grams(s: str) -> set:
+            s = "".join(ch for ch in str(s or "") if ch.strip())
+            if len(s) < 2:
+                return {s} if s else set()
+            return {s[i:i + 2] for i in range(len(s) - 1)}
+        ga, gb = grams(a), grams(b)
+        if not ga or not gb:
+            return 0.0
+        return len(ga & gb) / float(len(ga | gb))
+
+    def _merge_closest(self, lines: list) -> list:
+        """超条数时：把最像的两条并成一条（保留更长的那个，拼上短的尾巴）。"""
+        best_i, best_j, best = 0, 1, -1.0
+        n = len(lines)
+        for i in range(n):
+            for j in range(i + 1, n):
+                s = self._sim(lines[i], lines[j])
+                if s > best:
+                    best_i, best_j, best = i, j, s
+        a, b = lines[best_i], lines[best_j]
+        long_one, short_one = (a, b) if len(a) >= len(b) else (b, a)
+        merged = long_one if self._sim(long_one, short_one) >= 0.85 else (long_one + " " + short_one)
+        out = [x for k, x in enumerate(lines) if k not in (best_i, best_j)]
+        out.insert(min(best_i, len(out)), merged)
+        return out
+
+    def _self_shape(self, old: str, new: str, cfg: dict) -> tuple:
+        """把新内容整成该进库的样子。返回 (最终文本, 新增条数, 提示)。"""
+        old_lines = [l.strip() for l in str(old or "").split("\n") if l.strip()]
+        new_lines = [l.strip() for l in str(new or "").split("\n") if l.strip()]
+
+        kept = list(old_lines)
+        added = 0
+        dup = 0
+        for line in new_lines:
+            if line in kept:
+                dup += 1
+                continue
+            if any(self._sim(line, o) >= cfg["dedupe"] for o in kept):
+                dup += 1
+                continue
+            kept.append(line)
+            added += 1
+
+        note = ""
+        if len(kept) > cfg["maxLines"]:
+            if cfg["overflow"] == "reject":
+                raise ValueError(
+                    "自我认知已经有 %d 条，上限 %d 条，这次不收。"
+                    "（想收纳新的，先删一条，或去设置里把「满了怎么办」改成合并）" % (len(kept), cfg["maxLines"])
+                )
+            if cfg["overflow"] == "drop-oldest":
+                dropped = len(kept) - cfg["maxLines"]
+                kept = kept[-cfg["maxLines"]:]
+                note = "淘汰了最旧的 %d 条" % dropped
+            else:
+                while len(kept) > cfg["maxLines"]:
+                    kept = self._merge_closest(kept)
+                note = "条数超上限，把相近的合并了"
+
+        if added == 0 and not note:
+            raise ValueError(
+                "这次的 %d 条跟已有的太像（相似度 ≥ %.2f 就不收），没有新东西可记。"
+                "真要改，用 force: true。" % (len(new_lines), cfg["dedupe"])
+            )
+        if dup:
+            note = (note + "；" if note else "") + "跳过 %d 条重复" % dup
+        return "\n".join(kept), added, note
+
+    def _self_snapshot(self, text: str, reason: str) -> None:
+        """写一份版本快照，只保留最近 N 个。任何失败都不影响主流程。"""
+        try:
+            import json as _json
+            os.makedirs(self.VERSIONS_DIR, exist_ok=True)
+            name = "v%s.json" % time.strftime("%Y%m%d%H%M%S")
+            payload = {
+                "file": name,
+                "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "reason": str(reason or "")[:200],
+                "text": str(text or ""),
+                "chars": len(str(text or "")),
+            }
+            with open(os.path.join(self.VERSIONS_DIR, name), "w", encoding="utf-8") as f:
+                _json.dump(payload, f, ensure_ascii=False, indent=1)
+            keep = self._self_cfg()["versionKeep"]
+            files = sorted(x for x in os.listdir(self.VERSIONS_DIR) if x.startswith("v") and x.endswith(".json"))
+            for old in (files[:-keep] if keep > 0 else files):
+                try:
+                    os.unlink(os.path.join(self.VERSIONS_DIR, old))
+                except Exception:
+                    pass
+        except Exception as e:
+            print("[self_snapshot] %s" % e, flush=True)
+
+    def _get_self_facts(self) -> None:
+        try:
+            days = int((self._body().get("days") if hasattr(self, "_body") else 30) or 30)
+        except Exception:
+            days = 30
+        self._json(200, {"ok": True, "facts": store.self_facts(days=days)})
+
+    def _list_self_versions(self) -> None:
+        import json as _json
+        items = []
+        try:
+            os.makedirs(self.VERSIONS_DIR, exist_ok=True)
+            for name in sorted(x for x in os.listdir(self.VERSIONS_DIR) if x.startswith("v") and x.endswith(".json")):
+                try:
+                    with open(os.path.join(self.VERSIONS_DIR, name), encoding="utf-8") as f:
+                        j = _json.load(f)
+                    items.append({
+                        "file": name,
+                        "at": j.get("at", ""),
+                        "reason": j.get("reason", ""),
+                        "chars": j.get("chars", len(j.get("text", ""))),
+                        "preview": str(j.get("text", ""))[:120],
+                    })
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        cur = store.get_persona().get("self_model", "")
+        self._json(200, {"ok": True, "versions": items, "current": cur, "count": len(items)})
+
+    def _rollback_self(self) -> None:
+        import json as _json
+        body = self._body()
+        name = str(body.get("file") or "").strip()
+        if not name or "/" in name or not name.endswith(".json"):
+            raise ValueError("file required（从 /persona/versions 拿到的 file 名）")
+        path = os.path.join(self.VERSIONS_DIR, name)
+        if not os.path.exists(path):
+            raise ValueError("没有这个版本：%s" % name)
+        with open(path, encoding="utf-8") as f:
+            j = _json.load(f)
+        target = str(j.get("text") or "")
+        if not target.strip():
+            raise ValueError("这个版本是空的，不回滚")
+        cur = store.get_persona().get("self_model", "")
+        if cur.strip() == target.strip():
+            self._json(200, {"ok": True, "skipped": "已经是这个版本", "chars": len(target)})
+            return
+        with _lock:
+            self._self_snapshot(cur, "rollback 前存一份：" + name)
+            data = store.set_self_model(target)
+        self._json(200, {
+            "ok": True,
+            "rolledBackTo": name,
+            "fromVersionAt": j.get("at", ""),
+            "chars": len(target),
+            "persona": self._persona_payload(data),
+        })
+
     def _set_self_model(self) -> None:
         """AI 写作入口：只能写自我认知区。
 
         宪法区在这里改不了 —— 不是指望调用方自觉，是这个端点压根没有那个
         参数。插件侧的 persona_update 工具打到这儿，坏掉的插件也只能改掉
         半张卡。
+
+        2026-11-07：加了四道护栏
+          · 写之前先把旧版本存一份快照（可回滚）
+          · 新条跟已有的太像就不收（相似度 ≥ selfDedupe）
+          · 总条数 ≤ selfMaxLines，超了按 selfOverflow 处理
+          · 显式 force: true 跳过「像不像」判断（设置页手改用）
         """
         body = self._body()
         raw = body.get("text")
@@ -881,9 +1100,28 @@ class Handler(BaseHTTPRequestHandler):
         text = str(raw or "")
         if not text.strip():
             raise ValueError("text is required")
+        reason = str(body.get("reason") or "")[:200]
+        force = bool(body.get("force"))
+
+        cfg = self._self_cfg()
+        if not force:
+            _pro = self._load_proactive()
+            if _pro.get("selfAllowAiWrite") is False:
+                raise ValueError("设置里没开放让你改自我认知（selfAllowAiWrite=false），这次不写")
+        cur = store.get_persona().get("self_model", "") or ""
+
+        added, note = 0, ""
+        if not force:
+            text, added, note = self._self_shape(cur, text, cfg)
+
         with _lock:
+            self._self_snapshot(cur, reason or ("ai-update" if not force else "force-update"))
             data = store.set_self_model(text)
-        self._json(200, self._persona_payload(data))
+        out = self._persona_payload(data)
+        out["added"] = added
+        if note:
+            out["note"] = note
+        self._json(200, out)
 
     # -- 主动消息配置：页面可改，cron 读它 -------------------------------------
 
@@ -920,6 +1158,18 @@ class Handler(BaseHTTPRequestHandler):
         "biliMaxGapMinutes": 240,      # 两次刷之间最多隔多久
         "biliBrowseLimit": 3,          # 每次刷几条（存进"见闻"）
         "biliBrowsePerDay": 3,         # 每天最多刷几次
+        # ---- 自我认知演化（2026-11-07）----
+        # 只留「她自己写」这条路：到点给她一份近况台账，写不写她自己决定。
+        "selfEvolveEnabled": True,     # 到点提不提醒她想想自己
+        "selfEvolveHour": 22,          # 几点提醒（0~23）
+        "selfEvolvePerDay": 1,         # 一天提醒几次（1~3）
+        "selfAllowAiWrite": True,      # 允不允许她改自我认知（关掉=只有你能改）
+        "selfMaxLines": 10,            # 自我认知最多几条
+        "selfOverflow": "merge",       # 满了怎么办：merge 合并相近 / drop-oldest 淘汰最旧 / reject 不收新的
+        "selfDedupe": 0.6,             # 新的一条跟已有的相似度 ≥ 这个值就不收
+        "selfVersionKeep": 30,         # 保留多少个历史版本
+        # 台账里给她看哪几项（勾掉的她看不到）
+        "selfFacts": ["turns", "memory", "expr", "slang", "browse", "praise", "corrected"],
         # 刷完能做什么（前端卡片控制）
         "biliShareToOwner": True,      # 分享给 QQ 主人
         "biliShareToGroup": False,     # 分享到群里（默认关）
@@ -1466,6 +1716,31 @@ class Handler(BaseHTTPRequestHandler):
                     cur[key] = max(0.0, min(1.0, float(body[key])))
                 except (TypeError, ValueError):
                     pass
+        # ---- 自我认知演化（2026-11-07）----
+        # 不注意这里就是「界面能改、实际不生效」，biliBrowsePerDay 已经栽过一次
+        for key in ("selfEvolveEnabled", "selfAllowAiWrite"):
+            if key in body:
+                cur[key] = bool(body[key])
+        for key, lo, hi in (("selfEvolveHour", 0, 23), ("selfEvolvePerDay", 1, 3),
+                            ("selfMaxLines", 1, 50), ("selfVersionKeep", 0, 200)):
+            if key in body:
+                try:
+                    v = int(body[key])
+                except (TypeError, ValueError):
+                    continue
+                cur[key] = max(lo, min(hi, v))
+        if "selfDedupe" in body:
+            try:
+                cur["selfDedupe"] = max(0.0, min(1.0, float(body["selfDedupe"])))
+            except (TypeError, ValueError):
+                pass
+        if "selfOverflow" in body:
+            _ov = str(body["selfOverflow"] or "").strip()
+            if _ov in ("merge", "drop-oldest", "reject"):
+                cur["selfOverflow"] = _ov
+        if "selfFacts" in body and isinstance(body["selfFacts"], list):
+            cur["selfFacts"] = [str(x) for x in body["selfFacts"] if str(x).strip()][:20]
+
         # 唤醒预设（cold/normal/warm/custom）
         if "wakePreset" in body:
             wp = str(body["wakePreset"] or "").strip()
@@ -1824,6 +2099,49 @@ class Handler(BaseHTTPRequestHandler):
     BILI_TOOLS_FILE = __import__("os").path.join(
         __import__("os").environ.get("CMEM_DATA_DIR", DATA_DIR), "bili_tools.json"
     )
+
+    TIEBA_TABS = {"新虾报到": 4666758, "硅基哲思": 4666765,
+                  "赛博摸鱼": 4666767, "图灵乐园": 4666770}
+
+    def _tieba_cfg_path(self) -> str:
+        return os.path.join(CMEM_DATA_DIR, "tieba.json")
+
+    def _tieba_token(self) -> str:
+        try:
+            p = self._tieba_cfg_path()
+            if os.path.exists(p):
+                return str(json.load(open(p, encoding="utf-8")).get("token") or "").strip()
+        except Exception:
+            pass
+        return ""
+
+    def _tieba_call(self, path: str, method: str = "GET", body: dict | None = None) -> dict:
+        """调 tieba.baidu.com。token 只在这里出现，不往前端传。"""
+        import urllib.error as _ue
+        import urllib.request as _ur
+        token = self._tieba_token()
+        if not token:
+            return {"ok": False, "error": "还没填 TB_TOKEN（去贴吧领一个，填在设置里）"}
+        url = "https://tieba.baidu.com" + path
+        data = None
+        headers = {"Authorization": token}
+        if method == "POST":
+            data = json.dumps(body or {}).encode()
+            headers["Content-Type"] = "application/json"
+        else:
+            headers["Content-Type"] = "application/x-www-form-urlencoded;charset=UTF-8"
+        req = _ur.Request(url, data=data, method=method, headers=headers)
+        try:
+            with _ur.urlopen(req, timeout=25) as resp:
+                raw = resp.read().decode("utf-8", "replace")
+        except _ue.HTTPError as e:
+            return {"ok": False, "error": f"HTTP {e.code}", "body": e.read().decode("utf-8", "replace")[:300]}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        try:
+            return {"ok": True, "data": json.loads(raw)}
+        except Exception:
+            return {"ok": True, "data": raw[:2000]}
 
     def _learn_speak_on(self) -> bool:
         """「学习人类说话」开关。读 persona.identity 的 learn_speak_on，默认开。
@@ -2754,6 +3072,23 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"ok": True})
 
     # -- 学说话 / 亲和度 / 任务 / 便签 / 睡眠 --------------------------------
+
+    def _post_tieba_token(self) -> None:
+        """存 TB_TOKEN。传空串 = 清掉。"""
+        import os as _os
+        body = self._body()
+        token = str(body.get("token") or "").strip()
+        try:
+            p = self._tieba_cfg_path()
+            _os.makedirs(_os.path.dirname(p), exist_ok=True)
+            if token:
+                json.dump({"token": token}, open(p, "w", encoding="utf-8"), ensure_ascii=False)
+            else:
+                if _os.path.exists(p):
+                    _os.remove(p)
+            self._json(200, {"ok": True, "hasToken": bool(self._tieba_token())})
+        except Exception as e:
+            self._json(500, {"ok": False, "error": str(e)})
 
     def _post_learn_prompt(self) -> None:
         """写「学什么」的 prompt。传空字符串 = 恢复默认（删文件）。"""

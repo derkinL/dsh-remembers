@@ -897,6 +897,75 @@ class MemoryStore:
         self.conn.commit()
         return self.get_persona()
 
+    # ---- 近况台账（2026-11-07）---------------------------------------------
+    #
+    # 自我认知演化的输入。原来只喂「一段对话」，所以她只能凭空想；
+    # 这里把库里已经躺着的数据算成一份真实数字，让她有据可依。
+    #
+    # 全部只读，不写任何表；任何一项算不出来就当 0，不影响其他项。
+
+    PRAISE_RE = re.compile(r"厉害|好棒|真棒|不错|牛|服了|聪明|可爱|好乖|谢谢|辛苦了|做得好")
+    CORRECT_RE = re.compile(r"不对|错了|不是这样|别这样|应该是|跟你说过|又忘|别乱|不许")
+
+    def self_facts(self, days: int = 30) -> dict[str, Any]:
+        """算一份近况台账。days 是「最近」的窗口天数。"""
+        since = time.time() - max(1, int(days)) * 86400
+
+        def n(sql: str, args: tuple = ()) -> int:
+            try:
+                row = self.conn.execute(sql, args).fetchone()
+                return int((row[0] if row else 0) or 0)
+            except Exception:
+                return 0
+
+        out: dict[str, Any] = {"days": int(days)}
+        # 聊了多少（profiles.msg_count 是每个用户的累计消息数）
+        out["turns"] = n("SELECT COALESCE(SUM(msg_count), 0) FROM profiles")
+        out["people"] = n("SELECT count(*) FROM profiles WHERE msg_count > 0")
+        # 记忆分层
+        out["l0"] = n("SELECT count(*) FROM memory WHERE tier='L0'")
+        out["l0_recent"] = n("SELECT count(*) FROM memory WHERE tier='L0' AND ts >= ?", (since,))
+        out["l1"] = n("SELECT count(*) FROM memory WHERE tier='L1'")
+        out["l2"] = n("SELECT count(*) FROM memory WHERE tier='L2'")
+        out["l3"] = n("SELECT count(*) FROM memory WHERE tier='L3' AND ts >= ?", (since,))
+        out["l4"] = n("SELECT count(*) FROM memory WHERE tier='L4'")
+        # 学到的说法 / 词
+        out["expr"] = n("SELECT count(*) FROM expressions")
+        out["expr_recent"] = n("SELECT count(*) FROM expressions WHERE ts >= ?", (since,))
+        out["slang"] = n("SELECT count(*) FROM slang")
+        # 干过的事
+        out["browsed"] = n("SELECT count(*) FROM browsed WHERE ts >= ?", (since,))
+        out["notes"] = n("SELECT count(*) FROM notes")
+        out["diary"] = n("SELECT count(*) FROM diary")
+        out["tasks_done"] = n("SELECT count(*) FROM tasks WHERE done=1")
+        # 贴吧（还没接，先占位，接了直接填）
+        out["tieba"] = 0
+        # 被夸 / 被纠正
+        praise, corrected = self._praise_counts(since)
+        out["praise"] = praise
+        out["corrected"] = corrected
+        return out
+
+    def _praise_counts(self, since: float) -> tuple[int, int]:
+        """从最近的原话里数「被夸」「被纠正」。粗糙但比 0 强。"""
+        praise = corrected = 0
+        try:
+            rows = self.conn.execute(
+                "SELECT text FROM memory WHERE tier='L0' AND ts >= ? ORDER BY id DESC LIMIT 400",
+                (since,),
+            ).fetchall()
+        except Exception:
+            return 0, 0
+        for row in rows:
+            t = str((row[0] if row else "") or "")
+            if not t:
+                continue
+            if self.PRAISE_RE.search(t):
+                praise += 1
+            if self.CORRECT_RE.search(t):
+                corrected += 1
+        return praise, corrected
+
     def set_self_model(self, text: str) -> dict[str, Any]:
         """AI 入口：只能写自我认知区。想改宪法请走设置页。"""
         return self.set_persona(self_model=str(text))
