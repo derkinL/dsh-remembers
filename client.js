@@ -823,7 +823,9 @@ window.__ModuleLoader__.load({
 
         // ===== 图库列表视图 =====
         if (view === "list") {
-          return h("div", { style: S.wrap },
+          // 左栏管「怎么发」（频率、文字颜），右栏摆图库卡片
+          return h("div", { style: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" } },
+            h("div", { style: { flex: "0 0 420px", minWidth: 340, display: "flex", flexDirection: "column", gap: 12 } },
             h("div", { style: S.desc },
               "她的表情包库，按图库分。点一个图库进去看里面的图。",
             ),
@@ -938,7 +940,10 @@ window.__ModuleLoader__.load({
                 ),
               ),
             ),
-            h("div", { style: { display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" } },
+            ),
+
+            h("div", { style: { flex: "1 1 0", minWidth: 0, display: "flex", flexDirection: "column", gap: 12 } },
+            h("div", { style: { display: "flex", gap: 8, marginBottom: 0, flexWrap: "wrap" } },
               h("button", {
                 style: { ...S.btn(true), padding: "6px 14px", fontSize: 13 },
                 onClick: () => setNewPack({ id: "", name: "" }),
@@ -949,7 +954,7 @@ window.__ModuleLoader__.load({
               }, "刷新"),
             ),
             msg ? h("div", { style: S.muted }, msg) : null,
-            h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: 12 } },
+            h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(168px, 1fr))", gap: 12 } },
               packs.map((pk) =>
                 h("div", {
                   key: pk.pack,
@@ -963,16 +968,17 @@ window.__ModuleLoader__.load({
                     e.currentTarget.style.boxShadow = "";
                   },
                   style: {
-                    border: "1px solid var(--dsw-color-border-subtle, rgba(0,0,0,.08))",
+                    border: "1px solid var(--dsw-alias-border-l4, rgba(0,0,0,.16))",
                     borderRadius: 12, overflow: "hidden", cursor: "pointer",
                     background: "var(--dsw-color-bg, #fff)",
-                    display: "flex", flexDirection: "row", alignItems: "center", gap: 12, padding: 12,
+                    display: "flex", flexDirection: "column",
+                    boxShadow: "0 2px 8px rgba(0,0,0,.05)",
                     transition: "transform .12s ease, box-shadow .12s ease",
                   },
                 },
                   h("div", {
                     style: {
-                      flex: "none", width: 96, height: 96, borderRadius: 10,
+                      width: "100%", height: 112,
                       backgroundColor: "var(--dsw-color-bg-secondary, #f3f4f6)",
                       backgroundImage: pk.cover
                         ? "url(" + serviceUrl() + "/memes/file/" + encodeURIComponent(pk.cover) + ")"
@@ -981,13 +987,13 @@ window.__ModuleLoader__.load({
                       backgroundPosition: "center 28%",
                       backgroundRepeat: "no-repeat",
                       display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 22,
+                      fontSize: 24,
                       color: "var(--dsw-color-text-secondary, #9ca3af)",
                     },
                   }, pk.cover ? null : (pk.pack === "all" ? "🗂️" : "🐟")),
-                  h("div", { style: { display: "flex", flexDirection: "column", gap: 4, minWidth: 0 } },
-                    h("div", { style: { fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, pk.name),
-                    h("div", { style: { fontSize: 12, color: "var(--dsw-color-text-secondary, #6b7280)" } }, pk.count + " 张"),
+                  h("div", { style: { padding: "8px 10px", display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 } },
+                    h("div", { style: { fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, pk.name),
+                    h("div", { style: { fontSize: 11, color: "var(--dsw-color-text-secondary, #6b7280)", marginLeft: "auto", flexShrink: 0 } }, pk.count + " 张"),
                   ),
                 ),
               ),
@@ -1016,6 +1022,7 @@ window.__ModuleLoader__.load({
                 ),
               ),
             ) : null,
+            ),
           );
         }
 
