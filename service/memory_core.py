@@ -937,7 +937,6 @@ class MemoryStore:
         out["browsed"] = n("SELECT count(*) FROM browsed WHERE ts >= ?", (since,))
         out["notes"] = n("SELECT count(*) FROM notes")
         out["diary"] = n("SELECT count(*) FROM diary")
-        out["tasks_done"] = n("SELECT count(*) FROM tasks WHERE done=1")
         # 贴吧（还没接，先占位，接了直接填）
         out["tieba"] = 0
         # 被夸 / 被纠正
@@ -1508,30 +1507,6 @@ class MemoryStore:
         )
         self.conn.commit()
         return self.affinity_get(user_id)
-
-    def task_add(self, text: str, points: int = 1) -> dict:
-        now = time.time()
-        cur = self.conn.execute(
-            "INSERT INTO tasks(text, points, created) VALUES (?,?,?)",
-            (str(text)[:200], int(points), now),
-        )
-        self.conn.commit()
-        return {"id": cur.lastrowid, "text": text, "points": points}
-
-    def task_list(self, include_done: bool = True, limit: int = 30) -> list[dict]:
-        where = "" if include_done else "WHERE done=0"
-        rows = self.conn.execute(
-            f"SELECT * FROM tasks {where} ORDER BY done ASC, id DESC LIMIT ?",
-            (max(1, min(int(limit), 100)),),
-        ).fetchall()
-        return [
-            {
-                "id": int(r["id"]), "text": r["text"], "points": int(r["points"]),
-                "created": float(r["created"] or 0), "done": bool(r["done"]),
-                "done_at": float(r["done_at"] or 0),
-            }
-            for r in rows
-        ]
 
     def task_done(self, task_id: int) -> bool:
         cur = self.conn.execute(

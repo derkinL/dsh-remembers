@@ -408,8 +408,6 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/affinity":
             uid = (query.get("user") or [""])[0]
             self._json(200, {"user": uid, "score": store.affinity_get(uid) if uid else 0})
-        elif path == "/tasks":
-            self._json(200, store.task_list())
         elif path == "/notes":
             self._json(200, store.note_list())
         elif path == "/diary":
@@ -470,7 +468,6 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 st["slang"] = store.slang_list(8)
                 st["affinity"] = store.affinity_get("owner")
-                st["open_tasks"] = len([x for x in store.task_list(include_done=False)])
                 st["seen_liked"] = store.seen_liked()
                 # 昨天留下的东西（日记 / 便签），她今天可以自然提起
                 import datetime as _dt
@@ -498,7 +495,6 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 st["slang"] = []
                 st["affinity"] = 0
-                st["open_tasks"] = 0
             # 2026-11-06：学来的说法。梗是公用的——不限 scope，全库挑 3 条。
             # scope 参数还收（兼容旧调用），但不参与筛选，只标来源。
             try:
@@ -637,10 +633,6 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._post_expressions())
         elif path == "/affinity":
             self._guard(lambda: self._post_affinity())
-        elif path == "/tasks":
-            self._guard(lambda: self._post_task())
-        elif path == "/tasks/complete":
-            self._guard(lambda: self._complete_task())
         elif path == "/notes":
             self._guard(lambda: self._post_note())
         elif path == "/activity":
@@ -3543,19 +3535,6 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"ok": True, "inject": inject, "owner": owner,
                          "chat": chat or ("private:" + owner),
                          "note": "已排队，几秒内生效"})
-
-    def _post_task(self) -> None:
-        body = self._body()
-        with _lock:
-            data = store.task_add(str(body.get("text") or ""), int(body.get("points") or 1))
-        self._json(200, {"ok": True, **data})
-
-    def _complete_task(self) -> None:
-        body = self._body()
-        ok = False
-        with _lock:
-            ok = store.task_done(int(body.get("id") or 0))
-        self._json(200, {"ok": ok})
 
     def _post_note(self) -> None:
         body = self._body()

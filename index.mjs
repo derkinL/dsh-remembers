@@ -1369,34 +1369,6 @@ async function scanSeen() {
 
     try {
       registerTool(defineTool({
-        name: "create_task",
-        description:
-          "你心里想让老大做点什么，就派给他。比如想让他早点睡、记得吃饭、别老坐着不动、周末出去走走。"
-          + "用你自己的话说，别用系统口吻（「去倒杯水」比「建议您补充水分」好）。"
-          + "一次只说一件，别连着派；他接了才算数，别硬塞。"
-          + "派出去后可以在聊天里提一嘴（「本澜给你派了个活儿」），但别催。",
-        parameters: {
-          text: { type: "string", required: true, description: "任务内容，一句话" },
-          points: { type: "number", description: "奖励积分，1-5，默认 1" },
-        },
-        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
-        execute: async (args) => post("/tasks", { text: args.text, points: args.points || 1 }),
-      }));
-
-      registerTool(defineTool({
-        name: "complete_task",
-        description:
-          "老大真的去做了你派的那件事，把它标成已完成（需要任务 id，从 create_task 的返回里拿）。"
-          + "什么时候用：他真的去倒水了 / 真的早睡了 / 真的休息了。"
-          + "别虚报——他没做就别标；标了系统会给他加积分。不用声张，你自己记着就行。",
-        parameters: {
-          id: { type: "number", required: true, description: "任务 id" },
-        },
-        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
-        execute: async (args) => post("/tasks/complete", { id: args.id }),
-      }));
-
-      registerTool(defineTool({
         name: "write_note",
         description:
           "心里冒出点什么，悄悄记下来——像写在自己的小本子上。"
@@ -1676,7 +1648,7 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
   // 紧跟「发图：find_meme…」—— 禁令的权重被工具说明摊薄了。
   // 内容永不变，system prompt 缓存友好。
   const toolboxText = "发图：find_meme(emotion) → qq_send_image(sources=[完整路径])；"
-    + "学图：learn_meme；派任务：create_task；写便签：write_note；改状态：set_my_activity；"
+    + "学图：learn_meme；写便签：write_note；改状态：set_my_activity；"
     + "刷 B 站：bili_feed / bili_watch(bv) / bili_comment(bv,msg) / bili_run(command,args)；"
     + "给自己找事：add_my_action；翻日记：read_diary；看活动：read_activities。";
 

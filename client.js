@@ -455,7 +455,6 @@ window.__ModuleLoader__.load({
         const [diaryDate, setDiaryDate] = React.useState("");
         const [persona, setPersona] = React.useState(null);
         const [memories, setMemories] = React.useState([]);
-        const [taskList, setTaskList] = React.useState([]);
         const [noteList, setNoteList] = React.useState([]);
         const [loading, setLoading] = React.useState(true);
         const [error, setError] = React.useState(null);
@@ -486,7 +485,6 @@ window.__ModuleLoader__.load({
               acts = [];
             }
             setActivities(Array.isArray(acts) ? acts : [])
-            try { setTaskList(await call("/tasks") || []); } catch { setTaskList([]); }
             try { setNoteList(await call("/notes") || []); } catch { setNoteList([]); }
             setSt(s);
             setPersona(p);
@@ -568,17 +566,6 @@ window.__ModuleLoader__.load({
               : h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
                   activities.slice(0, 30).map((a, i) => h("div", { key: i, style: S.muted },
                     new Date(a.ts * 1000).toLocaleTimeString() + " · " + (a.kind === "chat" ? "聊天" : a.kind === "game" ? "玩游戏" : a.kind === "proactive" ? "主动找你" : a.kind === "bili" ? "B 站" : a.kind === "habit" ? "习惯" : a.kind) + " · " + String(a.detail || "").slice(0, 60)))),
-          ),
-
-          h("div", { style: S.card },
-            h("div", { style: S.label }, "她给老大派的任务"),
-            taskList.length === 0
-              ? h("div", { style: S.muted }, "还没有任务——她说派的时候会出现在这里。")
-              : h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
-                  taskList.slice(0, 10).map((tk) => h("div", { key: tk.id, style: S.row },
-                    h("span", { style: { fontSize: 13 } }, (tk.done ? "✓ " : "○ ") + tk.text),
-                    h("span", { style: S.muted }, "(" + tk.points + " 分)"),
-                  ))),
           ),
 
           h("div", { style: S.card },
@@ -2198,7 +2185,6 @@ window.__ModuleLoader__.load({
         const [slangList, setSlangList] = React.useState(null);
         const [exprList, setExprList] = React.useState(null);
         const [newExpr, setNewExpr] = React.useState({ situation: "", style: "", example: "" });
-        const [tasksList, setTasksList] = React.useState(null);
         const [stateInfo, setStateInfo] = React.useState(null);
         const [selfModel, setSelfModel] = React.useState(null);
         const [mode, setMode] = React.useState("memory");
@@ -2250,13 +2236,6 @@ window.__ModuleLoader__.load({
           } catch { setExprList([]); }
           try { const r = await call("/slang"); setSlangList(Array.isArray(r) ? r : []); }
           catch (e) { setErr(e && e.message ? e.message : String(e)); setSlangList([]); }
-          finally { setBusy(false); }
-        };
-
-        const loadTasks = async () => {
-          setBusy(true); setErr(null);
-          try { const r = await call("/tasks"); setTasksList(Array.isArray(r) ? r : []); }
-          catch (e) { setErr(e && e.message ? e.message : String(e)); setTasksList([]); }
           finally { setBusy(false); }
         };
 
@@ -2554,11 +2533,6 @@ window.__ModuleLoader__.load({
                   ? ` ${(slangList || []).filter((s) => (s.meaning || "").trim()).length + (exprList || []).length}`
                   : "")),
               h("button", {
-                style: { ...S.btn(mode === "tasks"), padding: "4px 10px", fontSize: 12 },
-                onClick: () => { setMode("tasks"); void loadTasks(); },
-              }, "互相派的活" + (tasksList ? ` ${tasksList.length}` : "")),
-
-              h("button", {
                 style: { ...S.btn(mode === "self"), padding: "4px 10px", fontSize: 12 },
                 onClick: () => { setMode("self"); void loadSelfModel(); },
               }, "自我认知"),
@@ -2766,20 +2740,6 @@ window.__ModuleLoader__.load({
                   : null,
               )
             })()
-          ) : mode === "tasks" ? (
-            tasksList && tasksList.length > 0
-              ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
-                  tasksList.map((k) =>
-                    h("div", { key: k.id, style: { ...S.card, padding: "8px 12px", borderLeft: "3px solid " + (k.done ? "#2fa36b" : "#f0803c"), opacity: k.done ? 0.7 : 1 } },
-                      h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
-                        h("span", { style: { fontSize: 11, fontWeight: 600, color: k.done ? "#2fa36b" : "#f0803c" } }, k.done ? "✓ 已完成" : "待办"),
-                        h("span", { style: { fontSize: 13, lineHeight: 1.6, flex: 1 } }, k.text || ""),
-                        h("span", { style: { ...S.muted, fontSize: 11 } }, "+" + (k.points || 0) + " 分"),
-                      ),
-                    ),
-                  ),
-                )
-              : h("div", { style: S.muted }, tasksList ? "还没有互相派的活" : "读取中…")
           ) : mode === "emotion" ? (
             emotionList && emotionList.length > 0 ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
               emotionList.map((e) => {
@@ -3716,7 +3676,6 @@ const [data, setData] = React.useState(null);
           ["tieba", "逛了多少贴吧"],
           ["notes", "写了多少便签"],
           ["diary", "写了多少日记"],
-          ["tasks", "互相派的活完成几件"],
           ["praise", "老大夸过几次"],
           ["corrected", "被纠正过几次"],
         ];
@@ -3733,7 +3692,6 @@ const [data, setData] = React.useState(null);
           if (has("tieba")) parts.push("逛贴吧 " + (f.tieba || 0));
           if (has("notes")) parts.push("便签 " + (f.notes || 0));
           if (has("diary")) parts.push("日记 " + (f.diary || 0));
-          if (has("tasks")) parts.push("完成任务 " + (f.tasks_done || 0));
           if (has("praise")) parts.push("被夸 " + (f.praise || 0));
           if (has("corrected")) parts.push("被纠正 " + (f.corrected || 0));
           return parts.length ? parts.join(" · ") : "（一项都没勾，她会收到空账单）";
