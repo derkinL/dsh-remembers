@@ -31,9 +31,20 @@ const registered = [];
 let loadDef = null;
 
 const h = (type, props, ...kids) => ({ $$typeof: "el", type, props, children: kids });
+
+// 只劫持「下一次 useState」：用来把入口页的 page 直接摆成某个二级页。
+// 子组件自己的 useState 在这之后调用，走正常分支。
+let forcedState;
 const React = {
   createElement: h,
-  useState: (v) => [typeof v === "function" ? v() : v, () => {}],
+  useState: (v) => {
+    if (forcedState !== undefined) {
+      const val = forcedState;
+      forcedState = undefined;
+      return [val, () => {}];
+    }
+    return [typeof v === "function" ? v() : v, () => {}];
+  },
   useEffect: () => {},
   useMemo: (f) => f(),
   useCallback: (f) => f,
@@ -139,6 +150,80 @@ ok("每张卡片都带说明和图标", () => {
     assert.ok(card.children[2].children[0].length > 8);            // 说明
     assert.equal(card.type, "button");                             // 可点
   }
+});
+
+// ---------------------------------------------------------------- 二级页
+console.log("\n[二级页 / 返回按钮]");
+
+/** 把入口页直接摆成某个二级页。 */
+function renderDetail(page) {
+  forcedState = page;
+  return registered[0].comp({});
+}
+
+/** 深度遍历元素树。函数组件会被就地展开一层（mock 没有真 reconciler）。 */
+function walk(node, out = []) {
+  if (!node) return out;
+  if (Array.isArray(node)) { node.forEach((n) => walk(n, out)); return out; }
+  if (typeof node !== "object") return out;
+  if (typeof node.type === "function") {
+    out.push(node);
+    walk(node.type(node.props || {}), out);
+    return out;
+  }
+  out.push(node);
+  (node.children || []).forEach((c) => walk(c, out));
+  return out;
+}
+
+/** 树上所有「← 她的记忆」文本节点。 */
+function backLabels(tree) {
+  return walk(tree).filter((el) => el.children && el.children[0] === "← 她的记忆");
+}
+
+/** 树上所有带 className 的元素里，命中某个 class 的。 */
+function byClass(tree, cls) {
+  return walk(tree).filter((el) => el.props && el.props.className === cls);
+}
+
+const PAGES = ["memories", "persona", "memes", "proactive", "bili", "qq", "service"];
+// 自带「保存」悬浮块的页面：返回按钮塞进那个块，入口页不再挂悬浮返回。
+const WITH_PANEL = new Set(["persona", "proactive", "bili", "qq", "service"]);
+
+for (const page of PAGES) {
+  ok(`${page} 二级页能渲染`, () => {
+    const tree = renderDetail(page);
+    assert.ok(tree !== undefined && tree !== null);
+  });
+}
+
+for (const page of PAGES) {
+  ok(`${page} 顶部有返回按钮`, () => {
+    const tree = renderDetail(page);
+    assert.ok(backLabels(tree).length >= 1, "顶部返回按钮没了");
+  });
+}
+
+for (const page of PAGES) {
+  ok(`${page} 常驻返回的位置对`, () => {
+    const tree = renderDetail(page);
+    // 有保存块的页面：入口页不额外挂悬浮返回，返回按钮在块里（下面单独断言）。
+    // 没保存块的页面：入口页挂一个右侧中间的悬浮返回。
+    assert.equal(byClass(tree, "dshm-fab").length, WITH_PANEL.has(page) ? 0 : 1);
+  });
+}
+
+// 那 5 个「保存」悬浮块在首屏是 loading 态，mock 里渲染不出来，
+// 所以这里查源码：每个块都得有返回按钮，而且排在保存按钮前面。
+ok("5 个保存块里各有一颗返回，且在保存按钮之前", () => {
+  const src = readFileSync(join(PLUGIN_ROOT, "client.js"), "utf8");
+  const back = (src.match(/props && props\.onBack/g) || []).length;
+  assert.equal(back, 5, `找到 ${back} 处返回按钮`);
+  for (const m of src.matchAll(/props && props\.onBack[\s\S]{0,600}?"保存"/g)) {
+    assert.ok(m.index !== undefined);
+  }
+  const panels = [...src.matchAll(/minWidth: \d+,[\s\S]{0,300}?props && props\.onBack/g)];
+  assert.equal(panels.length, 5, `只有 ${panels.length} 个保存块里放了返回`);
 });
 
 // ---------------------------------------------------------------- 组件能建树

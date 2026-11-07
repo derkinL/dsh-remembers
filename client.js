@@ -136,6 +136,11 @@ window.__ModuleLoader__.load({
           "color:var(--dsw-alias-label-secondary,#6b7280);transition:background .12s ease,color .12s ease}",
           ".dshm-back:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.04));",
           "color:var(--dsw-alias-label-primary,#111827)}",
+          ".dshm-fab{position:fixed;right:24px;top:50%;transform:translateY(-50%);z-index:9999;",
+          "padding:8px 14px;border-radius:10px;border:1px solid rgba(0,0,0,.08);background:#fff;",
+          "box-shadow:0 8px 24px rgba(0,0,0,.12);cursor:pointer;font-family:inherit;font-size:12.5px;",
+          "color:var(--dsw-alias-label-secondary,#6b7280);transition:box-shadow .2s ease,color .2s ease}",
+          ".dshm-fab:hover{color:var(--dsw-alias-label-primary,#111827);box-shadow:0 10px 28px rgba(0,0,0,.16)}",
         ].join("");
         document.head.appendChild(_hub);
       }
@@ -172,6 +177,14 @@ window.__ModuleLoader__.load({
           color: primary ? "var(--dsw-color-accent-text, #fff)" : "var(--dsw-color-text-primary, #111827)",
           fontFamily: "inherit",
         }),
+        // 悬浮「保存」块最上面那颗返回：页面滚下去以后不用再拉回顶部。
+        back: {
+          padding: "6px 10px", fontSize: 12, lineHeight: 1.4, borderRadius: 8, cursor: "pointer",
+          border: "1px solid var(--dsw-color-border, rgba(0,0,0,.14))",
+          background: "transparent",
+          color: "var(--dsw-color-text-secondary, #6b7280)",
+          fontFamily: "inherit", textAlign: "center",
+        },
         disclosure: {
           display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
           fontSize: 13, color: "var(--dsw-color-text-secondary, #6b7280)",
@@ -203,7 +216,7 @@ window.__ModuleLoader__.load({
         );
       }
 
-      function SettingsSection() {
+      function SettingsSection(props) {
         const [loading, setLoading] = React.useState(true);
         const [error, setError] = React.useState("");
         const [current, setCurrent] = React.useState(null);
@@ -459,6 +472,9 @@ window.__ModuleLoader__.load({
               minWidth: 140,
             },
           },
+            props && props.onBack
+              ? h("button", { type: "button", style: S.back, onClick: props.onBack }, "← 她的记忆")
+              : null,
             notice ? h("div", { style: { fontSize: 12, color: notice.kind === "error" ? "#c0392b" : "#2fa36b", textAlign: "center" } }, notice.text) : null,
             h("button", { type: "button", style: S.btn(true), onClick: save, disabled: saving },
               saving ? "保存中…" : "保存"),
@@ -1239,7 +1255,7 @@ window.__ModuleLoader__.load({
       // ---------------------------------------------------------------------
       // 主动消息：唤醒规则（她醒来之后干嘛由她自己决定）
       // ---------------------------------------------------------------------
-      function ProactiveSection() {
+      function ProactiveSection(props) {
         const [cfg, setCfg] = React.useState(null);
         const [qqBusy, setQqBusy] = React.useState(false);
         const [qqMsg, setQqMsg] = React.useState(null);
@@ -1600,6 +1616,9 @@ window.__ModuleLoader__.load({
               minWidth: 140,
             },
           },
+            props && props.onBack
+              ? h("button", { type: "button", style: S.back, onClick: props.onBack }, "← 她的记忆")
+              : null,
             msg ? h("div", { style: { fontSize: 12, color: msg.includes("失败") ? "#c0392b" : "#2fa36b", textAlign: "center" } }, msg) : null,
             h("button", { style: S.btn(true), onClick: () => void save() }, "保存"),
           ),
@@ -1703,7 +1722,7 @@ window.__ModuleLoader__.load({
       // ---------------------------------------------------------------------
       // B 站：账号状态 + 开关（她自己的号，嘴走 QQ 那套）
       // ---------------------------------------------------------------------
-      function BiliSection() {
+      function BiliSection(props) {
         const [st, setSt] = React.useState(null);
         const [busy, setBusy] = React.useState(false);
         const [test, setTest] = React.useState(null);
@@ -2180,6 +2199,9 @@ window.__ModuleLoader__.load({
                     minWidth: 140,
                   },
                 },
+                props && props.onBack
+                  ? h("button", { type: "button", style: S.back, onClick: props.onBack }, "← 她的记忆")
+                  : null,
                 savedAt ? h("div", { style: { fontSize: 12, color: "#2fa36b", textAlign: "center" } }, "已保存 " + savedAt) : null,
                 h("button", { style: S.btn(true), onClick: () => void saveAll(), disabled: busy }, busy ? "保存中…" : "保存"),
               ),
@@ -2811,7 +2833,7 @@ window.__ModuleLoader__.load({
         );
       }
 
-      function QqSection() {
+      function QqSection(props) {
                 const [profiles, setProfiles] = React.useState([]);
         // 默认展开：这块藏起来的话根本没人找得到编辑入口
         const [profilesOpen, setProfilesOpen] = React.useState(true);
@@ -3539,6 +3561,9 @@ const [data, setData] = React.useState(null);
               zIndex: 9999, minWidth: 160,
             },
           },
+            props && props.onBack
+              ? h("button", { type: "button", style: S.back, onClick: props.onBack }, "← 她的记忆")
+              : null,
             notice ? h("div", {
               style: {
                 fontSize: 11, lineHeight: 1.4, textAlign: "center", maxWidth: 180,
@@ -3560,7 +3585,7 @@ const [data, setData] = React.useState(null);
         );
       }
 
-      function PersonaSection() {
+      function PersonaSection(props) {
         const [userProfile, setUserProfile] = React.useState("");
         const [profileMsg, setProfileMsg] = React.useState(null);
         const [relations, setRelations] = React.useState([]);
@@ -4457,6 +4482,9 @@ const [data, setData] = React.useState(null);
               minWidth: 140,
             },
           },
+            props && props.onBack
+              ? h("button", { type: "button", style: S.back, onClick: props.onBack }, "← 她的记忆")
+              : null,
             notice ? h("div", { style: { fontSize: 12, color: notice.kind === "error" ? "#c0392b" : "#2fa36b", textAlign: "center" } }, notice.text) : null,
             h("button", { type: "button", style: S.btn(true), onClick: save, disabled: saving },
               saving ? "保存中…" : "保存"),
@@ -4468,20 +4496,24 @@ const [data, setData] = React.useState(null);
 
       // 入口页的七张卡片。顺序就是页签顺序：记忆（她记得什么）放第一个，
       // 服务配置类的放最后 —— 平时是看她的，不是调她的。
+      //
+      // panel：这块页面自带「保存」悬浮块（固定在右侧中间）。有的话返回按钮
+      // 就塞进那个块里（滚到哪儿都能点）；没有的话由入口页自己挂一个同位置的
+      // 悬浮返回，不然记忆那种长列表照样得把滚动条拉回顶部。
       const HUB_ITEMS = [
-        { id: "memories", glyph: "🪶", title: "记忆",
+        { id: "memories", glyph: "🪶", title: "记忆", panel: false,
           desc: "她记得的每一样：原话、事实、你的画像、发生过的事、里程碑。", Comp: MemoriesSection },
-        { id: "persona", glyph: "🎭", title: "人格设定",
+        { id: "persona", glyph: "🎭", title: "人格设定", panel: true,
           desc: "她是谁、怎么说话、什么不做 —— 人设、自称、铁律、自我认知。", Comp: PersonaSection },
-        { id: "memes", glyph: "🖼", title: "表情包",
+        { id: "memes", glyph: "🖼", title: "表情包", panel: false,
           desc: "图库和配图频率，还有她自己往里收的图。", Comp: MemeSection },
-        { id: "proactive", glyph: "💬", title: "主动消息",
+        { id: "proactive", glyph: "💬", title: "主动消息", panel: true,
           desc: "什么时候她自己开口找你、找多勤、开口说些什么。", Comp: ProactiveSection },
-        { id: "bili", glyph: "📺", title: "B 站",
+        { id: "bili", glyph: "📺", title: "B 站", panel: true,
           desc: "她刷什么、看多久、登录态，以及她想看的。", Comp: BiliSection },
-        { id: "qq", glyph: "🐧", title: "QQ 通道",
+        { id: "qq", glyph: "🐧", title: "QQ 通道", panel: true,
           desc: "桥、会话、谁能跟她说话、各自有什么权限。", Comp: QqSection },
-        { id: "service", glyph: "⚙", title: "记忆服务",
+        { id: "service", glyph: "⚙", title: "记忆服务", panel: true,
           desc: "API 地址、模型与密钥、自动提炼的开关。", Comp: SettingsSection },
       ];
 
@@ -4490,19 +4522,28 @@ const [data, setData] = React.useState(null);
         const item = page ? HUB_ITEMS.find((x) => x.id === page) : null;
 
         if (item) {
-          return h("div", { style: { ...S.wrap, maxWidth: 760 } },
-            h("button", {
-              type: "button",
-              className: "dshm-back",
-              onClick: () => setPage(null),
-            }, "← 她的记忆"),
-            h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
-              h("span", { className: "dshm-tile" }, item.glyph),
-              h("span", {
-                style: { fontSize: 16, fontWeight: 600, color: "var(--dsw-alias-label-primary, #111827)" },
-              }, item.title),
+          const back = () => setPage(null);
+          return h(React.Fragment, null,
+            h("div", { style: { ...S.wrap, maxWidth: 760 } },
+              h("button", {
+                type: "button",
+                className: "dshm-back",
+                onClick: back,
+              }, "← 她的记忆"),
+              h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
+                h("span", { className: "dshm-tile" }, item.glyph),
+                h("span", {
+                  style: { fontSize: 16, fontWeight: 600, color: "var(--dsw-alias-label-primary, #111827)" },
+                }, item.title),
+              ),
+              h(item.Comp, { onBack: back }),
             ),
-            h(item.Comp, null),
+            // 没有「保存」悬浮块的页面（记忆、表情包）：入口页补一个同位置的。
+            item.panel ? null : h("button", {
+              type: "button",
+              className: "dshm-fab",
+              onClick: back,
+            }, "← 她的记忆"),
           );
         }
 
