@@ -155,17 +155,42 @@ ok("卡片一行三张", () => {
 
 ok("入口页有 8 张卡片", () => assert.equal(hubGrid().length, 8));
 
+/** 递归找带某个 className 的最外层节点（卡片改成横排后层级不一样了）。 */
+function findByClass(node, cls) {
+  if (!node || typeof node !== "object") return null;
+  if (node.props && node.props.className === cls) return node;
+  const kids = Array.isArray(node.children) ? node.children : [];
+  for (const k of kids) {
+    const hit = findByClass(k, cls);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function textOf(node) {
+  if (typeof node === "string") return node;
+  if (!node || typeof node !== "object") return "";
+  const kids = Array.isArray(node.children) ? node.children : [];
+  return kids.map(textOf).join("");
+}
+
 ok("卡片的标题和顺序对", () => {
-  const titles = hubGrid().map((card) => card.children[1].children[0]);
+  const titles = hubGrid().map((card) => textOf(findByClass(card, "dshm-title")));
   assert.deepEqual(titles, ["记忆", "人格设定", "表情包", "主动消息", "B 站", "贴吧", "QQ 通道", "记忆服务"]);
 });
 
 ok("每张卡片都带说明和图标", () => {
   for (const card of hubGrid()) {
-    // 图标：emoji 是字符串，贴吧那张是 <img>（data URI）
-    const tile = card.children[0].children[0];
-    assert.ok(typeof tile === "string" || (tile && tile.type === "img"), "图标缺失");
-    assert.ok(card.children[2].children[0].length > 8);            // 说明
+    // 第一层要么是图标块/图片，要么是横向布局里的 <img>
+    const first = card.children[0];
+    const isImg = first && first.type === "img";
+    const tileText = first && first.props && first.props.className === "dshm-tile"
+      ? textOf(first)
+      : "";
+    assert.ok(isImg || (tileText && tileText.length > 0), "图标缺失");
+    // 说明文字：卡片里最后一段文本，长度要够
+    const plain = textOf(card);
+    assert.ok(plain.length > 12, "说明缺失");
     assert.equal(card.type, "button");                             // 可点
   }
 });

@@ -4486,29 +4486,48 @@ const [data, setData] = React.useState(null);
             h("div", { style: S.desc }, "她记得什么、怎么说话、什么时候自己开口。点开哪块，就改哪块。"),
           ),
           h("div", { className: "dshm-grid" },
-            HUB_ITEMS.map((it) => h("button", {
-              key: it.id,
-              type: "button",
-              className: "dshm-card",
-              onClick: () => setPage(it.id),
-            },
-              h("span", { className: "dshm-tile", style: { padding: 0, overflow: "hidden" } },
-                it.icon
-                  ? h("img", { src: it.icon, alt: "", style: { width: 32, height: 32, objectFit: "cover", display: "block" } })
-                  : it.glyph,
-              ),
-              h("span", {
+            HUB_ITEMS.map((it) => {
+              const titleEl = h("span", {
                 className: "dshm-title",
                 style: {
                   fontSize: 14, fontWeight: 600,
                   color: "var(--dsw-alias-label-primary, #111827)",
                   transition: "color .2s ease",
                 },
-              }, it.title),
-              h("span", {
+              }, it.title);
+              const descEl = h("span", {
                 style: { fontSize: 12, lineHeight: 1.6, color: "var(--dsw-alias-label-secondary, #6b7280)" },
-              }, it.desc),
-            )),
+              }, it.desc);
+
+              // 有真图标的（贴吧）：左边大图，右边标题+介绍
+              if (it.icon) {
+                return h("button", {
+                  key: it.id,
+                  type: "button",
+                  className: "dshm-card",
+                  onClick: () => setPage(it.id),
+                  style: { flexDirection: "row", alignItems: "center", gap: 14 },
+                },
+                  h("img", {
+                    src: it.icon, alt: "",
+                    style: { width: 56, height: 56, borderRadius: 14, flex: "0 0 auto", display: "block" },
+                  }),
+                  h("span", { style: { display: "flex", flexDirection: "column", gap: 6, minWidth: 0 } },
+                    titleEl, descEl,
+                  ),
+                );
+              }
+
+              return h("button", {
+                key: it.id,
+                type: "button",
+                className: "dshm-card",
+                onClick: () => setPage(it.id),
+              },
+                h("span", { className: "dshm-tile" }, it.glyph),
+                titleEl, descEl,
+              );
+            }),
           ),
           ),
         );
