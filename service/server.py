@@ -446,6 +446,7 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._get_qq_config())
         elif path == "/state":
             st = store.get_state()
+            recent_text = (query.get("recent") or [""])[0].strip()[:300]
             try:
                 # 多取几条：渲染时要滤掉「没标签又中性」的记录，
                 # 只取 3 条的话过滤完可能一条不剩。
@@ -510,8 +511,10 @@ class Handler(BaseHTTPRequestHandler):
                 st["affinity"] = 0
             # 2026-11-06：学来的说法。梗是公用的——不限 scope，全库挑 3 条。
             # scope 参数还收（兼容旧调用），但不参与筛选，只标来源。
+            # 2026-11-08：把这一轮用户说的话带进来，让「跟话题沾边的优先」真正生效
+            #（之前固定传空串，等于永远随机抽 3 条，跟当前聊的没关系）。
             try:
-                st["expressions"] = store.expr_pick("", "", 3)
+                st["expressions"] = store.expr_pick("", recent_text, 3)
             except Exception:
                 st["expressions"] = []
             st["view_hour"] = hour

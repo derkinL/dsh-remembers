@@ -46,9 +46,14 @@ export function apply(ctx, input = {}) {
   const log = (stage, data) => logger?.debug?.(`[dsh-remembers] ${stage} ${JSON.stringify(data)}`);
 
 /** 拉运行时状态（心情/亲密度/勿扰），服务不可用时返回 null，绝不阻塞对话。 */
-async function fetchState(scope) {
+async function fetchState(scope, recent) {
   try {
-    const q = scope && scope !== "global" ? "?scope=" + encodeURIComponent(scope) : "";
+    const qs = new URLSearchParams();
+    if (scope && scope !== "global") qs.set("scope", scope);
+    // 2026-11-08：把这一轮用户在说什么带过去，服务端才能挑「跟话题沾边」的学来的说法。
+    // 之前不带，等于每轮随机抽三条，跟当前聊的没关系。
+    if (recent) qs.set("recent", String(recent).slice(0, 300));
+    const q = qs.toString() ? "?" + qs.toString() : "";
     const res = await fetch(config.endpoint + "/state" + q, { signal: AbortSignal.timeout(3000) });
     if (!res.ok) return null;
     return await res.json();
@@ -251,11 +256,15 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
   // 所以措辞是「合适就用，不合适就按自己的说」。
   if (Array.isArray(state.expressions) && state.expressions.length) {
     const lines = state.expressions
-      .map((e) => `· 当${e.situation}时，可以${e.style}`)
+      .map((e) => {
+        const head = `· 当${e.situation}时，可以${e.style}`;
+        return e.example ? `${head}（例子：${String(e.example).slice(0, 60)}）` : head;
+      })
       .filter(Boolean);
     if (lines.length) {
       // 2026-11-07：服务端每小时才刷新一次，内容不变就别再追加一条
-      const exText = "【学来的说法】这几个是你从聊天里听来的说话方式。碰到贴的场合就顺手用一下，不贴就别硬套——不是任务。\n"
+      const exText = "【学来的说法】这几个是你从聊天里听来的说话方式（挑的是跟眼下话题沾边的）。"
+        + "碰到贴的场合就顺手用一下，带例子就照着那个味道说，不贴就别硬套——不是任务。\n"
         + lines.join("\n");
       const exHash = hash(exText);
       if (hashes.expressions !== exHash) {
@@ -729,7 +738,8 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
     if (skipped(agent?.session)) return decision;
     try {
       const scopeOf2 = scopeFromSession(agent.session?.id ?? "");
-      const st = await fetchState(scopeOf2.scope);
+      const { query: recentTalk } = buildQuery(decision.messages);
+      const st = await fetchState(scopeOf2.scope, recentTalk);
       const st2 = stateFor(agent.session);
       const r = renderState(st, st2.stateHashes || {}, persona.selfModel || "", persona.proactive,
         Boolean(persona.data?.identity && (() => { try { return JSON.parse(persona.data.identity).think_cn; } catch { return false; } })()));

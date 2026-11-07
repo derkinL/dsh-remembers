@@ -1413,18 +1413,20 @@ class MemoryStore:
             return "".join(ch for ch in str(x or "").lower()
                            if not ch.isspace() and ch not in _PUNCT)
 
-        def _related(situation: str, text: str) -> bool:
+        def _overlap(situation: str, text: str) -> int:
+            """这一段场合描述，跟本轮的话重合了几个二字片段。
+
+            原来是「重合 ≥2 就算相关」的二元判断：差一个字就完全不加权
+            （「对方说了一堆听不懂的话」 vs 「听不懂你在说什么」只重合一个「不懂」，
+            于是永远不优先）。改成返回重合数，让相关性是渐进的。
+            """
             if not text:
-                return False
+                return 0
             s = _norm(situation)
             if len(s) < 4:
-                return False
+                return 0
             grams = {s[i:i + 2] for i in range(len(s) - 1)}
-            hit = 0
-            for g in grams:
-                if g in text and (hit := hit + 1) >= 2:
-                    return True
-            return False
+            return sum(1 for g in grams if g in text)
 
         try:
             # 全库都参与 —— 梗不分场合来源，学到就能用
@@ -1436,14 +1438,29 @@ class MemoryStore:
         if not rows:
             return []
         text = _norm(recent_text)
-        counts = [max(1, int(r.get("count") or 1)) for r in rows]
+        # 相关性优先排序：先按「跟本轮的话重合几个片段」，再按见过几次。
+        # 单靠权重压制不住高 count 的老条目（55 条里挑 3 条，1 次重合只值 ×2.5），
+        # 所以先把相关的排到前面，只在前 12 条里随机 —— 有相关的就一定轮得到。
+        scored = []
+        for r in rows:
+            hits = max(
+                _overlap(r.get("situation", ""), text),
+                _overlap(r.get("style", ""), text),
+                _overlap(r.get("example", ""), text),
+            )
+            scored.append((hits, max(1, int(r.get("count") or 1)), r))
+        scored.sort(key=lambda x: (-x[0], -x[1]))
+        short = scored[:max(12, int(n) * 4)]
+
+        counts = [c for _, c, _ in short]
         lo, hi = min(counts), max(counts)
         weights = []
-        for r, c in zip(rows, counts):
+        for hits, c, _ in short:
             w = 1.0 if hi == lo else 1.0 + 4.0 * (c - lo) / (hi - lo)
-            if _related(r.get("situation", ""), text):
-                w *= 3.0
+            if hits:
+                w *= min(10.0, 1.0 + 3.0 * hits)
             weights.append(w)
+        rows = [r for _, _, r in short]
         picked = []
         pool = list(range(len(rows)))
         while len(picked) < max(1, int(n)) and pool:

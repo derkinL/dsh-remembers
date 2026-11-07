@@ -2602,7 +2602,7 @@ window.__ModuleLoader__.load({
                         "「当 X 时，可以 Y」。梗是公用的——不管从哪个群、哪个私聊、还是 B 站评论区学来的，在哪儿都能用。"
                         + "每轮最多挑 3 条给她看，跟当前话题沾边的优先。"),
                       h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
-                        exprs.map((e) => h("div", {
+                        pageSlice(exprs).map((e) => h("div", {
                           key: "ex" + e.id,
                           style: {
                             ...S.card, padding: "8px 12px", borderLeft: "3px solid #4084ff",
@@ -2681,6 +2681,7 @@ window.__ModuleLoader__.load({
                 (!exprs.length)
                   ? h("div", { style: S.muted }, "还没学到什么。她会在聊天里慢慢琢磨「什么场合该怎么接」。")
                   : null,
+              renderPager(exprs.length),
               )
             })()
           ) : mode === "emotion" ? (
