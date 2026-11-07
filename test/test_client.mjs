@@ -91,16 +91,10 @@ const ctx = {
 exportsObj.apply(ctx);
 
 console.log("\n[设置段]");
-// 当前是 7 段（API设置 / 人格 / 表情包 / 主动消息 / QQ通道 / B站 / 记忆）
-// 原来这里断言 1，后来加了 6 个页签没同步 —— 就是那个红灯。现在跟实际一致。
+// 2026-11-07 起只注册 1 个入口「她的记忆」：原来 7 个页签收进卡片，
+// 点卡片进二级页。侧边栏只剩这一条。
 const EXPECT = [
-  { id: "dsh-remembers", label: "记忆服务 API 设置", order: 32 },
-  { id: "dsh-remembers-persona", label: "人格设定", order: 33 },
-  { id: "dsh-remembers-memes", label: "表情包", order: 35 },
-  { id: "dsh-remembers-proactive", label: "主动消息", order: 36 },
-  { id: "dsh-remembers-qq", label: "QQ 通道", order: 365 },
-  { id: "dsh-remembers-bili", label: "B 站", order: 37 },
-  { id: "dsh-remembers-memories", label: "记忆", order: 38 },
+  { id: "dsh-remembers", label: "她的记忆", order: 32 },
 ];
 
 ok(`注册了 ${EXPECT.length} 个设置段`, () => assert.equal(registered.length, EXPECT.length));
@@ -120,6 +114,32 @@ for (const want of EXPECT) {
 
 ok("每个段都挂了组件函数", () =>
   assert.ok(registered.every((r) => typeof r.comp === "function")));
+
+// ---------------------------------------------------------------- 入口页
+console.log("\n[入口页]");
+
+/** 入口页根节点里的卡片网格。 */
+function hubGrid() {
+  const tree = registered[0].comp({});
+  const grid = tree.children.find((c) => c && c.props && c.props.className === "dshm-grid");
+  assert.ok(grid, "找不到 dshm-grid");
+  return grid.children[0];
+}
+
+ok("入口页有 7 张卡片", () => assert.equal(hubGrid().length, 7));
+
+ok("卡片的标题和顺序对", () => {
+  const titles = hubGrid().map((card) => card.children[1].children[0]);
+  assert.deepEqual(titles, ["记忆", "人格设定", "表情包", "主动消息", "B 站", "QQ 通道", "记忆服务"]);
+});
+
+ok("每张卡片都带说明和图标", () => {
+  for (const card of hubGrid()) {
+    assert.equal(typeof card.children[0].children[0], "string");   // 图标
+    assert.ok(card.children[2].children[0].length > 8);            // 说明
+    assert.equal(card.type, "button");                             // 可点
+  }
+});
 
 // ---------------------------------------------------------------- 组件能建树
 console.log("\n[组件可渲染性]");

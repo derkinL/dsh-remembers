@@ -112,6 +112,34 @@ window.__ModuleLoader__.load({
         document.head.appendChild(_st);
       }
 
+      // 「她的记忆」导航（2026-11-07）：原来 7 个设置页签收进一个入口，用卡片点进去。
+      // 卡片照教师工作台那套：白底 + l4 边框 + 0 2px 8px 投影，hover 上浮 4px、标题转亮蓝。
+      // 内联样式做不到 :hover，所以单独挂一份 class。
+      if (typeof document !== "undefined" && !document.getElementById("dsh-mem-hub-style")) {
+        const _hub = document.createElement("style");
+        _hub.id = "dsh-mem-hub-style";
+        _hub.textContent = [
+          ".dshm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(216px,1fr));gap:12px;margin-top:18px}",
+          ".dshm-card{display:flex;flex-direction:column;align-items:flex-start;gap:10px;width:100%;",
+          "padding:14px 16px;text-align:left;font-family:inherit;cursor:pointer;",
+          "border:1px solid var(--dsw-alias-border-l4,rgba(0,0,0,.16));border-radius:12px;",
+          "background:var(--dsw-alias-bg-base,#fff);box-shadow:0 2px 8px rgba(0,0,0,.05);",
+          "transition:transform .2s ease,box-shadow .2s ease}",
+          ".dshm-card:hover{transform:translateY(-4px);box-shadow:0 10px 24px rgba(0,0,0,.09)}",
+          ".dshm-card:active{transform:translateY(0);box-shadow:0 2px 8px rgba(0,0,0,.05)}",
+          ".dshm-card:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4084ff);outline-offset:2px}",
+          ".dshm-card:hover .dshm-title{color:var(--dsw-alias-state-business-primary,#4084ff)}",
+          ".dshm-tile{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;",
+          "border-radius:9px;background:rgba(64,132,255,.08);font-size:16px;line-height:1}",
+          ".dshm-back{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;padding:4px 8px;margin-left:-8px;",
+          "border:none;border-radius:8px;background:transparent;cursor:pointer;font-family:inherit;font-size:12px;",
+          "color:var(--dsw-alias-label-secondary,#6b7280);transition:background .12s ease,color .12s ease}",
+          ".dshm-back:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.04));",
+          "color:var(--dsw-alias-label-primary,#111827)}",
+        ].join("");
+        document.head.appendChild(_hub);
+      }
+
       const S = {
         wrap: { display: "flex", flexDirection: "column", gap: 16, maxWidth: 720 },
         desc: { fontSize: 13, lineHeight: 1.6, color: "var(--dsw-color-text-secondary, #6b7280)" },
@@ -4436,6 +4464,82 @@ const [data, setData] = React.useState(null);
         );
       }
 
+      // -- 「她的记忆」入口 --------------------------------------------------
+
+      // 入口页的七张卡片。顺序就是页签顺序：记忆（她记得什么）放第一个，
+      // 服务配置类的放最后 —— 平时是看她的，不是调她的。
+      const HUB_ITEMS = [
+        { id: "memories", glyph: "🪶", title: "记忆",
+          desc: "她记得的每一样：原话、事实、你的画像、发生过的事、里程碑。", Comp: MemoriesSection },
+        { id: "persona", glyph: "🎭", title: "人格设定",
+          desc: "她是谁、怎么说话、什么不做 —— 人设、自称、铁律、自我认知。", Comp: PersonaSection },
+        { id: "memes", glyph: "🖼", title: "表情包",
+          desc: "图库和配图频率，还有她自己往里收的图。", Comp: MemeSection },
+        { id: "proactive", glyph: "💬", title: "主动消息",
+          desc: "什么时候她自己开口找你、找多勤、开口说些什么。", Comp: ProactiveSection },
+        { id: "bili", glyph: "📺", title: "B 站",
+          desc: "她刷什么、看多久、登录态，以及她想看的。", Comp: BiliSection },
+        { id: "qq", glyph: "🐧", title: "QQ 通道",
+          desc: "桥、会话、谁能跟她说话、各自有什么权限。", Comp: QqSection },
+        { id: "service", glyph: "⚙", title: "记忆服务",
+          desc: "API 地址、模型与密钥、自动提炼的开关。", Comp: SettingsSection },
+      ];
+
+      function HerMemoryHub() {
+        const [page, setPage] = React.useState(null);
+        const item = page ? HUB_ITEMS.find((x) => x.id === page) : null;
+
+        if (item) {
+          return h("div", { style: { ...S.wrap, maxWidth: 760 } },
+            h("button", {
+              type: "button",
+              className: "dshm-back",
+              onClick: () => setPage(null),
+            }, "← 她的记忆"),
+            h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
+              h("span", { className: "dshm-tile" }, item.glyph),
+              h("span", {
+                style: { fontSize: 16, fontWeight: 600, color: "var(--dsw-alias-label-primary, #111827)" },
+              }, item.title),
+            ),
+            h(item.Comp, null),
+          );
+        }
+
+        return h("div", { style: { ...S.wrap, maxWidth: 760 } },
+          h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+            h("div", {
+              style: {
+                fontSize: 18, fontWeight: 600, letterSpacing: ".01em",
+                color: "var(--dsw-alias-label-primary, #111827)",
+              },
+            }, "她的记忆"),
+            h("div", { style: S.desc }, "她记得什么、怎么说话、什么时候自己开口。点开哪块，就改哪块。"),
+          ),
+          h("div", { className: "dshm-grid" },
+            HUB_ITEMS.map((it) => h("button", {
+              key: it.id,
+              type: "button",
+              className: "dshm-card",
+              onClick: () => setPage(it.id),
+            },
+              h("span", { className: "dshm-tile" }, it.glyph),
+              h("span", {
+                className: "dshm-title",
+                style: {
+                  fontSize: 14, fontWeight: 600,
+                  color: "var(--dsw-alias-label-primary, #111827)",
+                  transition: "color .2s ease",
+                },
+              }, it.title),
+              h("span", {
+                style: { fontSize: 12, lineHeight: 1.6, color: "var(--dsw-alias-label-secondary, #6b7280)" },
+              }, it.desc),
+            )),
+          ),
+        );
+      }
+
       // -- 注册 -------------------------------------------------------------
 
       function apply(ctx) {
@@ -4445,68 +4549,15 @@ const [data, setData] = React.useState(null);
             console.warn("dsh-remembers: slots 服务不可用，设置页未注册");
             return;
           }
+          // 只注册一个页签：7 个功能都收进「她的记忆」的卡片入口。
           slots.inject("settings.section", () => slots.register(
             {
               name: "settings.section",
               id: "dsh-remembers",
               order: 32,
-              label: () => "记忆服务 API 设置",
+              label: () => "她的记忆",
             },
-            SettingsSection,
-          ));
-          slots.inject("settings.section", () => slots.register(
-            {
-              name: "settings.section",
-              id: "dsh-remembers-persona",
-              order: 33,
-              label: () => "人格设定",
-            },
-            PersonaSection,
-          ));
-          slots.inject("settings.section", () => slots.register(
-            {
-              name: "settings.section",
-              id: "dsh-remembers-memes",
-              order: 35,
-              label: () => "表情包",
-            },
-            MemeSection,
-          ));
-          slots.inject("settings.section", () => slots.register(
-            {
-              name: "settings.section",
-              id: "dsh-remembers-proactive",
-              order: 36,
-              label: () => "主动消息",
-            },
-            ProactiveSection,
-          ));
-          slots.inject("settings.section", () => slots.register(
-            {
-              name: "settings.section",
-              id: "dsh-remembers-qq",
-              order: 365,
-              label: () => "QQ 通道",
-            },
-            QqSection,
-          ));
-          slots.inject("settings.section", () => slots.register(
-            {
-              name: "settings.section",
-              id: "dsh-remembers-bili",
-              order: 37,
-              label: () => "B 站",
-            },
-            BiliSection,
-          ));
-          slots.inject("settings.section", () => slots.register(
-            {
-              name: "settings.section",
-              id: "dsh-remembers-memories",
-              order: 38,
-              label: () => "记忆",
-            },
-            MemoriesSection,
+            HerMemoryHub,
           ));
 
         } catch (err) {
