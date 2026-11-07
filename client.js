@@ -1219,7 +1219,7 @@ window.__ModuleLoader__.load({
           h("div", { style: S.card },
             h("div", { style: S.label }, "她的主动性"),
             h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
-              "勾上之后会写进她的系统提示词。关掉 = 她不会主动约时间、也不会主动分享，只被动等你。"),
+              "勾上之后会写进她的系统提示词。关掉 = 她不会主动约时间，只被动等你。（「刷完 B 站可以主动分享」已经挪到 B 站页）"),
 
             h("div", {
               style: {
@@ -1244,28 +1244,6 @@ window.__ModuleLoader__.load({
               ),
             ),
 
-            h("div", {
-              style: {
-                display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer",
-                padding: "8px 10px", borderRadius: 8,
-                border: "1.5px solid " + (cfg.autoShareEnabled !== false ? "#4084ff" : "rgba(0,0,0,.10)"),
-                background: cfg.autoShareEnabled !== false ? "rgba(64,132,255,.04)" : "#fff",
-              },
-              onClick: () => setCfg({ ...cfg, autoShareEnabled: cfg.autoShareEnabled === false }),
-            },
-              h("input", {
-                type: "checkbox",
-                checked: cfg.autoShareEnabled !== false,
-                onClick: (ev) => ev.stopPropagation(),
-                onChange: (ev) => setCfg({ ...cfg, autoShareEnabled: ev.target.checked }),
-                style: { marginTop: 3 },
-              }),
-              h("div", { style: { flex: 1 } },
-                h("div", { style: { fontSize: 13, fontWeight: 500 } }, "刷完 B 站可以主动分享"),
-                h("div", { style: { ...S.muted, fontSize: 12, marginTop: 2 } },
-                  "刷到有意思的，她会把链接和两句感想发给你"),
-              ),
-            ),
           ),
 
           h("div", { style: S.card },
@@ -1551,6 +1529,7 @@ window.__ModuleLoader__.load({
         const [biliForm, setBiliForm] = React.useState({});
         const [savedAt, setSavedAt] = React.useState(null);
         const [biliProactive, setBiliProactive] = React.useState(null);
+        const [autoShare, setAutoShare] = React.useState(true);
         const [ownerName, setOwnerName] = React.useState("");
         const [ownerMsg, setOwnerMsg] = React.useState(null);
         const [qr, setQr] = React.useState(null);
@@ -1584,6 +1563,10 @@ window.__ModuleLoader__.load({
               });
             } catch { setBiliCfg(null); }
             try { setBiliTools(await call("/bili/tools")); } catch { setBiliTools(null); }
+            try {
+              const cg = await call("/config");
+              setAutoShare(cg && cg.autoShareEnabled !== false);
+            } catch { /* 读不到就保持默认开 */ }
             try {
               const p = await call("/proactive");
               setBiliProactive({
@@ -1789,6 +1772,30 @@ window.__ModuleLoader__.load({
             ),
           ),
 
+          h("div", { style: S.card },
+            h("div", { style: S.label }, "刷完 B 站可以主动分享"),
+            h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
+              "刷到有意思的，她会把链接和两句感想发给你。关掉 = 只看不说。"),
+            h("label", {
+              style: {
+                display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
+                padding: "10px 12px", borderRadius: 10,
+                border: "1.5px solid " + (autoShare ? "#4084ff" : "rgba(0,0,0,.10)"),
+                background: autoShare ? "rgba(64,132,255,.04)" : "#fff",
+                transition: "border-color .15s, background .15s",
+              },
+            },
+              h("input", {
+                type: "checkbox", checked: autoShare, style: { marginTop: 3 },
+                onChange: (ev) => setAutoShare(ev.target.checked),
+              }),
+              h("div", { style: { display: "flex", flexDirection: "column", gap: 3 } },
+                h("span", { style: { fontSize: 13, fontWeight: 600 } }, "允许她主动分享"),
+                h("span", { style: { ...S.muted, fontSize: 11 } }, "关掉后她刷完就自己记着，不主动发给你"),
+              ),
+            ),
+          ),
+
           biliProactive ? h("div", { style: S.card },
             h("div", { style: S.label }, "她自己刷 B 站的节奏"),
             h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
@@ -1974,6 +1981,7 @@ window.__ModuleLoader__.load({
                   await call("/bili/owner", { method: "POST", body: JSON.stringify({ mid: ownerMid.trim(), name: ownerName.trim() }) });
                   if (biliProactive) {
                     await call("/proactive", { method: "POST", body: JSON.stringify(biliProactive) });
+                  await call("/config", { method: "POST", body: JSON.stringify({ autoShareEnabled: autoShare }) });
                   }
                   ownerInit.current = ownerMid.trim();
                 }
