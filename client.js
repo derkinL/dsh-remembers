@@ -4446,6 +4446,52 @@ const [data, setData] = React.useState(null);
         const [kw, setKw] = React.useState("");
         const [list, setList] = React.useState(null);
         const [newBar, setNewBar] = React.useState("");
+        const [qr, setQr] = React.useState(null);        // { img, status }
+        const [qrBusy, setQrBusy] = React.useState(false);
+        const qrTimer = React.useRef(null);
+
+        const stopQrPoll = () => {
+          if (qrTimer.current) { clearInterval(qrTimer.current); qrTimer.current = null; }
+        };
+        React.useEffect(() => () => stopQrPoll(), []);
+
+        const startQr = async () => {
+          setQrBusy(true); setMsg(null);
+          try {
+            const r = await call("/tieba/qr/start", { method: "POST" });
+            if (!r || !r.ok || !r.img) { setMsg("出二维码失败：" + JSON.stringify(r)); return; }
+            setQr({ img: r.img, status: "waiting" });
+            stopQrPoll();
+            qrTimer.current = setInterval(async () => {
+              try {
+                const p = await call("/tieba/qr/poll");
+                if (!p || !p.ok) {
+                  setQr((q) => (q ? { ...q, status: "error" } : q));
+                  setMsg("扫码失败：" + ((p && p.error) || "未知"));
+                  stopQrPoll();
+                  return;
+                }
+                if (p.status === "done") {
+                  stopQrPoll();
+                  setQr(null);
+                  setMsg("扫码登录成功 ✓");
+                  await load();
+                } else if (p.status === "expired" || p.status === "none") {
+                  stopQrPoll();
+                  setQr(null);
+                  setMsg(p.error || "二维码过期了，重新点一次");
+                } else {
+                  setQr((q) => (q ? { ...q, status: p.status } : q));
+                }
+              } catch (e) {
+                stopQrPoll();
+                setMsg("轮询失败：" + (e && e.message ? e.message : String(e)));
+              }
+            }, 2000);
+          } catch (e) {
+            setMsg("出二维码失败：" + (e && e.message ? e.message : String(e)));
+          } finally { setQrBusy(false); }
+        };
 
         const load = async () => {
           try {
@@ -4544,6 +4590,17 @@ const [data, setData] = React.useState(null);
                 }),
                 h("button", { style: S.btn(true), disabled: busy, onClick: () => void saveBduss() }, busy ? "…" : "保存并测试"),
               ),
+              h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 8 } },
+                h("button", { style: S.btn(false), disabled: qrBusy, onClick: () => void startQr() }, qrBusy ? "…" : "扫码登录"),
+                h("span", { style: { ...S.muted, fontSize: 11 } }, "用手机贴吧/百度 App 扫一下，不用手抠 cookie"),
+              ),
+              qr
+                ? h("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, marginTop: 10 } },
+                    h("img", { src: qr.img, style: { width: 180, height: 180, borderRadius: 8, background: "#fff" } }),
+                    h("div", { style: { ...S.muted, fontSize: 11 } },
+                      qr.status === "scanned" ? "已扫码，等你在手机上点确认…" : "等扫码…"),
+                  )
+                : null,
               h("div", { style: { ...S.muted, fontSize: 11, lineHeight: 1.6, marginTop: 6 } },
                 "拿法：电脑浏览器登录贴吧 → F12 → Application → Cookies → tieba.baidu.com → 复制 BDUSS 的值。"),
               msg ? h("div", { style: { fontSize: 12, color: msg.includes("失败") || msg.includes("连不上") ? "#c0392b" : "#2fa36b", marginTop: 6 } }, msg) : null,

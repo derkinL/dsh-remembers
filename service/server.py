@@ -369,6 +369,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._get_tieba_read(query))
         elif path == "/tieba/sub":
             self._guard(lambda: self._get_tieba_sub(query))
+        elif path == "/tieba/qr/poll":
+            self._guard(lambda: self._json(200, self._tieba_cli("qr-poll", timeout=30)))
         elif path == "/bili/feed":
             self._json(200, self._bili_feed((query.get("thought") or [""])[0]))
         elif path == "/bili/debrief":
@@ -643,6 +645,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._delete_meme())
         elif path == "/slang":
             self._guard(lambda: self._post_slang())
+        elif path == "/tieba/qr/start":
+            self._guard(lambda: self._json(200, self._tieba_cli("qr-start", timeout=40)))
         elif path == "/tieba/login":
             self._guard(lambda: self._post_tieba_login())
         elif path == "/tieba/reply":

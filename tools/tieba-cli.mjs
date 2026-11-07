@@ -19,6 +19,7 @@ import {
   listBar, readThread, getSubReplies, reply, sign, followAndSign,
   setGap,
 } from './tieba.js'
+import { qrStart, qrPoll } from './tieba-qr.mjs'
 
 const args = process.argv.slice(2)
 const cmd = args[0] || 'help'
@@ -53,6 +54,10 @@ try {
   } else if (cmd === 'reset') {
     clearCooldown()
     out({ ok: true, cleared: true })
+  } else if (cmd === 'qr-start') {
+    out({ ok: true, ...(await qrStart()) })
+  } else if (cmd === 'qr-poll') {
+    out(await qrPoll())
   } else if (cmd === 'status') {
     out({ ok: true, hasCookie: hasCookie() })
   } else if (cmd === 'browse') {
