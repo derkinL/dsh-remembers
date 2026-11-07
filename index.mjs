@@ -1739,6 +1739,10 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
     const _memeRate = _rateOf(proactive.memeRate, 0.2);
     if (_memeRate <= 0) {
       identityLines.push("【表情包】现在设成不发了，别用 find_meme / qq_send_image 发表情。");
+    } else if (_memeRate >= 1) {
+      // 1.0 的语义是「不设上限」，不是「每句必须带图」
+      identityLines.push("【表情包】不设上限：气氛对上了就 find_meme 找一张、用 qq_send_image 发出去。"
+        + "但不必每句都带 —— 没合适的就只说话，硬凑比不发更糟。");
     } else {
       identityLines.push("【表情包】大约每 " + _everyOf(_memeRate) + " 句配一张（"
         + Math.round(_memeRate * 100) + "%）。气氛对上了就 find_meme 找一张、用 qq_send_image 发出去；"

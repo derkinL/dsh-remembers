@@ -14,6 +14,7 @@
 | 2 | `lib/tools.js` | `send_qzone_msg` 的本地图片转 base64 | NapCat 在 Docker 里读不到宿主机文件 | ❌ 没做 |
 | 3 | `lib/bridge.js` | `source.kind` 按 `synthetic` 分叉 | 系统唤醒和真人私聊要能区分 | ❌ 仍写死 |
 | 4 | `lib/outbound.js` | `stripActions` 保留文字颜 | 0.9.17 把整个函数删了 | ❌ 删了 |
+| 5 | `lib/tools.js` | `qq_napcat_api` 描述补上空间说说用法 | 原描述没提 qzone，她不知道能发带图说说 | ❌ 没做 |
 | — | `lib/registry.js` | ~~重启时先 resume 旧会话~~ | 0.9.4 时代需要；**0.9.17 自己会 resume，不需要了** | ✅ 自带 |
 
 ---
