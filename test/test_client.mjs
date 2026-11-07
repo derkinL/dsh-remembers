@@ -162,7 +162,9 @@ ok("卡片的标题和顺序对", () => {
 
 ok("每张卡片都带说明和图标", () => {
   for (const card of hubGrid()) {
-    assert.equal(typeof card.children[0].children[0], "string");   // 图标
+    // 图标：emoji 是字符串，贴吧那张是 <img>（data URI）
+    const tile = card.children[0].children[0];
+    assert.ok(typeof tile === "string" || (tile && tile.type === "img"), "图标缺失");
     assert.ok(card.children[2].children[0].length > 8);            // 说明
     assert.equal(card.type, "button");                             // 可点
   }

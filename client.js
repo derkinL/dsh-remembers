@@ -4419,6 +4419,9 @@ const [data, setData] = React.useState(null);
       // panel：这块页面自带「保存」悬浮块（固定在右侧中间）。有的话返回按钮
       // 就塞进那个块里（滚到哪儿都能点）；没有的话由入口页自己挂一个同位置的
       // 悬浮返回，不然记忆那种长列表照样得把滚动条拉回顶部。
+      // 贴吧的图标（用户在 96px 下给的 PNG 压成调色板，base64 只有 2.4KB）
+      const TIEBA_ICON = "data:image/png;base64,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";
+
       const HUB_ITEMS = [
         { id: "memories", glyph: "🪶", title: "记忆", panel: false,
           desc: "她记得的每一样：原话、事实、你的画像、发生过的事、里程碑。", Comp: MemoriesSection },
@@ -4430,7 +4433,7 @@ const [data, setData] = React.useState(null);
           desc: "什么时候她自己开口找你、找多勤、开口说些什么。", Comp: ProactiveSection },
         { id: "bili", glyph: "📺", title: "B 站", panel: true,
           desc: "她刷什么、看多久、登录态，以及她想看的。", Comp: BiliSection },
-        { id: "tieba", glyph: "🧵", title: "贴吧", panel: false,
+        { id: "tieba", glyph: "🧵", icon: TIEBA_ICON, title: "贴吧", panel: false,
           desc: "逛人类的吧：读帖、楼中楼；回帖要单独打开。", Comp: TiebaSection },
         { id: "qq", glyph: "🐧", title: "QQ 通道", panel: true,
           desc: "桥、会话、谁能跟她说话、各自有什么权限。", Comp: QqSection },
@@ -4452,7 +4455,11 @@ const [data, setData] = React.useState(null);
                 onClick: back,
               }, "← 她的记忆"),
               h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
-                h("span", { className: "dshm-tile" }, item.glyph),
+                h("span", { className: "dshm-tile", style: { padding: 0, overflow: "hidden" } },
+                  item.icon
+                    ? h("img", { src: item.icon, alt: "", style: { width: 32, height: 32, objectFit: "cover", display: "block" } })
+                    : item.glyph,
+                ),
                 h("span", {
                   style: { fontSize: 16, fontWeight: 600, color: "var(--dsw-alias-label-primary, #111827)" },
                 }, item.title),
@@ -4485,7 +4492,11 @@ const [data, setData] = React.useState(null);
               className: "dshm-card",
               onClick: () => setPage(it.id),
             },
-              h("span", { className: "dshm-tile" }, it.glyph),
+              h("span", { className: "dshm-tile", style: { padding: 0, overflow: "hidden" } },
+                it.icon
+                  ? h("img", { src: it.icon, alt: "", style: { width: 32, height: 32, objectFit: "cover", display: "block" } })
+                  : it.glyph,
+              ),
               h("span", {
                 className: "dshm-title",
                 style: {
