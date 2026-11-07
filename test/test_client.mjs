@@ -102,42 +102,51 @@ const ctx = {
 exportsObj.apply(ctx);
 
 console.log("\n[入口注册]");
-// 2026-11-07 起不再挂设置左侧导航：改成「插件」页面里的一个标签页。
-// 7 个功能收进「她的记忆」的卡片，点卡片进二级页。
-const EXPECT = [
-  { id: "dsh-remembers", label: "她的记忆", order: 100 },
-];
+// 2026-11-07 起：左边栏「插件」正下方多一条自己的入口 = 一个 main 面板
+// + 一个 sidebar.panellist 图标（id 与 main 的 key 同值）。
+const PANEL_ID = "dsh-remembers";
+const mainEntry = () => registered.find((r) => r.meta?.name === "main" && r.meta?.key === PANEL_ID);
+const panelEntry = () => registered.find((r) => r.meta?.name === "sidebar.panellist" && r.meta?.id === PANEL_ID);
 
-ok(`注册了 ${EXPECT.length} 个入口`, () => assert.equal(registered.length, EXPECT.length));
-ok('slot 名是 "plugins.tab"', () =>
-  assert.ok(registered.every((r) => r.meta?.name === "plugins.tab")));
-ok("没再注册 settings.section", () =>
-  assert.ok(registered.every((r) => r.meta?.name !== "settings.section")));
+ok("注册了 main 面板", () => assert.ok(mainEntry(), "找不到 main"));
+ok("注册了侧栏图标", () => assert.ok(panelEntry(), "找不到 sidebar.panellist"));
+ok("两者 id 一致", () => {
+  assert.equal(mainEntry().meta.key, panelEntry().meta.id);
+});
+ok("侧栏图标排在「插件」(0) 和「自动化任务」(10) 之间", () => {
+  const order = panelEntry().meta.order;
+  assert.ok(order > 0 && order < 10, "order=" + order);
+});
+ok("侧栏图标有名字", () => {
+  let label = panelEntry().meta.label;
+  if (typeof label === "function") label = label();
+  assert.equal(label, "她的记忆");
+});
+ok("没再挂 settings.section / plugins.tab", () =>
+  assert.ok(registered.every((r) => r.meta?.name !== "settings.section" && r.meta?.name !== "plugins.tab")));
 
-for (const want of EXPECT) {
-  const hit = registered.find((r) => r.meta?.id === want.id);
-  ok(`有 ${want.id}（order=${want.order}）`, () => {
-    assert.ok(hit, `找不到 id=${want.id}`);
-    assert.equal(hit.meta.order, want.order);
-    let label = hit.meta.label;
-    if (typeof label === "function") label = label();
-    assert.equal(label, want.label);
-  });
-}
-
-ok("每个段都挂了组件函数", () =>
+ok("每个入口都挂了组件函数", () =>
   assert.ok(registered.every((r) => typeof r.comp === "function")));
 
 // ---------------------------------------------------------------- 入口页
 console.log("\n[入口页]");
 
-/** 入口页根节点里的卡片网格。 */
+/** 主面板整页渲染出来的元素树。 */
+function pageTree() {
+  return mainEntry().comp({});
+}
+
+/** 入口页里的卡片网格（主面板外面还包了一层页面容器）。 */
 function hubGrid() {
-  const tree = registered[0].comp({});
-  const grid = tree.children.find((c) => c && c.props && c.props.className === "dshm-grid");
+  const grid = walk(pageTree()).find((el) => el.props && el.props.className === "dshm-grid");
   assert.ok(grid, "找不到 dshm-grid");
   return grid.children[0];
 }
+
+ok("主面板外面有滚动容器", () => {
+  const tree = pageTree();
+  assert.ok(tree.props && tree.props.style && tree.props.style.overflowY === "auto");
+});
 
 ok("入口页有 7 张卡片", () => assert.equal(hubGrid().length, 7));
 
@@ -160,7 +169,7 @@ console.log("\n[二级页 / 返回按钮]");
 /** 把入口页直接摆成某个二级页。 */
 function renderDetail(page) {
   forcedState = page;
-  return registered[0].comp({});
+  return mainEntry().comp({});
 }
 
 /** 深度遍历元素树。函数组件会被就地展开一层（mock 没有真 reconciler）。 */
@@ -231,7 +240,7 @@ ok("5 个保存块里各有一颗返回，且在保存按钮之前", () => {
 // ---------------------------------------------------------------- 组件能建树
 console.log("\n[组件可渲染性]");
 for (const r of registered) {
-  const id = r.meta?.id;
+  const id = r.meta?.id ?? r.meta?.key ?? r.meta?.name;
   ok(`${id} 能产出元素树不抛错`, () => {
     const tree = r.comp({});
     assert.ok(tree !== undefined && tree !== null);

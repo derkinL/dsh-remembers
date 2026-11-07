@@ -4571,6 +4571,37 @@ const [data, setData] = React.useState(null);
         );
       }
 
+      // -- 主面板 + 左侧栏图标 ------------------------------------------------
+
+      // 左边栏那个「插件」下面要多一条，就得自己有主面板：侧栏的图标列表
+      // 点谁就把谁挂到 main 里，所以这里注册一个 main（key 与图标 id 同值）。
+      function HerMemoryPage() {
+        return h("div", {
+          style: {
+            height: "100%", boxSizing: "border-box", overflowY: "auto",
+            display: "flex", justifyContent: "center",
+            padding: "28px 28px 56px",
+          },
+        },
+          h(HerMemoryHub, null),
+        );
+      }
+
+      // 侧栏图标：一条心形（她的记忆），线条粗细跟旁边几个图标一致。
+      function HerMemoryIcon(props) {
+        const size = (props && props.size) || 18;
+        return h("svg", {
+          width: size, height: size, viewBox: "0 0 24 24", fill: "none",
+          stroke: "currentColor", strokeWidth: 1.6,
+          strokeLinecap: "round", strokeLinejoin: "round",
+          "aria-hidden": "true",
+        },
+          h("path", {
+            d: "M12 20s-7-4.35-7-9a4 4 0 0 1 7-2.65A4 4 0 0 1 19 11c0 4.65-7 9-7 9z",
+          }),
+        );
+      }
+
       // -- 注册 -------------------------------------------------------------
 
       function apply(ctx) {
@@ -4580,16 +4611,16 @@ const [data, setData] = React.useState(null);
             console.warn("dsh-remembers: slots 服务不可用，入口未注册");
             return;
           }
-          // 不再挂到设置左侧导航，改成「插件」页面里的一个标签页：
-          // 点左边栏「插件」→ 顶部标签栏多一个「她的记忆」。
-          slots.inject("plugins.tab", () => slots.register(
-            {
-              name: "plugins.tab",
-              id: "dsh-remembers",
-              order: 100,
-              label: () => "她的记忆",
-            },
-            HerMemoryHub,
+          // 左边栏「插件」正下方的一条：main 面板（key 与图标 id 同值）+ 侧栏图标。
+          // order 5 —— 插件是 0、自动化任务是 10，正好夹在中间。
+          const PANEL = "dsh-remembers";
+          slots.inject("main", () => slots.register(
+            { name: "main", key: PANEL, inject: () => ({}) },
+            HerMemoryPage,
+          ));
+          slots.inject("sidebar.panellist", () => slots.register(
+            { name: "sidebar.panellist", id: PANEL, order: 5, label: () => "她的记忆" },
+            HerMemoryIcon,
           ));
 
         } catch (err) {
