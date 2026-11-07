@@ -491,173 +491,6 @@ window.__ModuleLoader__.load({
       // -- 人格设定（二合一里的「人」那一半） --------------------------------
 
       // ---------------------------------------------------------------------
-      // 鲸鱼日记本：她现在在干嘛 / 心情 / 记得什么
-      // ---------------------------------------------------------------------
-      function DiarySection() {
-        const [st, setSt] = React.useState(null);
-        const [viewHour, setViewHour] = React.useState(null);
-        const [diaries, setDiaries] = React.useState([]);
-        const [activities, setActivities] = React.useState([]);
-        const [diaryDate, setDiaryDate] = React.useState("");
-        const [persona, setPersona] = React.useState(null);
-        const [memories, setMemories] = React.useState([]);
-        const [noteList, setNoteList] = React.useState([]);
-        const [loading, setLoading] = React.useState(true);
-        const [error, setError] = React.useState(null);
-
-        const load = async () => {
-          setLoading(true);
-          setError(null);
-          try {
-            const s = await call("/state" + (viewHour === null ? "" : "?hour=" + viewHour));
-            const p = await call("/persona");
-            let m = [];
-            try {
-              m = await call("/profile");
-            } catch {
-              m = [];
-            }
-            let ds = [];
-            try {
-              ds = await call("/diary");
-            } catch {
-              ds = [];
-            }
-            setDiaries(Array.isArray(ds) ? ds : []);
-            let acts = [];
-            try {
-              acts = await call("/activity");
-            } catch {
-              acts = [];
-            }
-            setActivities(Array.isArray(acts) ? acts : [])
-            try { setNoteList(await call("/notes") || []); } catch { setNoteList([]); }
-            setSt(s);
-            setPersona(p);
-            setMemories(Array.isArray(m) ? m : []);
-          } catch (err) {
-            setError(err && err.message ? err.message : String(err));
-          } finally {
-            setLoading(false);
-          }
-        };
-
-        React.useEffect(() => {
-          void load();
-        }, [viewHour]);
-
-        if (loading && !st) {
-          return h("div", { style: S.wrap }, h("div", { style: S.muted }, "正在读鲸鱼日记本…"));
-        }
-
-        const MOOD = { happy: "开心", tired: "累", annoyed: "烦", bored: "无聊", normal: "平常" };
-        const mood = st ? (MOOD[st.mood] || "平常") : "?";
-        const intimacy = st ? Math.round(Number(st.intimacy) || 0) : 0;
-        const stage = st && st.stage ? st.stage.name : "?";
-        const stageHint = st && st.stage ? st.stage.hint : "";
-        const activity = st && st.activity ? st.activity : "发呆";
-        const weather = st && st.weather ? st.weather : "不知道";
-        const gameScore = st ? Number(st.game_score) || 0 : 0;
-        const gamePlays = st ? Number(st.game_plays) || 0 : 0;
-
-        return h("div", { style: S.wrap },
-
-          h("div", { style: S.desc },
-            "她现在在干嘛、心情怎么样、还记得什么——实时从记忆服务读。",
-          ),
-
-          h("div", { style: S.row },
-            h("button", { style: S.btn(false), onClick: () => void load() }, "刷新"),
-            h("span", { style: S.muted }, "看看她几点：" ),
-            h("select", {
-              style: { ...S.select, width: 120 },
-              value: viewHour === null ? "" : String(viewHour),
-              onChange: (ev) => {
-                const v = ev.target.value;
-                setViewHour(v === "" ? null : Number(v));
-              },
-            },
-              h("option", { value: "" }, "现在"),
-              Array.from({ length: 24 }).map((_, hr) =>
-                h("option", { key: hr, value: String(hr) }, (hr < 10 ? "0" + hr : hr) + ":00")),
-            ),
-            st ? h("span", { style: S.muted }, "最后互动：" + (st.last_interaction ? new Date(st.last_interaction * 1000).toLocaleString() : "还没聊过")) : null,
-          ),
-
-          error ? h("div", { style: S.notice("error") }, "读取失败：" + error) : null,
-
-          h("div", { style: S.card },
-            h("div", { style: S.label }, "她现在"),
-            h("div", { style: { display: "flex", gap: 18, flexWrap: "wrap", fontSize: 13 } },
-              h("span", null, "心情：" + mood),
-              h("span", null, "亲密度：" + intimacy + "/1000"),
-              h("span", null, "阶段：" + stage),
-            ),
-            h("div", { style: S.muted }, "在干嘛：" + activity),
-            h("div", { style: S.muted }, "外面：" + weather),
-            h("div", { style: S.muted }, "小游戏：《像素鲸鱼吃豆子》" + gameScore + " 分（玩了 " + gamePlays + " 次）"),
-            stageHint ? h("div", { style: S.muted }, "这个阶段的样子：" + stageHint) : null,
-          ),
-
-          h("div", { style: S.card },
-            h("div", { style: S.label }, "她对自己的认知"),
-            h("div", { style: S.desc },
-              persona && persona.self_model ? persona.self_model : "还没有——聊够 30 轮她会开始写。"),
-          ),
-
-          h("div", { style: S.card },
-            h("div", { style: S.label }, "今天的时间线（她真的做了什么）"),
-            activities.length === 0
-              ? h("div", { style: S.muted }, "还没有记录——聊一句或等她主动找你。")
-              : h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
-                  activities.slice(0, 30).map((a, i) => h("div", { key: i, style: S.muted },
-                    new Date(a.ts * 1000).toLocaleTimeString() + " · " + (a.kind === "chat" ? "聊天" : a.kind === "game" ? "玩游戏" : a.kind === "proactive" ? "主动找你" : a.kind === "bili" ? "B 站" : a.kind === "habit" ? "习惯" : a.kind) + " · " + String(a.detail || "").slice(0, 60)))),
-          ),
-
-          h("div", { style: S.card },
-            h("div", { style: S.label }, "共享便签"),
-            noteList.length === 0
-              ? h("div", { style: S.muted }, "还没有便签。")
-              : h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
-                  noteList.slice(0, 10).map((nt) => h("div", { key: nt.id, style: S.muted },
-                    nt.date + " · " + (nt.author || "某人") + "：" + nt.text))),
-          ),
-
-
-          h("div", { style: S.card },
-            h("div", { style: S.row },
-              h("div", { style: S.label }, "日记本（按天，每天一篇）"),
-              diaries.length > 0
-                ? h("select", {
-                    style: { ...S.select, width: 160, marginLeft: "auto" },
-                    value: diaryDate,
-                    onChange: (ev) => setDiaryDate(ev.target.value),
-                  },
-                    h("option", { value: "" }, "全部"),
-                    diaries.map((d) => h("option", { key: d.date, value: d.date }, d.date)))
-                : null,
-            ),
-            diaries.length === 0
-              ? h("div", { style: S.muted }, "还没有日记——每天 23:00 她会写一篇。")
-              : h("div", { style: { display: "flex", flexDirection: "column", gap: 12, marginTop: 8 } },
-                  diaries.filter((d) => !diaryDate || d.date === diaryDate).map((d, i) => h("div", { key: i },
-                    h("div", { style: { fontSize: 12, color: "var(--dsw-color-text-secondary, #6b7280)", marginBottom: 4 } }, d.date),
-                    h("div", { style: S.desc }, d.text)))),
-          ),
-
-          h("div", { style: S.card },
-            h("div", { style: S.label }, "她记得的事（最近 12 条）"),
-            memories.length === 0
-              ? h("div", { style: S.muted }, "还没有记忆——先聊几句。")
-              : h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
-                  memories.slice(0, 12).map((m, i) => h("div", { key: i, style: S.muted },
-                    "[" + (m.tier || "?") + "] " + String(m.text || m.summary || "").slice(0, 90)))),
-          ),
-
-        );
-      }
-
-      // ---------------------------------------------------------------------
       // 表情包：列表 + 上传（自动识别）+ 删除
       // ---------------------------------------------------------------------
       function MemeSection() {
@@ -1025,16 +858,6 @@ window.__ModuleLoader__.load({
             ),
           );
         }
-
-        const PACKS_DEF = [
-          { id: "dafeiyu", name: "大肥鱼" },
-          { id: "user", name: "用户表情包" },
-          { id: "found", name: "大肥鱼叼回来的" },
-        ];
-        const packCount = (id) => {
-          const hit = packs.find((p) => p.pack === id);
-          return hit ? hit.count : 0;
-        };
 
         return h("div", { style: S.wrap },
           h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" } },
@@ -1846,30 +1669,6 @@ window.__ModuleLoader__.load({
           }
         };
 
-        const saveCfg = async (path, value) => {
-          try {
-            await call("/bili/cfg", { method: "POST", body: JSON.stringify({ path, value }) });
-            const c = await call("/bili/cfg");
-            setBiliCfg(c);
-          } catch (e) {
-            setErr(e && e.message ? e.message : String(e));
-          }
-        };
-
-        const saveOwner = async () => {
-          setBusy(true);
-          setOwnerMsg(null);
-          try {
-            await call("/bili/owner", { method: "POST", body: JSON.stringify({ mid: ownerMid.trim(), name: ownerName.trim() }) });
-            setOwnerMsg("已保存 ✓" + (ownerMid.trim() ? "（@ " + ownerMid.trim() + "）" : "（不 @）"));
-            await load();
-          } catch (e) {
-            setOwnerMsg("保存失败：" + (e && e.message ? e.message : String(e)));
-          } finally {
-            setBusy(false);
-          }
-        };
-
         const doLogin = async () => {
           if (!sessdata.trim()) {
             setLoginMsg("SESSDATA 必填");
@@ -1914,20 +1713,6 @@ window.__ModuleLoader__.load({
           try {
             const r = await call("/bili/tools", { method: "POST", body: JSON.stringify({ cmd, enabled: !(cur && cur.enabled) }) });
             setBiliTools(r);
-          } catch (e) {
-            setErr(e && e.message ? e.message : String(e));
-          } finally {
-            setBusy(false);
-          }
-        };
-
-        const toggleMouth = async (key) => {
-          if (!st) return;
-          setBusy(true);
-          try {
-            const cur = st[key];
-            await call("/bili/toggle", { method: "POST", body: JSON.stringify({ key, value: !cur }) });
-            await load();
           } catch (e) {
             setErr(e && e.message ? e.message : String(e));
           } finally {
@@ -2742,20 +2527,7 @@ window.__ModuleLoader__.load({
           ) : mode === "slang" ? (
             (() => {
               if (!slangList && !exprList) return h("div", { style: S.muted }, "读取中…")
-              const _has = (s) => String((s && s.meaning) || "").trim() !== ""
-              const known = (slangList || []).filter(_has)
-              const pending = (slangList || []).filter((s) => !_has(s) && (Number(s.count) || 0) >= 6)
-              const seeds = (slangList || []).filter((s) => !_has(s) && (Number(s.count) || 0) < 6)
               const exprs = exprList || []
-              const chip = (s, warn) =>
-                h("span", {
-                  key: "w-" + s.phrase,
-                  style: {
-                    fontSize: 12, padding: "2px 10px", borderRadius: 999,
-                    border: "1px solid " + (warn ? "rgba(240,128,60,.5)" : "rgba(127,127,127,.25)"),
-                    background: warn ? "rgba(240,128,60,.10)" : "rgba(64,132,255,.08)",
-                  },
-                }, (s.phrase || s.word || "") + " ×" + (s.count || 0))
               return h("div", { style: { display: "flex", flexDirection: "column", gap: 16 } },
                 exprs.length > 0
                   ? h("div", null,
@@ -3293,8 +3065,7 @@ const [data, setData] = React.useState(null);
                   const hh = sessionHistory[historyOpen];
                   if (!hh) return h("div", { style: { ...S.muted, fontSize: 11, marginTop: 8 } }, "读取中…");
                   const items = hh.items || [];
-                  const renderHistoryPanel = true;
-                  return h("div", { style: { marginTop: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(0,0,0,.06)", background: "#fff" } },
+                            return h("div", { style: { marginTop: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(0,0,0,.06)", background: "#fff" } },
                     h("div", { style: { fontSize: 11, color: "#6b7280", marginBottom: 6 } },
                       historyOpen + " 的历史会话（点「绑到这个」切过去，会重启生效）"),
                     items.length
