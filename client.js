@@ -1204,19 +1204,20 @@ window.__ModuleLoader__.load({
           ),
         );
 
-        return h("div", { style: S.wrap },
+        return h("div", { style: { ...S.wrap, maxWidth: 1180 } },
           h("div", { style: S.desc },
             "定时把她叫醒。醒来之后她想干嘛（发呆 / 上网 / 找你 / 发图）由她自己决定——"
             + "关掉「允许发消息」就是只唤醒、不打扰。",
           ),
+          h("div", { style: { display: "grid", gridTemplateColumns: "460px minmax(320px, 1fr)", gap: 20, alignItems: "start" } },
 
 
-          h("div", { style: S.card },
+          h("div", { style: { ...S.card, gridColumn: "1" } },
             toggle("enabled", "自动唤醒", "总开关：关掉后完全不叫醒她"),
             toggle("talkEnabled", "允许她主动发消息", "关掉 = 只唤醒她、不给你发消息（静默活动）"),
           ),
 
-          h("div", { style: S.card },
+          h("div", { style: { ...S.card, gridColumn: "1" } },
             h("div", { style: S.label }, "她的主动性"),
             h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
               "勾上之后会写进她的系统提示词。关掉 = 她不会主动约时间，只被动等你。（「刷完 B 站可以主动分享」已经挪到 B 站页）"),
@@ -1246,7 +1247,7 @@ window.__ModuleLoader__.load({
 
           ),
 
-          h("div", { style: S.card },
+          h("div", { style: { ...S.card, gridColumn: "2", gridRow: "1 / span 3" } },
             h("div", { style: S.label }, "她醒着能做什么"),
             h("div", { style: { ...S.muted, marginBottom: 8 } },
               "每次唤醒随机抽一条当作她这轮的状态提示。静默=她自己待着，说话=可以找你。改完点下面的保存。"),
@@ -1342,7 +1343,7 @@ window.__ModuleLoader__.load({
             ),
           ),
 
-          h("div", { style: S.card },
+          h("div", { style: { ...S.card, gridColumn: "1" } },
             h("div", { style: S.desc }, "唤醒规则"),
             h("div", { style: { ...S.muted, fontSize: 12, marginBottom: 10 } },
               "选一套预设，下面的参数自动套上并锁定。要自己调就点「自定义」解锁。"),
@@ -1401,6 +1402,7 @@ window.__ModuleLoader__.load({
             ),
           ),
 
+          ),
           h("div", {
             style: {
               position: "fixed", right: 24, top: "50%", transform: "translateY(-50%)",
