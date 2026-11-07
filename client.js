@@ -2121,9 +2121,10 @@ window.__ModuleLoader__.load({
           return list.slice(c * PAGE_SIZE, c * PAGE_SIZE + PAGE_SIZE);
         };
         const renderPager = (total) => {
-          const max = pageCount(total);
+          const count = Number(total) || 0;
+          const max = pageCount(count);
           if (max <= 1) return null;
-          const c = curPage(total);
+          const c = curPage(count);
           return h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" } },
             h("button", {
               type: "button",
@@ -2131,7 +2132,7 @@ window.__ModuleLoader__.load({
               disabled: c === 0,
               onClick: () => setPage(c - 1),
             }, "上一页"),
-            h("span", { style: { ...S.muted, fontSize: 12 } }, `第 ${c + 1} / ${max} 页 · 共 ${total} 条`),
+            h("span", { style: { ...S.muted, fontSize: 12 } }, `第 ${c + 1} / ${max} 页 · 共 ${count} 条`),
             h("button", {
               type: "button",
               style: { ...S.btn(false), padding: "4px 12px", fontSize: 12 },
@@ -2561,7 +2562,7 @@ window.__ModuleLoader__.load({
                           : null,
                       );
                     }),
-                  renderPager(activityList.length),
+                  renderPager((activityList || []).length),
                   )
                 : h("div", { style: S.muted }, activityList ? "这天没做什么" : "读取中…"),
             )
@@ -2574,7 +2575,7 @@ window.__ModuleLoader__.load({
                       b.url ? h("div", { style: { ...S.muted, fontSize: 11, marginTop: 2, wordBreak: "break-all" } }, b.url) : null,
                     ),
                   ),
-                renderPager(browseList.length),
+                renderPager((browseList || []).length),
                 )
               : h("div", { style: S.muted }, browseList ? "还没刷到什么" : "读取中…")
           ) : mode === "notes" ? (
@@ -2586,7 +2587,7 @@ window.__ModuleLoader__.load({
                       h("div", { style: { fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word" } }, n.text || ""),
                     ),
                   ),
-                renderPager(notesList.length),
+                renderPager((notesList || []).length),
                 )
               : h("div", { style: S.muted }, notesList ? "还没记过便签" : "读取中…")
           ) : mode === "slang" ? (
@@ -2680,7 +2681,6 @@ window.__ModuleLoader__.load({
                 (!exprs.length)
                   ? h("div", { style: S.muted }, "还没学到什么。她会在聊天里慢慢琢磨「什么场合该怎么接」。")
                   : null,
-              renderPager(emotionList.length),
               )
             })()
           ) : mode === "emotion" ? (
@@ -2701,6 +2701,7 @@ window.__ModuleLoader__.load({
                   h("div", { style: { fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" } }, e.trigger || "（没有记录原因）"),
                 );
               }),
+              renderPager((emotionList || []).length),
             ) : h("div", { style: S.muted }, emotionList ? "还没有情感记录（聊几句，情绪有波动就会记）" : "读取中…")
           ) : data && data.items && data.items.length > 0 ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
             pageSlice(data.items).map((m) => h("div", {
@@ -2722,7 +2723,7 @@ window.__ModuleLoader__.load({
               h("div", { style: { fontSize: 13, lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word" } }, m.text),
               m.summary ? h("div", { style: { ...S.muted, fontSize: 12, marginTop: 4 } }, "摘要：" + m.summary) : null,
             )),
-            renderPager(data.items.length),
+            renderPager(((data && data.items) || []).length),
           ) : (data ? h("div", { style: S.muted }, "没有匹配的记忆") : null),
           ),
         );
