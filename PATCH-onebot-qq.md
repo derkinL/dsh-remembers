@@ -503,3 +503,81 @@ curl -s -X POST http://127.0.0.1:3000/get_status \
 `/app/data` 里有 `qzone_1015.jpg`、`qzone_fri.jpg`、`qzone_whale.jpg` 等 ——
 **10-24 到 11-06 之间她是成功发过图的**。说明那时候传的是 `content`（用对了），
 后来改走 `message` 才坏的。不是从未成功过。
+
+---
+
+## 5. `qq_napcat_api` 描述没提空间说说（tools.js）
+
+### 现象
+
+她发不出带图的空间说说。但**技术上完全通**，卡的是「她不知道能这么用」。
+
+### 实测三种 images 形式（2026-11-07，鉴权用 `Bearer`）
+
+| `images` 形式 | 结果 |
+|---|---|
+| `base64://...` | ✅ `retcode 0`，说说带图，`get_qzone_msg_list` 里能看到真实图片 URL |
+| `/app/data/x.png`（容器内路径） | ✅ `retcode 0` |
+| `file:///home/ubuntu/...`（宿主机路径） | ❌ `retcode 100`，`ENOENT: no such file or directory` |
+
+走插件时，**mediaDir 内的本地路径会被自动转成 base64**，所以 `file://` 是通的 ——
+前提是路径在 `~/.dsh/media/onebot/` 下面（`memes` 正好就在里面）。
+
+所以「Docker 读不到宿主机文件」这个问题，插件层面早就绕过去了。
+
+### 真正的问题
+
+原描述只有一句：
+
+```
+调用 NapCat 白名单内的 OneBot 扩展 API（群成员列表/信息、文件、OCR、AI 语音等）。非白名单 action 会被拒绝。
+```
+
+**没提空间说说、没提 `send_qzone_msg`、没说 `images` 怎么传。**
+她压根不知道这个能力存在，也不知道参数长什么样。
+
+### 改法
+
+把描述改成点名 action + 给完整示例：
+
+```js
+description: '调用 NapCat 白名单内的 OneBot 扩展 API。'
+    + '常用：空间说说 send_qzone_msg（发）/ get_qzone_msg_list（看）/ delete_qzone_msg（删）/ set_qzone_msg_right（权限）；'
+    + '还有群成员与群信息、文件、OCR、AI 语音等。非白名单 action 会被拒绝。'
+    + ' 【发带图的空间说说】action="send_qzone_msg"，'
+    + 'params={"content":"文字（必须是纯字符串，不要传 message 消息段数组）",'
+    + '"images":["file:///home/ubuntu/.dsh/media/onebot/memes/xxx.jpg"]}。'
+    + ' images 里的本地路径只要在 ~/.dsh/media/onebot/ 下面就行（memes 目录就在里面），'
+    + '插件会自动读成 base64 再转给 NapCat —— 不用管 Docker 挂载，也不用你自己转 base64。'
+    + ' 也接受 http(s) 链接和 base64:// 开头的字符串。纯文字说说只传 content 即可。',
+```
+
+`params` 的描述也补了：
+
+```js
+description: 'action 参数（JSON 对象）。发说说时形如 '
+    + '{ content: "文案", images: ["file:///…/memes/xxx.jpg"] }，content 必填。'
+```
+
+### 验证方法
+
+发一条带图说说，再读回来确认：
+
+```bash
+AUTH="Authorization: Bearer fBo6aIvwCUuBOoin5tg_ktA-d_597i7ADQBP27i5BF0"
+curl -s -X POST http://127.0.0.1:3000/send_qzone_msg -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"content":"测试","images":["file:///home/ubuntu/.dsh/media/onebot/memes/xxx.jpg"]}'
+# 期望 {"status":"ok","retcode":0,"data":{"tid":"..."}}
+
+curl -s -X POST http://127.0.0.1:3000/get_qzone_msg_list -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"pos":0,"num":3}'
+# 看 msglist[0].images 里有没有 photogzmaz.photo.store.qq.com 的 URL
+```
+
+删掉测试说说：`delete_qzone_msg` + `{"tid":"..."}`。
+
+### 顺带记住的坑
+
+NapCat 的 HTTP API 鉴权是 **`Authorization: Bearer <token>`**。
+写成 `Authorization: Token <token>` 会一直回 `1401 unauthorized`，
+看起来像 token 错了，其实是 scheme 写错 —— 排查时在这上面绕了好几圈。
