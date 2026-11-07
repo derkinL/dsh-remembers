@@ -465,7 +465,8 @@ class Extractor:
         # 学说法：单独一次小调用（混在事实抽取里模型一条都抽不出来，实测过）
         expr_added = 0
         try:
-            learned = self.learn_expressions(user_text, assistant_text)
+            # 只传他说的话（assistant_text 不传，避免学到自己）
+            learned = self.learn_expressions(user_text)
         except Exception:
             learned = []
         for e in learned:
@@ -708,9 +709,11 @@ class Extractor:
         u = (user_text or "").strip()
         if len(u) < 4:
             return []
+        # 2026-11-07：**不要**把她的回复拼进去。
+        # 之前拼了「你：{assistant_text}」，等于把她自己的话也当素材，
+        # 结果是正反馈：说了什么就学什么 → 权重变高 → 更常说 → 学不到新东西。
+        # dsh-fish-soul 的规矩是「只学别人的，『你』说的不算」。
         convo = f"他：{u[:600]}"
-        if assistant_text:
-            convo += f"\n你：{assistant_text[:400]}"
         try:
             result = self.llm.chat_json(learn_speak_prompt_text(), convo, max_tokens=320)
         except Exception:
