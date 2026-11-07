@@ -233,6 +233,13 @@ for (const page of PAGES) {
 // 所以这里查源码：每个块都得有返回按钮，而且排在保存按钮前面。
 // 标签在 data 加载完才渲染，mock 里首屏是 loading，所以查源码：
 // 7 处 className="dshm-tab"（其中 TIERS 那处 map 出 6 件，共渲染 12 张）。
+ok("B 站页左边工具、右边 UID/口味", () => {
+  const src = readFileSync(join(PLUGIN_ROOT, "client.js"), "utf8");
+  const left = src.indexOf('flex: "0 0 640px"');
+  const tools = src.indexOf("她能用的 B 站工具");
+  const uid = src.indexOf("你在 B 站的 UID");
+  assert.ok(left > 0 && tools > left && uid > tools, "分栏顺序不对");
+});
 ok("记忆页的标签改成了固定卡片", () => {
   const src = readFileSync(join(PLUGIN_ROOT, "client.js"), "utf8");
   assert.ok(src.includes('className: "dshm-tabs"'), "没有标签网格");

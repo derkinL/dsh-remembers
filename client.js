@@ -1953,7 +1953,10 @@ window.__ModuleLoader__.load({
             err ? h("div", { style: S.notice("error") }, "读取失败：" + err) : h("div", { style: S.muted }, "读取中…"));
         }
 
-        return h("div", { style: S.wrap },
+        // 左栏：账号、总开关、她刷完能做什么、她能用的工具（含抽帧）
+        // 右栏：UID、口味标签、测一下
+        return h("div", { style: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" } },
+          h("div", { style: { flex: "0 0 640px", minWidth: 420, display: "flex", flexDirection: "column", gap: 12 } },
           h("div", { style: S.desc },
             "给她一个 B 站账号，让她自己刷视频。但说话只走 QQ 那套人格——B 站只是她的眼睛，不是另一张嘴。",
           ),
@@ -2122,7 +2125,9 @@ window.__ModuleLoader__.load({
               );
             })() : null,
           ) : null,
+          ),
 
+          h("div", { style: { flex: "1 1 0", minWidth: 360, display: "flex", flexDirection: "column", gap: 12 } },
           h("div", { style: S.card },
             h("div", { style: S.label }, "你在 B 站的 UID"),
             h("div", { style: { ...S.muted, marginBottom: 6 } },
@@ -2227,6 +2232,7 @@ window.__ModuleLoader__.load({
                 ? "来源：" + (test.source || "?") + "\n" + (test.items || []).map((i) => (i.title || i) + (i.url ? "  " + i.url : "")).join("\n")
                 : "失败：" + (test.error || "unknown"))
               : null,
+          ),
           ),
         );
       }
