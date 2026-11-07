@@ -545,6 +545,24 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(self._rollback_self)
         elif path == "/extract":
             self._guard(self._extract)
+        elif path == "/qq/wake":
+            body = self._body()
+            chat = str(body.get("chat") or "").strip()
+            on = bool(body.get("wake"))
+            kind, _, tid = chat.partition(":")
+            if kind not in ("private", "group") or not tid.isdigit():
+                self._json(400, {"ok": False, "error": "chat 要是 private:<QQ> 或 group:<群号>"})
+                return
+            cfg = _load_config()
+            wc = cfg.get("wakeChats")
+            if not isinstance(wc, dict):
+                wc = {}
+                for u in sorted(self._qq_admin_users()):
+                    wc["private:" + u] = True
+            wc[chat] = on
+            cfg["wakeChats"] = wc
+            _save_config(cfg)
+            self._json(200, {"ok": True, "chat": chat, "wake": on, "wakeChats": wc})
         elif path == "/memes/packs/add":
             body = self._body()
             with _lock:
@@ -1528,7 +1546,19 @@ class Handler(BaseHTTPRequestHandler):
                 }
 
         items = sorted(best.values(), key=lambda x: -x["mtime"])
-        self._json(200, {"ok": True, "sessions": items, "base": base})
+        # 主动唤醒开关：没配过时默认只有主人私聊开着，其余全关
+        cfg = _load_config()
+        wc = cfg.get("wakeChats")
+        owner_key = None
+        for u in sorted(self._qq_admin_users()):
+            owner_key = "private:" + u
+            break
+        for it in items:
+            if isinstance(wc, dict):
+                it["wake"] = bool(wc.get(it["chat"], False))
+            else:
+                it["wake"] = (it["chat"] == owner_key)
+        self._json(200, {"ok": True, "sessions": items, "base": base, "owner": owner_key})
 
     def _get_qq_config(self) -> None:
         """读 cordis.patch.yml 的 dsh-onebot 配置，套上 schema 返回。"""

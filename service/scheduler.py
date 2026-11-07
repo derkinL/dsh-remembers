@@ -123,6 +123,31 @@ class Scheduler:
             return {}
 
     # ---------- 1. 唤醒 ----------
+    def _wake_chats(self) -> list:
+        """要主动唤醒的聊天列表：[(kind, id), ...]。
+
+        存在 config.json 的 wakeChats 里（`private:<QQ>` / `group:<群号>` → bool）。
+        没有任何配置时默认只有主人私聊 —— 跟以前一样；配置存在时严格照它来，
+        全关就真的不唤（不能回退到主人，否则关不掉）。
+        """
+        cfg = {}
+        try:
+            with open(os.path.join(self.data_dir, "config.json"), encoding="utf-8") as f:
+                cfg = json.load(f) or {}
+        except Exception:
+            cfg = {}
+        wc = cfg.get("wakeChats")
+        if isinstance(wc, dict):
+            out = []
+            for key, on in wc.items():
+                if not on:
+                    continue
+                kind, _, tid = str(key).partition(":")
+                if kind in ("private", "group") and tid.isdigit():
+                    out.append((kind, tid))
+            return out
+        return [("private", str(self._owner_qq()))]
+
     def _tick_wake(self, st: dict, now: float) -> bool:
         cfg = self._proactive_cfg()
         if not cfg.get("enabled", True):
@@ -159,6 +184,12 @@ class Scheduler:
         st["last_wake"] = now
         st["wake_interval"] = 0
 
+        targets = self._wake_chats()
+        if not targets:
+            # 全都关掉时不每 tick 刷日志：这一轮算用掉了，下个间隔再看
+            _log("wake: 没有开启主动唤醒的聊天，跳过这一轮")
+            return False
+
         silent_ratio = int(cfg.get("silentRatio", 40))
         talk_enabled = bool(cfg.get("talkEnabled", True))
         silent = (not talk_enabled) or random.randint(1, 100) <= silent_ratio
@@ -175,7 +206,8 @@ class Scheduler:
         else:
             msg = f"（系统提醒：你醒着，现在是 {hour} 点。{pick}。看看老大在不在，想找他就发一句；不想也行。）"
 
-        self._inject(msg, silent=silent)
+        for _kind, _tid in targets:
+            self._inject(msg, silent=silent, target=(_kind, _tid))
         self._log_activity("proactive", f"被叫醒（{hour}点，{'静默' if silent else '可发言'}）：{action}")
         try:
             try:
@@ -457,7 +489,12 @@ class Scheduler:
             return int(env)
         return 3169341724
 
-    def _inject(self, msg: str, silent: bool = False) -> None:
+    def _inject(self, msg: str, silent: bool = False, target=None) -> None:
+        """往 qq-inject.jsonl 写一条合成消息。
+
+        target=(kind, id)：kind 是 private/group。不传就发给主人私聊（老行为）。
+        群里唤醒时 user_id 仍是主人号，让 onebot 知道这条是「谁的那一轮」。
+        """
         path = self.inject_path
         if not path:
             _log("inject: no CMEM_INJECT_PATH, skip (no QQ channel)")
@@ -465,13 +502,15 @@ class Scheduler:
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             # 用真实 QQ 号！0 会让回复发不出去（retcode 1400）
-            uid = self._owner_qq()
+            kind, tid = (target if target else ("private", str(self._owner_qq())))
+            owner = self._owner_qq()
+            uid = int(tid)
             ev = {
                 "post_type": "message",
-                "message_type": "private",
-                "sub_type": "friend",
+                "message_type": "group" if kind == "group" else "private",
+                "sub_type": "normal" if kind == "group" else "friend",
                 "message_id": int(time.time() * 1000) % 1000000000,
-                "user_id": uid,
+                "user_id": (owner if kind == "group" else uid),
                 "message": msg,
                 "raw_message": msg,
                 "time": int(time.time()),
@@ -482,8 +521,10 @@ class Scheduler:
                 "synthetic": True,
                 # 昵称留空：写「系统」会被 _touch_profile 存进 profiles.name，
                 # 把老大真实的画像名字覆盖掉（2026-10-27 线上实测踩过）。
-                "sender": {"user_id": uid, "nickname": ""},
+                "sender": {"user_id": (owner if kind == "group" else uid), "nickname": ""},
             }
+            if kind == "group":
+                ev["group_id"] = uid
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(ev, ensure_ascii=False) + "\n")
         except Exception as e:

@@ -3220,6 +3220,31 @@ const [data, setData] = React.useState(null);
                       ),
                       h("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" } },
                         h("button", {
+                          type: "button",
+                          title: "主动唤醒：开了她才会在这个聊天里自己醒来",
+                          style: {
+                            ...S.btn(false), padding: "4px 10px", fontSize: 12, whiteSpace: "nowrap",
+                            borderColor: x.wake ? "#4084ff" : undefined,
+                            color: x.wake ? "#4084ff" : "#9ca3af",
+                            background: x.wake ? "rgba(64,132,255,.06)" : "#fff",
+                          },
+                          disabled: qqBusy,
+                          onClick: async () => {
+                            try {
+                              const r = await call("/qq/wake", {
+                                method: "POST",
+                                body: JSON.stringify({ chat: x.chat, wake: !x.wake }),
+                              });
+                              setQqMsg(r && r.ok
+                                ? (isGroup ? "群 " : "私聊 ") + x.target + (x.wake ? " 关掉了主动唤醒" : " 打开了主动唤醒")
+                                : "失败：" + JSON.stringify(r));
+                              if (r && r.ok) void load();
+                            } catch (e) {
+                              setQqMsg("失败：" + (e && e.message ? e.message : String(e)));
+                            }
+                          },
+                        }, x.wake ? "唤醒·开" : "唤醒·关"),
+                        h("button", {
                           style: { ...S.btn(true), padding: "4px 10px", fontSize: 12, whiteSpace: "nowrap" },
                           disabled: qqBusy,
                           onClick: async () => {
