@@ -1,7 +1,7 @@
 {
   "name": "dsh-remembers",
-  "version": "1.0.0",
-  "description": "情感陪伴向的 DSH 记忆插件：自动想起该想起的，宁可说想不起也不编。后端是 companion-memory 服务",
+  "version": "1.1.0",
+  "description": "情感陪伴向的 DSH 记忆插件：自动想起该想起的，宁可说想不起也不编。后端是 companion-memory 服务；含贴吧读帖/回帖与独立的学说话页。",
   "type": "module",
   "main": "index.mjs",
   "exports": {
