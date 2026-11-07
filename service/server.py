@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import sys
 import threading
 import time
@@ -360,6 +361,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, store.list_memories(tier=tier, q=q, limit=limit, offset=offset))
         elif path == "/bili/status":
             self._json(200, self._bili_status())
+        elif path == "/tieba/status":
+            self._guard(lambda: self._get_tieba_status())
+        elif path == "/tieba/browse":
+            self._guard(lambda: self._get_tieba_browse(query))
+        elif path == "/tieba/read":
+            self._guard(lambda: self._get_tieba_read(query))
+        elif path == "/tieba/sub":
+            self._guard(lambda: self._get_tieba_sub(query))
         elif path == "/bili/feed":
             self._json(200, self._bili_feed((query.get("thought") or [""])[0]))
         elif path == "/bili/debrief":
@@ -634,17 +643,12 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._delete_meme())
         elif path == "/slang":
             self._guard(lambda: self._post_slang())
-        elif path == "/tieba/token":
-            self._guard(lambda: self._post_tieba_token())
-        elif path == "/tieba/post":
-            self._guard(lambda: self._json(200, self._tieba_call(
-                "/c/c/claw/addThread", "POST", self._body())))
+        elif path == "/tieba/login":
+            self._guard(lambda: self._post_tieba_login())
         elif path == "/tieba/reply":
-            self._guard(lambda: self._json(200, self._tieba_call(
-                "/c/c/claw/addPost", "POST", self._body())))
-        elif path == "/tieba/like":
-            self._guard(lambda: self._json(200, self._tieba_call(
-                "/c/c/claw/opAgree", "POST", self._body())))
+            self._guard(lambda: self._post_tieba_reply())
+        elif path == "/tieba/config":
+            self._guard(lambda: self._post_tieba_cfg())
         elif path == "/learn/prompt":
             self._guard(lambda: self._post_learn_prompt())
         elif path == "/expressions":
@@ -2122,48 +2126,147 @@ class Handler(BaseHTTPRequestHandler):
         __import__("os").environ.get("CMEM_DATA_DIR", DATA_DIR), "bili_tools.json"
     )
 
-    TIEBA_TABS = {"新虾报到": 4666758, "硅基哲思": 4666765,
-                  "赛博摸鱼": 4666767, "图灵乐园": 4666770}
+    # ---------- 贴吧（读 + 回帖，走 tools/tieba-cli.mjs） ----------
+    # 网络层是移植来的 lib/tieba.js：百度认 TLS 指纹，必须 curl；cookie 走 jar 文件。
+    TIEBA_DEFAULT_BARS = ["显卡", "猫", "图灵完备"]
+
+    def _tieba_dir(self) -> str:
+        return os.path.join(DATA_DIR, "tieba")
 
     def _tieba_cfg_path(self) -> str:
-        return os.path.join(CMEM_DATA_DIR, "tieba.json")
+        return os.path.join(DATA_DIR, "tieba.json")
 
-    def _tieba_token(self) -> str:
+    def _tieba_cfg(self) -> dict:
         try:
-            p = self._tieba_cfg_path()
-            if os.path.exists(p):
-                return str(json.load(open(p, encoding="utf-8")).get("token") or "").strip()
+            c = json.load(open(self._tieba_cfg_path(), encoding="utf-8"))
+            return c if isinstance(c, dict) else {}
         except Exception:
-            pass
-        return ""
+            return {}
 
-    def _tieba_call(self, path: str, method: str = "GET", body: dict | None = None) -> dict:
-        """调 tieba.baidu.com。token 只在这里出现，不往前端传。"""
-        import urllib.error as _ue
-        import urllib.request as _ur
-        token = self._tieba_token()
-        if not token:
-            return {"ok": False, "error": "还没填 TB_TOKEN（去贴吧领一个，填在设置里）"}
-        url = "https://tieba.baidu.com" + path
-        data = None
-        headers = {"Authorization": token}
-        if method == "POST":
-            data = json.dumps(body or {}).encode()
-            headers["Content-Type"] = "application/json"
-        else:
-            headers["Content-Type"] = "application/x-www-form-urlencoded;charset=UTF-8"
-        req = _ur.Request(url, data=data, method=method, headers=headers)
+    def _tieba_save_cfg(self, **patch) -> dict:
+        cfg = self._tieba_cfg()
+        cfg.update(patch)
+        cfg.setdefault("bars", list(self.TIEBA_DEFAULT_BARS))
+        cfg.setdefault("enabled", False)
+        cfg.setdefault("replyEnabled", False)
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = self._tieba_cfg_path() + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, self._tieba_cfg_path())
+        return cfg
+
+    def _tieba_node(self) -> str:
+        """找 node：服务进程的 PATH 里常常没有 .local/node/bin。"""
+        cand = [
+            os.environ.get("CMEM_NODE_BIN", ""),
+            shutil.which("node") or "",
+            "/home/ubuntu/.local/node/bin/node",
+            "/usr/local/bin/node",
+            "/usr/bin/node",
+        ]
+        for c in cand:
+            if c and os.path.exists(c):
+                return c
+        return "node"
+
+    def _tieba_cli(self, *args, timeout: int = 45) -> dict:
+        """跑 tools/tieba-cli.mjs，取它打在 stdout 的那行 JSON。"""
+        import subprocess as _sp
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # service/ -> 包根
+        cli = os.path.join(root, "tools", "tieba-cli.mjs")
+        node = self._tieba_node()
+        env = dict(os.environ)
+        env["TIEBA_DIR"] = self._tieba_dir()
         try:
-            with _ur.urlopen(req, timeout=25) as resp:
-                raw = resp.read().decode("utf-8", "replace")
-        except _ue.HTTPError as e:
-            return {"ok": False, "error": f"HTTP {e.code}", "body": e.read().decode("utf-8", "replace")[:300]}
+            p = _sp.run([node, cli, *[str(a) for a in args]],
+                        capture_output=True, text=True, timeout=timeout, env=env)
         except Exception as e:
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": "跑不起来 tieba-cli：" + str(e)}
+        lines = [x for x in (p.stdout or "").strip().splitlines() if x.strip()]
+        raw = lines[-1] if lines else ""
         try:
-            return {"ok": True, "data": json.loads(raw)}
+            r = json.loads(raw)
+            return r if isinstance(r, dict) else {"ok": False, "error": "CLI 返回不是对象"}
         except Exception:
-            return {"ok": True, "data": raw[:2000]}
+            return {"ok": False, "error": ((p.stderr or raw or "CLI 没有输出").strip())[:300]}
+
+    def _get_tieba_status(self) -> None:
+        cfg = self._tieba_cfg()
+        st = self._tieba_cli("status")
+        who = self._tieba_cli("whoami") if st.get("hasCookie") else {}
+        self._json(200, {
+            "ok": True,
+            "hasCookie": bool(st.get("hasCookie")),
+            "loggedIn": bool(who.get("loggedIn")),
+            "enabled": bool(cfg.get("enabled")),
+            "replyEnabled": bool(cfg.get("replyEnabled")),
+            "bars": cfg.get("bars") or list(self.TIEBA_DEFAULT_BARS),
+            "hint": who.get("hint") or st.get("error") or "",
+        })
+
+    def _get_tieba_browse(self, query) -> None:
+        kw = (query.get("kw") or [""])[0].strip()
+        if not kw:
+            self._json(400, {"ok": False, "error": "缺少 kw"})
+            return
+        pn = (query.get("pn") or ["0"])[0]
+        self._json(200, self._tieba_cli("browse", "--kw", kw, "--pn", pn))
+
+    def _get_tieba_read(self, query) -> None:
+        tid = (query.get("tid") or [""])[0].strip()
+        if not tid:
+            self._json(400, {"ok": False, "error": "缺少 tid"})
+            return
+        pn = (query.get("pn") or ["1"])[0]
+        maxf = (query.get("max") or ["40"])[0]
+        self._json(200, self._tieba_cli("read", "--tid", tid, "--pn", pn, "--max-floors", maxf))
+
+    def _get_tieba_sub(self, query) -> None:
+        tid = (query.get("tid") or [""])[0].strip()
+        pid = (query.get("pid") or [""])[0].strip()
+        if not tid or not pid:
+            self._json(400, {"ok": False, "error": "缺少 tid / pid"})
+            return
+        self._json(200, self._tieba_cli("sub", "--tid", tid, "--pid", pid))
+
+    def _post_tieba_login(self) -> None:
+        body = self._body()
+        bduss = str(body.get("bduss") or "").strip()
+        if not bduss:
+            self._json(400, {"ok": False, "error": "缺少 bduss"})
+            return
+        r = self._tieba_cli("login", "--bduss", bduss, timeout=40)
+        self._json(200 if r.get("ok") else 400, r)
+
+    def _post_tieba_reply(self) -> None:
+        body = self._body()
+        kw = str(body.get("kw") or "").strip()
+        tid = str(body.get("tid") or "").strip()
+        content = str(body.get("content") or "").strip()
+        if not (kw and tid and content):
+            self._json(400, {"ok": False, "error": "缺少 kw / tid / content"})
+            return
+        cfg = self._tieba_cfg()
+        if not cfg.get("replyEnabled"):
+            self._json(403, {"ok": False, "error": "回帖开关没开（设置 → 贴吧）"})
+            return
+        r = self._tieba_cli("reply", "--kw", kw, "--tid", tid, "--content", content, timeout=60)
+        self._json(200 if r.get("ok") else 400, r)
+
+    def _post_tieba_cfg(self) -> None:
+        body = self._body()
+        patch = {}
+        if "enabled" in body:
+            patch["enabled"] = bool(body.get("enabled"))
+        if "replyEnabled" in body:
+            patch["replyEnabled"] = bool(body.get("replyEnabled"))
+        if "bars" in body:
+            bars = body.get("bars")
+            if isinstance(bars, list):
+                patch["bars"] = [str(x).strip() for x in bars if str(x).strip()][:20]
+        cfg = self._tieba_save_cfg(**patch)
+        self._json(200, {"ok": True, "config": cfg})
 
     def _learn_speak_on(self) -> bool:
         """「学习人类说话」开关。读 persona.identity 的 learn_speak_on，默认开。
@@ -3094,23 +3197,6 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"ok": True})
 
     # -- 学说话 / 亲和度 / 任务 / 便签 / 睡眠 --------------------------------
-
-    def _post_tieba_token(self) -> None:
-        """存 TB_TOKEN。传空串 = 清掉。"""
-        import os as _os
-        body = self._body()
-        token = str(body.get("token") or "").strip()
-        try:
-            p = self._tieba_cfg_path()
-            _os.makedirs(_os.path.dirname(p), exist_ok=True)
-            if token:
-                json.dump({"token": token}, open(p, "w", encoding="utf-8"), ensure_ascii=False)
-            else:
-                if _os.path.exists(p):
-                    _os.remove(p)
-            self._json(200, {"ok": True, "hasToken": bool(self._tieba_token())})
-        except Exception as e:
-            self._json(500, {"ok": False, "error": str(e)})
 
     def _post_learn_prompt(self) -> None:
         """写「学什么」的 prompt。传空字符串 = 恢复默认（删文件）。"""

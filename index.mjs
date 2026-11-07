@@ -1068,6 +1068,7 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
   void registerCompanionTools();
   void registerMemeTools();
   void registerBiliTools();
+  void registerTiebaTools();
 
   /**
    * 自我认知写入工具。只打 /persona/self —— 宪法区在服务端根本没有那个参数，
@@ -1348,6 +1349,115 @@ async function scanSeen() {
   }
 
   /** 任务/便签工具：她主动派任务、标记完成、写便签。 */
+/** 贴吧工具：逛人类的吧、读楼层、回帖。 */
+  async function registerTiebaTools() {
+    if (!registerTool) return;
+    let defineTool;
+    try {
+      ({ defineTool } = await import("@deepseek-ai/dsh-tools"));
+    } catch (error) {
+      log("tieba_tools_skipped", { reason: "dsh-tools 不可用", error: String(error?.message ?? error) });
+      return;
+    }
+    const get = async (path) => {
+      const res = await fetch(config.endpoint + path, { signal: AbortSignal.timeout(60000) });
+      return res.json().catch(() => null);
+    };
+    const post = async (path, body) => {
+      const res = await fetch(config.endpoint + path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(90000),
+      });
+      return res.json().catch(() => ({ ok: false }));
+    };
+
+    try {
+      registerTool(defineTool({
+        name: "tieba_whoami",
+        description: "查贴吧账号登录态。没登录就别往下逛了，先让老大去「她的记忆 → 贴吧」里贴 BDUSS。",
+        parameters: {},
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async () => (await get("/tieba/status")) || { ok: false },
+      }));
+
+      registerTool(defineTool({
+        name: "tieba_browse",
+        description:
+          "逛一个吧，列最近的帖子（标题 + 帖子号 + 回复数）。kw 填吧名，不要带「吧」字（显卡、猫、钓鱼）。"
+          + "挑感兴趣的再 tieba_read 进去读；别一口气把所有帖子都读了。",
+        parameters: {
+          kw: { type: "string", required: true, description: "吧名，比如 显卡 / 猫 / 钓鱼" },
+          pn: { type: "number", description: "第几页，从 0 开始" },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async (args) => {
+          const p = new URLSearchParams({ kw: String(args.kw || ""), pn: String(Number(args.pn) || 0) });
+          return (await get("/tieba/browse?" + p.toString())) || { ok: false };
+        },
+      }));
+
+      registerTool(defineTool({
+        name: "tieba_read",
+        description:
+          "读一个帖子：返回标题、楼层正文、热门楼层和图片链接。tid 是 tieba_browse 给的帖子号。"
+          + "楼层多的时候只返回前 maxFloors 层（默认 40）。",
+        parameters: {
+          tid: { type: "string", required: true, description: "帖子号" },
+          pn: { type: "number", description: "第几页，从 1 开始" },
+          maxFloors: { type: "number", description: "最多返回多少层，默认 40" },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async (args) => {
+          const p = new URLSearchParams({
+            tid: String(args.tid || ""),
+            pn: String(Number(args.pn) || 1),
+            max: String(Number(args.maxFloors) || 40),
+          });
+          return (await get("/tieba/read?" + p.toString())) || { ok: false };
+        },
+      }));
+
+      registerTool(defineTool({
+        name: "tieba_sub",
+        description: "读某一层下面的楼中楼（tid + 楼层 id）。想知道别人在吵什么、谁回了谁的时候用。",
+        parameters: {
+          tid: { type: "string", required: true, description: "帖子号" },
+          pid: { type: "string", required: true, description: "楼层 id" },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async (args) => {
+          const p = new URLSearchParams({ tid: String(args.tid || ""), pid: String(args.pid || "") });
+          return (await get("/tieba/sub?" + p.toString())) || { ok: false };
+        },
+      }));
+
+      registerTool(defineTool({
+        name: "tieba_reply",
+        description:
+          "在贴吧回一条帖子。先说人话：短、具体、有你自己的看法，别写「帮顶」「支持」这种水帖，"
+          + "也别拿客服腔。回过一次就别在同一个帖里刷；不碰政治、地域、人身攻击。"
+          + "内容 4~400 字，纯文本（不支持图片和链接）。",
+        parameters: {
+          kw: { type: "string", required: true, description: "吧名（跟读帖时那个一致）" },
+          tid: { type: "string", required: true, description: "帖子号" },
+          content: { type: "string", required: true, description: "你要说的话，4~400 字纯文本" },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async (args) => (await post("/tieba/reply", {
+          kw: String(args.kw || ""),
+          tid: String(args.tid || ""),
+          content: String(args.content || ""),
+        })) || { ok: false },
+      }));
+
+      log("tieba_tools_registered", { count: 5 });
+    } catch (error) {
+      log("tieba_tools_failed", { error: String(error?.message ?? error) });
+    }
+  }
+
   async function registerCompanionTools() {
     if (!registerTool) return;
     let defineTool;

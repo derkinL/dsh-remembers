@@ -4365,6 +4365,8 @@ const [data, setData] = React.useState(null);
           desc: "什么时候她自己开口找你、找多勤、开口说些什么。", Comp: ProactiveSection },
         { id: "bili", glyph: "📺", title: "B 站", panel: true,
           desc: "她刷什么、看多久、登录态，以及她想看的。", Comp: BiliSection },
+        { id: "tieba", glyph: "🧵", title: "贴吧", panel: false,
+          desc: "逛人类的吧：读帖、楼中楼；回帖要单独打开。", Comp: TiebaSection },
         { id: "qq", glyph: "🐧", title: "QQ 通道", panel: true,
           desc: "桥、会话、谁能跟她说话、各自有什么权限。", Comp: QqSection },
         { id: "service", glyph: "⚙", title: "记忆服务", panel: true,
@@ -4430,6 +4432,190 @@ const [data, setData] = React.useState(null);
                 style: { fontSize: 12, lineHeight: 1.6, color: "var(--dsw-alias-label-secondary, #6b7280)" },
               }, it.desc),
             )),
+          ),
+        );
+      }
+
+      // -- 贴吧 --------------------------------------------------------------
+
+      function TiebaSection() {
+        const [st, setSt] = React.useState(null);
+        const [bduss, setBduss] = React.useState("");
+        const [msg, setMsg] = React.useState(null);
+        const [busy, setBusy] = React.useState(false);
+        const [kw, setKw] = React.useState("");
+        const [list, setList] = React.useState(null);
+        const [newBar, setNewBar] = React.useState("");
+
+        const load = async () => {
+          try {
+            setSt(await call("/tieba/status"));
+          } catch (e) {
+            setMsg("连不上服务：" + (e && e.message ? e.message : String(e)));
+          }
+        };
+        React.useEffect(() => { void load(); }, []);
+
+        const saveBduss = async () => {
+          if (!bduss.trim()) { setMsg("先把 BDUSS 粘进来"); return; }
+          setBusy(true); setMsg(null);
+          try {
+            const r = await call("/tieba/login", { method: "POST", body: JSON.stringify({ bduss: bduss.trim() }) });
+            setMsg(r && r.ok ? (r.loggedIn ? "登录态有效 ✓" : "已保存，但没验成登录态") : "失败：" + JSON.stringify(r));
+            setBduss("");
+            void load();
+          } catch (e) {
+            setMsg("失败：" + (e && e.message ? e.message : String(e)));
+          } finally { setBusy(false); }
+        };
+
+        const patchCfg = async (patch) => {
+          setBusy(true);
+          try {
+            const r = await call("/tieba/config", { method: "POST", body: JSON.stringify(patch) });
+            if (r && r.config) setSt((s) => ({ ...(s || {}), ...r.config, hasCookie: s && s.hasCookie, loggedIn: s && s.loggedIn }));
+          } catch (e) {
+            setMsg("保存失败：" + (e && e.message ? e.message : String(e)));
+          } finally { setBusy(false); }
+        };
+
+        const addBar = () => {
+          const v = newBar.trim();
+          if (!v) return;
+          const bars = ((st && st.bars) || []).filter((x) => x !== v);
+          void patchCfg({ bars: [...bars, v] });
+          setNewBar("");
+        };
+        const delBar = (v) => {
+          const bars = ((st && st.bars) || []).filter((x) => x !== v);
+          void patchCfg({ bars });
+        };
+
+        const tryBrowse = async () => {
+          if (!kw.trim()) { setMsg("填个吧名先"); return; }
+          setBusy(true); setList(null); setMsg(null);
+          try {
+            const r = await call("/tieba/browse?kw=" + encodeURIComponent(kw.trim()) + "&pn=0");
+            setList(r);
+            if (!r || r.ok === false) setMsg("读失败：" + ((r && r.error) || "未知"));
+          } catch (e) {
+            setMsg("读失败：" + (e && e.message ? e.message : String(e)));
+          } finally { setBusy(false); }
+        };
+
+        const sw = (on) => ({
+          width: 34, height: 20, borderRadius: 999, position: "relative", flexShrink: 0,
+          background: on ? "#4084ff" : "rgba(0,0,0,.18)", transition: "background .15s",
+        });
+        const knob = (on) => ({
+          position: "absolute", top: 2, left: on ? 16 : 2, width: 16, height: 16, borderRadius: 999,
+          background: "#fff", transition: "left .15s",
+        });
+        const rowCard = (on, title, desc, onClick) =>
+          h("label", {
+            onClick, style: {
+              display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer",
+              padding: "10px 12px", borderRadius: 8,
+              border: "1.5px solid " + (on ? "#4084ff" : "rgba(0,0,0,.10)"),
+              background: on ? "rgba(64,132,255,.04)" : "#fff",
+              transition: "border-color .15s, background .15s",
+            },
+          },
+            h("div", { style: sw(on) }, h("div", { style: knob(on) })),
+            h("div", { style: { display: "flex", flexDirection: "column", gap: 3, minWidth: 0 } },
+              h("span", { style: { fontSize: 13, fontWeight: 600 } }, title),
+              h("span", { style: { ...S.muted, fontSize: 11, lineHeight: 1.5 } }, desc),
+            ),
+          );
+
+        const bars = (st && st.bars) || [];
+        return h("div", { style: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" } },
+          // ---- 左栏：账号 + 开关
+          h("div", { style: { flex: "0 0 420px", minWidth: 340, display: "flex", flexDirection: "column", gap: 12 } },
+            h("div", { style: S.card },
+              h("div", { style: S.label }, "贴吧账号"),
+              h("div", { style: { ...S.muted, fontSize: 12, lineHeight: 1.6 } },
+                st ? (st.loggedIn ? "已登录 ✓" : (st.hasCookie ? "BDUSS 已存，但没验成登录态" : "还没登录"))
+                  : "读取中…"),
+              h("div", { style: { display: "flex", gap: 8, marginTop: 8 } },
+                h("input", {
+                  style: S.input, type: "password", placeholder: "粘 BDUSS 的值",
+                  value: bduss, onChange: (ev) => setBduss(ev.target.value),
+                }),
+                h("button", { style: S.btn(true), disabled: busy, onClick: () => void saveBduss() }, busy ? "…" : "保存并测试"),
+              ),
+              h("div", { style: { ...S.muted, fontSize: 11, lineHeight: 1.6, marginTop: 6 } },
+                "拿法：电脑浏览器登录贴吧 → F12 → Application → Cookies → tieba.baidu.com → 复制 BDUSS 的值。"),
+              msg ? h("div", { style: { fontSize: 12, color: msg.includes("失败") || msg.includes("连不上") ? "#c0392b" : "#2fa36b", marginTop: 6 } }, msg) : null,
+            ),
+            h("div", { style: S.card },
+              h("div", { style: S.label }, "开关"),
+              rowCard(!!(st && st.enabled), "启用贴吧",
+                "关掉她就不逛、也不回帖。开着才会用 tieba_* 那几个工具。",
+                () => void patchCfg({ enabled: !(st && st.enabled) })),
+              rowCard(!!(st && st.replyEnabled), "允许回帖",
+                "开了她才能在人类吧里说话。建议先只读几天，再打开这个。",
+                () => void patchCfg({ replyEnabled: !(st && st.replyEnabled) })),
+            ),
+          ),
+
+          // ---- 右栏：逛的吧 + 试一下
+          h("div", { style: { flex: "1 1 0", minWidth: 320, display: "flex", flexDirection: "column", gap: 12 } },
+            h("div", { style: S.card },
+              h("div", { style: S.label }, "她常逛的吧"),
+              h("div", { style: { ...S.muted, fontSize: 11, lineHeight: 1.6 } },
+                "填吧名就行，不要带「吧」字。她逛的时候会从这里面挑。"),
+              h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 } },
+                bars.length
+                  ? bars.map((b) => h("span", {
+                      key: b,
+                      style: {
+                        display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12,
+                        padding: "4px 8px", borderRadius: 8, background: "#fff",
+                        border: "1px solid rgba(0,0,0,.12)",
+                      },
+                    },
+                      b,
+                      h("button", {
+                        type: "button",
+                        onClick: () => delBar(b),
+                        style: { border: "none", background: "none", cursor: "pointer", color: "#9ca3af", padding: 0, fontSize: 12 },
+                      }, "×"),
+                    ))
+                  : h("span", { style: S.muted }, "还没加"),
+              ),
+              h("div", { style: { display: "flex", gap: 8, marginTop: 8 } },
+                h("input", {
+                  style: S.input, placeholder: "加一个吧名，回车",
+                  value: newBar, onChange: (ev) => setNewBar(ev.target.value),
+                  onKeyDown: (ev) => { if (ev.key === "Enter") addBar(); },
+                }),
+                h("button", { style: S.btn(false), onClick: addBar }, "添加"),
+              ),
+            ),
+            h("div", { style: S.card },
+              h("div", { style: S.label }, "试一下她看到什么"),
+              h("div", { style: { display: "flex", gap: 8, marginTop: 6 } },
+                h("input", {
+                  style: S.input, placeholder: "吧名，比如 显卡",
+                  value: kw, onChange: (ev) => setKw(ev.target.value),
+                  onKeyDown: (ev) => { if (ev.key === "Enter") void tryBrowse(); },
+                }),
+                h("button", { style: S.btn(false), disabled: busy, onClick: () => void tryBrowse() }, busy ? "读…" : "看一页"),
+              ),
+              list && list.ok
+                ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginTop: 10 } },
+                    h("div", { style: { ...S.muted, fontSize: 11 } },
+                      (list.kw || kw) + " · " + ((list.threads || []).length) + " 帖"),
+                    (list.threads || []).slice(0, 15).map((t) =>
+                      h("div", { key: t.id, style: { ...S.card, padding: "6px 10px" } },
+                        h("div", { style: { fontSize: 12.5, lineHeight: 1.5 } }, t.title),
+                        h("div", { style: { ...S.muted, fontSize: 11, marginTop: 2 } },
+                          "tid " + t.id + (t.reply ? " · " + t.reply + " 回复" : "")),
+                      )),
+                  )
+                : null,
+            ),
           ),
         );
       }
