@@ -536,7 +536,13 @@ class Handler(BaseHTTPRequestHandler):
             # 2026-11-08：把这一轮用户说的话带进来，让「跟话题沾边的优先」真正生效
             #（之前固定传空串，等于永远随机抽 3 条，跟当前聊的没关系）。
             try:
-                st["expressions"] = store.expr_pick("", recent_text, 3)
+                # 按会话来源过滤：私聊/群聊只挑「这个会话学来的 + 网友的」，
+                # 不要把贴吧学来的腔调塞进聊天的提示词里
+                _sc = (query.get("scope") or [""])[0].strip()
+                _allowed = ["global"]
+                if _sc.startswith("private:") or _sc.startswith("group:"):
+                    _allowed = [_sc, "global"]
+                st["expressions"] = store.expr_pick("", recent_text, 3, scopes=_allowed)
             except Exception:
                 st["expressions"] = []
             st["view_hour"] = hour
@@ -2278,7 +2284,8 @@ class Handler(BaseHTTPRequestHandler):
         # 照 tieba-dive 的做法 —— 风格库是回帖前检索出来的 few-shot，不是常驻提示词。
         try:
             topic = " ".join([str(r.get("title") or "")] + [str(x)[:60] for x in (r.get("floors") or [])[:3]])
-            r["styleRefs"] = store.expr_pick("", topic, 3)
+            # 贴吧回帖只参考「贴吧学来的 + 网友的」
+            r["styleRefs"] = store.expr_pick("", topic, 3, scopes=["tieba", "global"])
         except Exception:
             r["styleRefs"] = []
         try:

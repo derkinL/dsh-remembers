@@ -1424,7 +1424,8 @@ class MemoryStore:
             return 0
         return len(drop)
 
-    def expr_pick(self, scope: str = "", recent_text: str = "", n: int = 3) -> list[dict]:
+    def expr_pick(self, scope: str = "", recent_text: str = "", n: int = 3,
+                  scopes: list[str] | None = None) -> list[dict]:
         """加权抽样：跟这轮话题沾边的优先，见过的次数多的优先。
 
         count 线性映射到 1-5 倍权重；situation 里至少两个二字片段在本轮话里出现 → ×3。
@@ -1457,10 +1458,18 @@ class MemoryStore:
             return sum(1 for g in grams if g in text)
 
         try:
-            # 全库都参与 —— 梗不分场合来源，学到就能用
-            rows = [dict(r) for r in self.conn.execute(
-                "SELECT id, scope, situation, style, example, count FROM expressions "
-                "ORDER BY count DESC LIMIT 200")]
+            # scopes 给了就只在这些来源里挑（聊天别混进贴吧腔、贴吧别混进群里的私话）；
+            # 不给 = 全库（老行为）
+            if scopes:
+                _ph = ",".join("?" for _ in scopes)
+                rows = [dict(r) for r in self.conn.execute(
+                    "SELECT id, scope, situation, style, example, count FROM expressions "
+                    f"WHERE scope IN ({_ph}) ORDER BY count DESC LIMIT 200",
+                    tuple(scopes))]
+            else:
+                rows = [dict(r) for r in self.conn.execute(
+                    "SELECT id, scope, situation, style, example, count FROM expressions "
+                    "ORDER BY count DESC LIMIT 200")]
         except Exception:
             return []
         if not rows:
