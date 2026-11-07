@@ -2245,6 +2245,39 @@ window.__ModuleLoader__.load({
         const [busy, setBusy] = React.useState(false);
         const [err, setErr] = React.useState(null);
 
+        // 右栏列表分页：一页 10 条；换标签/换搜索词回到第一页
+        const PAGE_SIZE = 10;
+        const [page, setPage] = React.useState(0);
+        React.useEffect(() => { setPage(0); }, [mode, tier, q]);
+
+        const pageCount = (n) => Math.max(1, Math.ceil((Number(n) || 0) / PAGE_SIZE));
+        const curPage = (n) => Math.min(Math.max(page, 0), pageCount(n) - 1);
+        const pageSlice = (arr) => {
+          const list = Array.isArray(arr) ? arr : [];
+          const c = curPage(list.length);
+          return list.slice(c * PAGE_SIZE, c * PAGE_SIZE + PAGE_SIZE);
+        };
+        const renderPager = (total) => {
+          const max = pageCount(total);
+          if (max <= 1) return null;
+          const c = curPage(total);
+          return h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" } },
+            h("button", {
+              type: "button",
+              style: { ...S.btn(false), padding: "4px 12px", fontSize: 12 },
+              disabled: c === 0,
+              onClick: () => setPage(c - 1),
+            }, "上一页"),
+            h("span", { style: { ...S.muted, fontSize: 12 } }, `第 ${c + 1} / ${max} 页 · 共 ${total} 条`),
+            h("button", {
+              type: "button",
+              style: { ...S.btn(false), padding: "4px 12px", fontSize: 12 },
+              disabled: c >= max - 1,
+              onClick: () => setPage(c + 1),
+            }, "下一页"),
+          );
+        };
+
         const TIERS = {
           all: "全部",
           L0: "原话",
@@ -2392,6 +2425,21 @@ window.__ModuleLoader__.load({
         // 主面板是整页的，左边放「怎么记」的配置，右边放记忆列表。
         return h("div", { style: { display: "flex", gap: 24, alignItems: "flex-start", flexWrap: "wrap" } },
           h("div", { style: { flex: "0 0 400px", minWidth: 340, display: "flex", flexDirection: "column", gap: 16 } },
+          // 她的状态（常驻顶部，不用点 tab）
+          h("div", { style: S.card },
+            h("div", { style: { ...S.label, marginBottom: 6 } }, "她现在"),
+            stateInfo ? h("div", {},
+              h("div", { style: { display: "flex", gap: 14, flexWrap: "wrap", fontSize: 13, marginBottom: 6 } },
+                h("span", {}, "心情：" + (stateInfo.mood || "normal")),
+                h("span", {}, "亲密度：" + Math.round(Number(stateInfo.intimacy) || 0) + "/1000"),
+                stateInfo.stage && stateInfo.stage.name ? h("span", {}, "阶段：" + stateInfo.stage.name) : null,
+              ),
+              stateInfo.activity ? h("div", { style: { ...S.muted, marginBottom: 4 } }, "在干嘛：" + stateInfo.activity) : null,
+              stateInfo.weather ? h("div", { style: { ...S.muted, marginBottom: 4 } }, "外面：" + stateInfo.weather) : null,
+              h("div", { style: { ...S.muted } },
+                "小游戏：" + (stateInfo.game_score || 0) + " 分（玩了 " + (stateInfo.game_plays || 0) + " 次）"),
+            ) : h("div", { style: S.muted }, "读取中…"),
+          ),
           h("div", { style: S.desc },
             "她记得的所有东西。L0 是原话、L1 是事实、L2 是你的画像、L3 是发生过的事、L4 是里程碑和约定。",
           ),
@@ -2538,21 +2586,6 @@ window.__ModuleLoader__.load({
 
           err ? h("div", { style: S.notice("error") }, err) : null,
 
-          // 她的状态（常驻顶部，不用点 tab）
-          h("div", { style: S.card },
-            h("div", { style: { ...S.label, marginBottom: 6 } }, "她现在"),
-            stateInfo ? h("div", {},
-              h("div", { style: { display: "flex", gap: 14, flexWrap: "wrap", fontSize: 13, marginBottom: 6 } },
-                h("span", {}, "心情：" + (stateInfo.mood || "normal")),
-                h("span", {}, "亲密度：" + Math.round(Number(stateInfo.intimacy) || 0) + "/1000"),
-                stateInfo.stage && stateInfo.stage.name ? h("span", {}, "阶段：" + stateInfo.stage.name) : null,
-              ),
-              stateInfo.activity ? h("div", { style: { ...S.muted, marginBottom: 4 } }, "在干嘛：" + stateInfo.activity) : null,
-              stateInfo.weather ? h("div", { style: { ...S.muted, marginBottom: 4 } }, "外面：" + stateInfo.weather) : null,
-              h("div", { style: { ...S.muted } },
-                "小游戏：" + (stateInfo.game_score || 0) + " 分（玩了 " + (stateInfo.game_plays || 0) + " 次）"),
-            ) : h("div", { style: S.muted }, "读取中…"),
-          ),
           ),
 
           h("div", { style: { flex: "1 1 0", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 } },
@@ -2816,7 +2849,7 @@ window.__ModuleLoader__.load({
               }),
             ) : h("div", { style: S.muted }, emotionList ? "还没有情感记录（聊几句，情绪有波动就会记）" : "读取中…")
           ) : data && data.items && data.items.length > 0 ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
-            data.items.map((m) => h("div", {
+            pageSlice(data.items).map((m) => h("div", {
               key: m.id,
               style: { ...S.card, padding: "10px 12px" },
             },
@@ -2835,6 +2868,7 @@ window.__ModuleLoader__.load({
               h("div", { style: { fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word" } }, m.text),
               m.summary ? h("div", { style: { ...S.muted, fontSize: 12, marginTop: 4 } }, "摘要：" + m.summary) : null,
             )),
+            renderPager(data.items.length),
           ) : (data ? h("div", { style: S.muted }, "没有匹配的记忆") : null),
           ),
         );
