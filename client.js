@@ -133,14 +133,12 @@ window.__ModuleLoader__.load({
           "border-radius:9px;background:rgba(64,132,255,.08);font-size:16px;line-height:1}",
           ".dshm-back{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;padding:4px 8px;margin-left:-8px;",
           "border:none;border-radius:8px;background:transparent;cursor:pointer;font-family:inherit;font-size:12px;",
-          "color:var(--dsw-alias-label-secondary,#6b7280);transition:background .12s ease,color .12s ease}",
-          ".dshm-back:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.04));",
-          "color:var(--dsw-alias-label-primary,#111827)}",
+          "color:var(--dsw-alias-label-secondary,#6b7280)}",
+          // 没保存块的页面：用和「保存」一模一样的白块装那颗返回，不做悬浮动效。
           ".dshm-fab{position:fixed;right:24px;top:50%;transform:translateY(-50%);z-index:9999;",
-          "padding:8px 14px;border-radius:10px;border:1px solid rgba(0,0,0,.08);background:#fff;",
-          "box-shadow:0 8px 24px rgba(0,0,0,.12);cursor:pointer;font-family:inherit;font-size:12.5px;",
-          "color:var(--dsw-alias-label-secondary,#6b7280);transition:box-shadow .2s ease,color .2s ease}",
-          ".dshm-fab:hover{color:var(--dsw-alias-label-primary,#111827);box-shadow:0 10px 28px rgba(0,0,0,.16)}",
+          "display:flex;flex-direction:column;gap:8px;box-sizing:border-box;min-width:140px;",
+          "padding:12px 16px;border-radius:12px;border:1px solid rgba(0,0,0,.08);background:#fff;",
+          "box-shadow:0 8px 24px rgba(0,0,0,.12)}",
         ].join("");
         document.head.appendChild(_hub);
       }
@@ -177,14 +175,7 @@ window.__ModuleLoader__.load({
           color: primary ? "var(--dsw-color-accent-text, #fff)" : "var(--dsw-color-text-primary, #111827)",
           fontFamily: "inherit",
         }),
-        // 悬浮「保存」块最上面那颗返回：页面滚下去以后不用再拉回顶部。
-        back: {
-          padding: "6px 10px", fontSize: 12, lineHeight: 1.4, borderRadius: 8, cursor: "pointer",
-          border: "1px solid var(--dsw-color-border, rgba(0,0,0,.14))",
-          background: "transparent",
-          color: "var(--dsw-color-text-secondary, #6b7280)",
-          fontFamily: "inherit", textAlign: "center",
-        },
+
         disclosure: {
           display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
           fontSize: 13, color: "var(--dsw-color-text-secondary, #6b7280)",
@@ -473,7 +464,7 @@ window.__ModuleLoader__.load({
             },
           },
             props && props.onBack
-              ? h("button", { type: "button", style: S.back, onClick: props.onBack }, "← 她的记忆")
+              ? h("button", { type: "button", style: S.btn(false), onClick: props.onBack }, "← 她的记忆")
               : null,
             notice ? h("div", { style: { fontSize: 12, color: notice.kind === "error" ? "#c0392b" : "#2fa36b", textAlign: "center" } }, notice.text) : null,
             h("button", { type: "button", style: S.btn(true), onClick: save, disabled: saving },
@@ -1617,7 +1608,7 @@ window.__ModuleLoader__.load({
             },
           },
             props && props.onBack
-              ? h("button", { type: "button", style: S.back, onClick: props.onBack }, "← 她的记忆")
+              ? h("button", { type: "button", style: S.btn(false), onClick: props.onBack }, "← 她的记忆")
               : null,
             msg ? h("div", { style: { fontSize: 12, color: msg.includes("失败") ? "#c0392b" : "#2fa36b", textAlign: "center" } }, msg) : null,
             h("button", { style: S.btn(true), onClick: () => void save() }, "保存"),
@@ -2200,7 +2191,7 @@ window.__ModuleLoader__.load({
                   },
                 },
                 props && props.onBack
-                  ? h("button", { type: "button", style: S.back, onClick: props.onBack }, "← 她的记忆")
+                  ? h("button", { type: "button", style: S.btn(false), onClick: props.onBack }, "← 她的记忆")
                   : null,
                 savedAt ? h("div", { style: { fontSize: 12, color: "#2fa36b", textAlign: "center" } }, "已保存 " + savedAt) : null,
                 h("button", { style: S.btn(true), onClick: () => void saveAll(), disabled: busy }, busy ? "保存中…" : "保存"),
@@ -3562,7 +3553,7 @@ const [data, setData] = React.useState(null);
             },
           },
             props && props.onBack
-              ? h("button", { type: "button", style: S.back, onClick: props.onBack }, "← 她的记忆")
+              ? h("button", { type: "button", style: S.btn(false), onClick: props.onBack }, "← 她的记忆")
               : null,
             notice ? h("div", {
               style: {
@@ -4483,7 +4474,7 @@ const [data, setData] = React.useState(null);
             },
           },
             props && props.onBack
-              ? h("button", { type: "button", style: S.back, onClick: props.onBack }, "← 她的记忆")
+              ? h("button", { type: "button", style: S.btn(false), onClick: props.onBack }, "← 她的记忆")
               : null,
             notice ? h("div", { style: { fontSize: 12, color: notice.kind === "error" ? "#c0392b" : "#2fa36b", textAlign: "center" } }, notice.text) : null,
             h("button", { type: "button", style: S.btn(true), onClick: save, disabled: saving },
@@ -4538,12 +4529,11 @@ const [data, setData] = React.useState(null);
               ),
               h(item.Comp, { onBack: back }),
             ),
-            // 没有「保存」悬浮块的页面（记忆、表情包）：入口页补一个同位置的。
-            item.panel ? null : h("button", {
-              type: "button",
-              className: "dshm-fab",
-              onClick: back,
-            }, "← 她的记忆"),
+            // 没有「保存」悬浮块的页面（记忆、表情包）：用同样一只白块装返回，
+            // 外观和保存块一致，不做上浮/变色那套动效。
+            item.panel ? null : h("div", { className: "dshm-fab" },
+              h("button", { type: "button", style: S.btn(false), onClick: back }, "← 她的记忆"),
+            ),
           );
         }
 
