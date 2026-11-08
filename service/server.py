@@ -1487,22 +1487,12 @@ class Handler(BaseHTTPRequestHandler):
         return out
 
     def _voice_samples(self, limit: int = 8) -> list[str]:
-        """进口音区的原句。
+        """进口音区的原句 = **她自己说过的话**。
 
-        1.2.1：**她自己的发言优先**——口音是「她怎么说话」，不是「网友怎么说」。
-        自己的样本不足 3 句时，才用参考语料垫一下（档案里会标「样本不足」）。
+        1.2.1：不再拿网友原句垫。参考语料走每轮的 `phrase_hints`（状态块），
+        只在「这个场合别人怎么说」的位置出现，不冒充「我平时会这么说」。
         """
-        out = self._self_voice_samples(limit)
-        if len(out) >= 3:
-            return out[:limit]
-        for r in store.expr_voice_samples(max(6, limit)):
-            t = str(r.get("raw") or "").strip()
-            if not t or t in out:
-                continue
-            out.append(t)
-            if len(out) >= limit:
-                break
-        return out[:limit]
+        return self._self_voice_samples(limit)
 
     def _voice_doc_rule(self, stats: dict, samples: list[str], first_person: bool = True) -> str:
         """没配 LLM（或样本不足）时的口音档案：直接拿统计拼一段，不编形容词。
@@ -1510,7 +1500,7 @@ class Handler(BaseHTTPRequestHandler):
         first_person=False 用于「参考语料垫档」：不能写成「我说话中位 3 字」，
         那是网友的句子，不是她的口音。
         """
-        me = "我" if first_person else "参考句子"
+        me = "我说话" if first_person else "参考句子"
         bits: list[str] = []
         if stats.get("median_len"):
             bits.append("%s中位 %s 字" % (me, stats["median_len"]))
