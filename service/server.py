@@ -194,6 +194,17 @@ def _init() -> None:
     except Exception:
         pass
 
+    # 启动时导入内置语料库（dsh-fish-tone-flavor, MIT）：默认就有一千条可用
+    try:
+        _seeds_path = os.path.join(DATA_DIR, "seeds.json")
+        if os.path.exists(_seeds_path):
+            _seed_data = json.load(open(_seeds_path, encoding="utf-8"))
+            _n = store.expr_import_seeds(_seed_data.get("items") or [])
+            if _n:
+                print(f"[cmem] seeds imported: {_n}", flush=True)
+    except Exception as _e:
+        print(f"[cmem] seeds import failed: {_e}", flush=True)
+
     # 启动时把每个来源的说法裁到上限（老库里可能已经堆到 55+）
     try:
         for _row in store.conn.execute("SELECT DISTINCT scope FROM expressions"):
@@ -458,6 +469,8 @@ class Handler(BaseHTTPRequestHandler):
                 "text": self._tightness_text(),
                 "isDefault": self._tightness_text() == self.DEFAULT_TIGHTNESS,
             }))
+        elif path == "/phrases/tags":
+            self._guard(lambda: self._json(200, self._phrase_tags()))
         elif path == "/phrases":
             self._guard(lambda: self._get_phrases(query))
         elif path == "/voice":
@@ -903,58 +916,126 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return {}
 
-    def _get_phrases(self, query) -> None:
-        """按分类/场景查「已转正」的说法（canon 出现 ≥3 次才算）。
+    def _phrase_tags(self) -> dict:
+        """语料库分类统计（页面顶部的分类按钮用）。"""
+        out = {"ok": True, "tags": [], "total": 0, "seeds": 0, "learned": 0}
+        try:
+            rows = store.conn.execute(
+                "SELECT situation, source, COUNT(*) FROM expressions WHERE status='active' "
+                "GROUP BY situation, source").fetchall()
+        except Exception:
+            return out
+        agg = {}
+        for situation, source, n in rows:
+            tag = str(situation or "").strip()
+            n = int(n)
+            out["total"] += n
+            if str(source or "") == "seed":
+                out["seeds"] += n
+            else:
+                out["learned"] += n
+            if tag:
+                agg[tag] = agg.get(tag, 0) + n
+        out["tags"] = sorted([{"tag": k, "n": v} for k, v in agg.items()], key=lambda x: -x["n"])
+        return out
 
-        闲聊不再把例子写死在人格里；她要找具体说法时按场合来查。
+    def _get_phrases(self, query) -> None:
+        """按分类/场景查「已转正」的说法：默认语料（seed）+ 她学到的（active）。
+
+        n 给工具用（默认 4，最多 10）；limit/offset 给页面浏览用（最多 200）。
         """
         tag = (query.get("tag") or [""])[0].strip()
         q = (query.get("q") or [""])[0].strip()
+        kind = (query.get("kind") or [""])[0].strip()
         try:
             n = max(1, min(10, int((query.get("n") or ["4"])[0])))
         except Exception:
             n = 4
-        rows = []
         try:
-            rows = store.expr_active(60)
+            limit = max(1, min(200, int((query.get("limit") or ["0"])[0]))) or 0
+        except Exception:
+            limit = 0
+        try:
+            offset = max(0, int((query.get("offset") or ["0"])[0]))
+        except Exception:
+            offset = 0
+
+        sql = ("SELECT id, situation, raw, source, likes, hits, scene, meaning, usage, tail "
+               "FROM expressions WHERE status='active'")
+        args = []
+        if tag and tag not in ("全部", "all"):
+            sql += " AND situation = ?"
+            args.append(tag)
+        if kind == "seed":
+            sql += " AND source = 'seed'"
+        elif kind == "learned":
+            sql += " AND source != 'seed'"
+        sql += " ORDER BY (source='seed') ASC, likes DESC, id DESC"
+        try:
+            rows = [dict(r) for r in store.conn.execute(sql, args)]
         except Exception:
             rows = []
-        if tag:
-            rows = [r for r in rows if str(r.get("situation") or "") == tag]
-        if q and rows:
-            # 先看有没有场景词精确/包含匹配的，有就优先给它们
-            qq = q.strip()
-            exact = [r for r in rows if qq and (qq in str(r.get("scene") or "") or str(r.get("scene") or "") in qq)]
-            if exact:
-                rows = exact + [r for r in rows if r not in exact]
-        if q and rows:
-            import re as _re
+
+        if q:
             _P = set("，,。.！!？?、；;：:\"'“”‘’「」『』（）()…~～")
             def _norm(x):
                 return "".join(c for c in str(x or "").lower() if not c.isspace() and c not in _P)
             qt = _norm(q)
             def score(r):
                 hit = 0
-                for field in ("raw", "situation", "style"):
+                scene = _norm(r.get("scene") or "")
+                if scene and (scene in qt or qt in scene):
+                    hit += 6
+                for field in ("raw", "meaning", "usage", "situation"):
                     s2 = _norm(r.get(field) or "")
                     if not s2:
                         continue
                     grams = {s2[i:i + 2] for i in range(len(s2) - 1)}
                     hit += sum(1 for g in grams if g in qt)
                 return hit
-            rows = sorted(rows, key=lambda r: (-score(r), -(int(r.get("likes") or 0))))
+            scored = [(score(r), r) for r in rows]
+            scored = [(sc, r) for sc, r in scored if sc > 0]
+            scored.sort(key=lambda x: (-x[0], -(int(x[1].get("likes") or 0))))
+            rows = [r for _sc, r in scored]
+
+        total = len(rows)
+        take = limit or n
+        rows = rows[offset:offset + take]
         out = [{
-            "raw": (r.get("raw") or r.get("style") or ""),
+            "raw": (r.get("raw") or ""),
             "tag": (r.get("situation") or ""),
             "scene": (r.get("scene") or ""),
+            "source": (r.get("source") or ""),
             "meaning": (r.get("meaning") or ""),
             "usage": (r.get("usage") or ""),
             "tail": bool(r.get("tail")),
             "likes": int(r.get("likes") or 0),
             "hits": int(r.get("hits") or 0),
-        } for r in rows[:n] if (r.get("raw") or r.get("style"))]
-        tags = sorted({(r.get("situation") or "") for r in rows if r.get("situation")})
-        self._json(200, {"ok": True, "items": out, "tags": tags, "total": len(rows)})
+        } for r in rows if (r.get("raw") or "").strip()]
+        self._json(200, {"ok": True, "items": out, "total": total})
+
+    def _phrase_tags(self) -> dict:
+        """语料库分类统计（页面顶部的分类按钮用）。"""
+        out = {"ok": True, "tags": [], "total": 0, "seeds": 0, "learned": 0}
+        try:
+            rows = store.conn.execute(
+                "SELECT situation, source, COUNT(*) FROM expressions WHERE status='active' "
+                "GROUP BY situation, source").fetchall()
+        except Exception:
+            return out
+        agg = {}
+        for situation, source, n in rows:
+            tag = str(situation or "").strip()
+            n = int(n)
+            out["total"] += n
+            if str(source or "") == "seed":
+                out["seeds"] += n
+            else:
+                out["learned"] += n
+            if tag:
+                agg[tag] = agg.get(tag, 0) + n
+        out["tags"] = sorted([{"tag": k, "n": v} for k, v in agg.items()], key=lambda x: -x["n"])
+        return out
 
     def _voice_samples(self, limit: int = 8) -> list[str]:
         """已启用的原句（只有 status=active 才有资格进口音区）。"""

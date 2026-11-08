@@ -2482,13 +2482,6 @@ window.__ModuleLoader__.load({
                 onClick: () => { setMode("notes"); void loadNotes(); },
               }, "便签" + (notesList ? ` ${notesList.length}` : "")),
               h("button", {
-                className: "dshm-tab", "data-on": mode === "slang" || mode === "expr" ? "1" : "0",
-                onClick: () => { setMode("slang"); void loadSlang(); },
-              }, "学说话"
-                + ((slangList || exprList)
-                  ? ` ${(slangList || []).filter((s) => (s.meaning || "").trim()).length + (exprList || []).length}`
-                  : "")),
-              h("button", {
                 className: "dshm-tab", "data-on": mode === "self" ? "1" : "0",
                 onClick: () => { setMode("self"); void loadSelfModel(); },
               }, "自我认知"),
@@ -2593,7 +2586,7 @@ window.__ModuleLoader__.load({
                 renderPager((notesList || []).length),
                 )
               : h("div", { style: S.muted }, notesList ? "还没记过便签" : "读取中…")
-          ) : mode === "slang" ? (
+          ) : mode === "__moved_to_learn" ? (
             (() => {
               if (!slangList && !exprList) return h("div", { style: S.muted }, "读取中…")
               const exprs = exprList || []
@@ -4578,6 +4571,31 @@ const [data, setData] = React.useState(null);
         const [voiceDoc, setVoiceDoc] = React.useState("");
         const [tightText, setTightText] = React.useState("");
         const [styleForm, setStyleForm] = React.useState({ speaking: "", ai_flavor_on: true, ai_flavor: "" });
+        // 语料库视图（默认语料 1020 条 + 学到的）
+        const [view, setView] = React.useState("config");
+        const [cTags, setCTags] = React.useState([]);
+        const [cItems, setCItems] = React.useState([]);
+        const [cTag, setCTag] = React.useState("全部");
+        const [cQ, setCQ] = React.useState("");
+        const [cTotal, setCTotal] = React.useState(0);
+        const [cPage, setCPage] = React.useState(0);
+        const C_PAGE = 24;
+        const loadCorpus = async (tag, q, page) => {
+          try {
+            const t = await call("/phrases/tags");
+            setCTags(Array.isArray(t && t.tags) ? t.tags : []);
+          } catch { /* ignore */ }
+          try {
+            const p = new URLSearchParams();
+            if (tag && tag !== "全部") p.set("tag", tag);
+            if (q) p.set("q", q);
+            p.set("limit", String(C_PAGE));
+            p.set("offset", String((page || 0) * C_PAGE));
+            const r = await call("/phrases?" + p.toString());
+            setCItems(Array.isArray(r && r.items) ? r.items : []);
+            setCTotal(Number((r && r.total) || 0));
+          } catch { setCItems([]); setCTotal(0); }
+        };
         const [voiceBuiltAt, setVoiceBuiltAt] = React.useState(0);
         const [msg, setMsg] = React.useState(null);
         const [busy, setBusy] = React.useState(false);
@@ -4665,6 +4683,90 @@ const [data, setData] = React.useState(null);
           ),
         );
 
+        // ===== 语料库视图（像表情包页那样：分类 + 卡片网格 + 分页）=====
+        if (view === "corpus") {
+          const pageCount = Math.max(1, Math.ceil((cTotal || 0) / C_PAGE));
+          const pager = () => {
+            if (pageCount <= 1) return null;
+            const btns = [];
+            for (let i = 0; i < pageCount; i++) {
+              if (pageCount > 9 && i > 1 && i < pageCount - 2 && Math.abs(i - cPage) > 1) {
+                if (btns[btns.length - 1] !== "…") btns.push("…");
+                continue;
+              }
+              btns.push(i);
+            }
+            return h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 14 } },
+              ...btns.map((b, idx) => (b === "…"
+                ? h("span", { key: "e" + idx, style: { ...S.muted, padding: "4px 2px" } }, "…")
+                : h("button", {
+                    key: "p" + b,
+                    style: { ...S.btn(b === cPage), fontSize: 12, padding: "4px 10px" },
+                    onClick: () => { setCPage(b); void loadCorpus(cTag, cQ, b); },
+                  }, String(b + 1)))),
+            );
+          };
+          return h("div", null,
+            h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" } },
+              h("button", { style: { ...S.btn(false), fontSize: 12 }, onClick: () => setView("config") }, "← 返回设置"),
+              h("div", { style: { fontSize: 15, fontWeight: 700 } }, "语料库"),
+              h("span", { style: { ...S.muted, fontSize: 12 } },
+                `共 ${cTotal} 条 · 默认语料 1020 条 + 学到的`),
+            ),
+            h("div", { style: S.card, marginBottom: 14 },
+              h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 } },
+                h("button", {
+                  style: { ...S.btn(cTag === "全部"), fontSize: 12, padding: "5px 12px" },
+                  onClick: () => { setCTag("全部"); setCPage(0); void loadCorpus("全部", cQ, 0); },
+                }, "全部"),
+                ...cTags.map((t) => h("button", {
+                  key: "ct-" + t.tag,
+                  style: { ...S.btn(cTag === t.tag), fontSize: 12, padding: "5px 12px" },
+                  onClick: () => { setCTag(t.tag); setCPage(0); void loadCorpus(t.tag, cQ, 0); },
+                }, t.tag + " " + t.n)),
+              ),
+              h("div", { style: { display: "flex", gap: 8 } },
+                h("input", {
+                  style: { ...S.input, flex: 1, minWidth: 0 },
+                  placeholder: "搜索梗 / 意思 / 用法…",
+                  value: cQ,
+                  onChange: (ev) => setCQ(ev.target.value),
+                  onKeyDown: (ev) => { if (ev.key === "Enter") { setCPage(0); void loadCorpus(cTag, cQ, 0); } },
+                }),
+                h("button", {
+                  style: { ...S.btn(true), flexShrink: 0 },
+                  onClick: () => { setCPage(0); void loadCorpus(cTag, cQ, 0); },
+                }, "搜索"),
+              ),
+            ),
+            cItems.length === 0
+              ? h("div", { style: S.muted }, "没有符合的条目")
+              : h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 12 } },
+                  ...cItems.map((it, i) => h("div", {
+                    key: "ci" + i,
+                    style: {
+                      ...S.card, margin: 0, display: "flex", flexDirection: "column", gap: 6,
+                      minHeight: 118, height: "100%", boxSizing: "border-box",
+                      borderLeft: "3px solid " + (it.source === "seed" ? "#4084ff" : "#f0803c"),
+                    },
+                  },
+                    h("div", { style: { display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" } },
+                      h("span", { style: { fontSize: 14, fontWeight: 700 } }, it.raw),
+                      it.tail ? h("span", { style: { fontSize: 10, padding: "1px 6px", borderRadius: 999, background: "rgba(64,132,255,.12)", color: "#2563eb" } }, "可收尾") : null,
+                    ),
+                    it.meaning ? h("div", { style: { ...S.muted, fontSize: 12, lineHeight: 1.6 } }, it.meaning) : null,
+                    it.usage ? h("div", { style: { fontSize: 11.5, color: "#666", lineHeight: 1.55 } }, "例：" + it.usage) : null,
+                    h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginTop: "auto", flexWrap: "wrap" } },
+                      h("span", { style: { fontSize: 10.5, padding: "1px 7px", borderRadius: 999, background: "rgba(0,0,0,.05)", color: "#555" } }, it.tag || "未分类"),
+                      h("span", { style: { fontSize: 10.5, color: it.source === "seed" ? "#4084ff" : "#f0803c" } },
+                        it.source === "seed" ? "默认语料" : "学到的"),
+                      it.likes ? h("span", { style: { ...S.muted, fontSize: 10.5 } }, "频次 " + it.likes) : null,
+                    ),
+                  ))),
+            pager(),
+          );
+        }
+
         return h("div", { style: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" } },
           h("div", { style: { flex: "0 0 380px", minWidth: 300, display: "flex", flexDirection: "column", gap: 12 } },
             h("div", { style: S.card },
@@ -4700,6 +4802,17 @@ const [data, setData] = React.useState(null);
                 : null,
               h("div", { style: { ...S.muted, fontSize: 11, marginTop: 8, lineHeight: 1.6 } },
                 "每个来源最多留 40 条（按见过次数和最近用上排序）。想看具体条目去「记忆 → 学说话」。"),
+            ),
+            h("div", { style: S.card },
+              h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } },
+                h("div", { style: S.label }, "语料库"),
+                h("button", {
+                  style: { ...S.btn(true), fontSize: 12, flexShrink: 0 },
+                  onClick: () => { setView("corpus"); setCPage(0); void loadCorpus(cTag, cQ, 0); },
+                }, "打开语料库"),
+              ),
+              h("div", { style: { ...S.muted, fontSize: 12, lineHeight: 1.7 } },
+                "内置 1020 条默认语料（来自 dsh-fish-tone-flavor，MIT），加上她自己在聊天/评论区学到的。按分类浏览。"),
             ),
             h("div", { style: S.card },
               h("div", { style: S.label }, "口音区（写进人格的那一段）"),

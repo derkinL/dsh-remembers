@@ -1443,7 +1443,7 @@ class MemoryStore:
         """
         try:
             rows = self.conn.execute(
-                "SELECT id FROM expressions WHERE scope=? "
+                "SELECT id FROM expressions WHERE scope=? AND source != 'seed' "
                 "ORDER BY count DESC, last_hit DESC, id DESC", (scope,)).fetchall()
         except Exception:
             return 0
@@ -1617,6 +1617,42 @@ class MemoryStore:
         except Exception:
             return []
 
+    def expr_import_seeds(self, items: list[dict]) -> int:
+        """把内置语料库灌进 expressions（source='seed'）。幂等：条数一致就跳过。"""
+        if not items:
+            return 0
+        try:
+            cur = self.conn.execute("SELECT COUNT(*) FROM expressions WHERE source='seed'")
+            if int(cur.fetchone()[0]) == len(items):
+                return 0
+        except Exception:
+            pass
+        try:
+            self.conn.execute("DELETE FROM expressions WHERE source='seed'")
+            now = __import__("time").time()
+            rows = []
+            for it in items:
+                raw = str(it.get("raw") or "").strip()[:120]
+                if not raw:
+                    continue
+                hits = int(it.get("hits") or 0)
+                # 12 个占位：scope/situation/style/example/meaning/usage/tail/likes/ts/last_hit/canon/raw
+                rows.append((
+                    "seed", str(it.get("vibe") or "")[:12], raw, raw, str(it.get("meaning") or "")[:200],
+                    str(it.get("usage") or "")[:200], 1 if it.get("tail") else 0,
+                    min(99999, hits), now, raw, raw, raw,
+                ))
+            self.conn.executemany(
+                "INSERT OR IGNORE INTO expressions"
+                "(scope, situation, style, example, meaning, usage, tail, count, likes, ts, last_hit,"
+                " canon, raw, source, hits, status)"
+                " VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,'seed',1,'active')", rows)
+            self.conn.commit()
+            return len(rows)
+        except Exception as e:
+            print(f"[cmem] expr_import_seeds failed: {e}", flush=True)
+            return 0
+
     def expr_set_notes(self, eid: int, meaning: str, usage: str, tail: bool) -> int:
         cur = self.conn.execute(
             "UPDATE expressions SET meaning=?, usage=?, tail=? WHERE id=?",
@@ -1667,7 +1703,8 @@ class MemoryStore:
             return [dict(r) for r in self.conn.execute(
                 "SELECT id, scope, situation, style, raw, source, likes, hits, scene, meaning, usage, tail "
                 "FROM expressions WHERE status='active' "
-                "ORDER BY hits DESC, likes DESC, last_hit DESC LIMIT ?", (max(1, int(limit)),))]
+                "ORDER BY (source='seed') ASC, hits DESC, likes DESC, last_hit DESC LIMIT ?",
+                (max(1, int(limit)),))]
         except Exception:
             return []
 
