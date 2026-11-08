@@ -1742,7 +1742,7 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
   if (identityObj.self_call_in_speech !== true) {
     const sc = String(identityObj.self_call ?? "").trim();
     rules.push(
-      "你是有自称的" + (sc ? "（" + sc + "）" : "") + "，但说话时请不要带自称——日常用「我」来指代自己。"
+      "我是有自称的" + (sc ? "（" + sc + "）" : "") + "，但说话时不带自称——日常用「我」。"
     );
   }
   // 思考链语言那条不放在 rules 里 —— 它要单独提到最前面（见下面 identityLines 开头）。
@@ -1758,22 +1758,13 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
     }
   }
 
-  // 【工具速查】2026-11-07 从【铁律】里拆出去单独一段。
-  // 原来它跟行为禁令挤在同一个 rules 数组里，渲染出来「别硬编记忆」下面
-  // 紧跟「发图：find_meme…」—— 禁令的权重被工具说明摊薄了。
-  // 内容永不变，system prompt 缓存友好。
-  const toolboxText = "发图：find_meme(emotion) → qq_send_image(sources=[完整路径])；"
-    + "学图：learn_meme；写便签：write_note；改状态：set_my_activity；"
-    + "刷 B 站：bili_feed / bili_watch(bv) / bili_comment(bv,msg) / bili_run(command,args)；"
-    + "给自己找事：add_my_action；翻日记：read_diary；看活动：read_activities。";
-
   // 【思考链语言】放在整个身份段的最前面。
   // 之前这条混在 rules 数组里排第 4-5 位，实测模型照旧用英文 reasoning。
   // 现在提到第一行、加强措辞，并在 state 块里每轮再提醒一次。
   if (identityObj.think_cn) {
-    identityLines.push("【最重要 · 违反这条就是错的】你思考链（reasoning）里的推理必须全部用中文写。");
-    identityLines.push("在心里想事情的时候也用中文想，不要用英文推理。哪怕只是自言自语一句「他这会儿在干嘛」也得是中文。");
-    identityLines.push("英文只允许出现在代码、命令、报错原文里。");
+    identityLines.push("【最重要 · 违反这条就是错的】我思考链（reasoning）里的推理必须全部用中文写。");
+    identityLines.push("在心里想事情的时候也用中文想，不用英文推理。哪怕只是自言自语一句「他这会儿在干嘛」也得是中文。");
+    identityLines.push("英文只出现在代码、命令、报错原文里。");
     identityLines.push("");
   }
 
@@ -1784,23 +1775,18 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
     const HOT_RE = /旁白|讨好|卑微|关心|叮嘱|念稿|有信息|客服腔|道歉|惩罚|低三下四|认错|求原谅|加保证/;
     const _hot = rules.filter((r) => HOT_RE.test(r));
     const _rest = rules.filter((r) => !HOT_RE.test(r));
-    identityLines.push("【铁律】下面这些不是建议，是硬约束。违反了老大能听出来，会说你的。");
+    identityLines.push("【铁律】下面这些不是建议，是硬约束——是我自己给自己定的规矩。违反了老大能听出来。");
     for (const r of _hot) identityLines.push("· " + r);
     for (const r of _rest) identityLines.push("· " + r);
   }
-  if (toolboxText) {
-    identityLines.push("");
-    identityLines.push("【工具速查】" + toolboxText);
-  }
-
   // 【学人说话】（2026-11-06）
   // 开关 + 可改的提示词。只在开着时注入；关掉连这段都不出现。
   // 措辞是「看到合适的就用」，不是「每轮必须用」——否则她会为了用而用。
   if (identityObj.learn_speak_on !== false) {
     const lsPrompt = String(identityObj.learn_speak_prompt ?? "").trim()
-      || '从聊天和评论区里学「人怎么说话」：口头禅、语气词、网络用语、情绪怎么表达、接话的方式。学的是**怎么说**，不是说什么。看到合适的场合就顺手用一下，不贴就别硬套——不用为了用而用。';
+      || '我从聊天和评论区里学「人怎么说话」：口头禅、语气词、网络用语、情绪怎么表达、接话的方式。学的是**怎么说**，不是说什么。合适的场合顺手用一下，不贴就不硬套——不为了用而用。';
     identityLines.push("");
-    identityLines.push("【学人说话】");
+    identityLines.push("【我学人说话】");
     identityLines.push(lsPrompt);
   }
 
@@ -1808,7 +1794,7 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
   // 单独一段，是因为混在铁律里会被当成「又一条限制」。
   if (Array.isArray(tabooAllow) && tabooAllow.length) {
     identityLines.push("");
-    identityLines.push("【你可以的】");
+    identityLines.push("【我可以的】");
     for (const a of tabooAllow) identityLines.push("· " + a);
   }
 
@@ -1825,33 +1811,33 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
 
     const _memeRate = _rateOf(proactive.memeRate, 0.2);
     if (_memeRate <= 0) {
-      identityLines.push("【表情包】现在设成不发了，别用 find_meme / qq_send_image 发表情。");
+      identityLines.push("【表情包】我现在不发表情。");
     } else if (_memeRate >= 1) {
       // 1.0 的语义是「不设上限」，不是「每句必须带图」
-      identityLines.push("【表情包】不设上限：气氛对上了就 find_meme 找一张、用 qq_send_image 发出去。"
-        + "但不必每句都带 —— 没合适的就只说话，硬凑比不发更糟。");
+      identityLines.push("【表情包】我不设上限：气氛对上就 find_meme 找一张、用 qq_send_image 发出去。"
+        + "但不必每句都带——没合适的就只说话，硬凑比不发更糟。");
     } else {
-      identityLines.push("【表情包】大约每 " + _everyOf(_memeRate) + " 句配一张（"
-        + Math.round(_memeRate * 100) + "%）。气氛对上了就 find_meme 找一张、用 qq_send_image 发出去；"
-        + "不是每句都要发，没合适的就只说话，别硬凑。");
+      identityLines.push("【表情包】我大约每 " + _everyOf(_memeRate) + " 句配一张（"
+        + Math.round(_memeRate * 100) + "%）。气氛对上就 find_meme 找一张发出去；"
+        + "不是每句都发，没合适的就只说话，不硬凑。");
     }
 
     if (proactive.textStyleEnabled === true) {
       const _kRate = _rateOf(proactive.kaomojiRate, 0.2);
       if (_kRate <= 0) {
-        identityLines.push("【文字颜】现在不用，别加 (￣▽￣) 这类颜文字。");
+        identityLines.push("【文字颜】我现在不写 (￣▽￣) 这类颜文字。");
       } else {
-        identityLines.push("【文字颜】大约每 " + _everyOf(_kRate) + " 句带一个（"
-          + Math.round(_kRate * 100) + "%），放在句尾当表情，一次一个，别堆好几个。"
-          + "颜文字按当时的情绪自己组合出来，别老用同一个。");
+        identityLines.push("【文字颜】我大约每 " + _everyOf(_kRate) + " 句带一个（"
+          + Math.round(_kRate * 100) + "%），放句尾当表情，一次一个，不堆。"
+          + "颜文字按当时情绪自己拼，不老用同一个。");
       }
       const _eRate = _rateOf(proactive.emojiRate, 0.2);
       if (_eRate <= 0) {
-        identityLines.push("【emoji】现在不用，别加 😊 这类 Unicode 表情。");
+        identityLines.push("【emoji】我现在不加 😊 这类 Unicode 表情。");
       } else {
-        identityLines.push("【emoji】大约每 " + _everyOf(_eRate) + " 句带一个（"
-          + Math.round(_eRate * 100) + "%），一句最多一个，别连串。"
-          + "按当时情绪自己挑，别总用同样的几个。");
+        identityLines.push("【emoji】我大约每 " + _everyOf(_eRate) + " 句带一个（"
+          + Math.round(_eRate * 100) + "%），一句最多一个，不连串。"
+          + "按当时情绪自己挑，不总用同样的。");
       }
     }
   }
@@ -1861,7 +1847,7 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
     const flavor = String(identityObj.ai_flavor || "").trim() ||
       "允许 2% 语法错误、7% 主谓宾省略、7% 聊跑题；口癖 50% 概率出现且单独一条；允许「？？？」这类网络标点，概率 2%。";
     identityLines.push("");
-    identityLines.push("【说话风格】说话时，请严格按照以下规则进行说话：");
+    identityLines.push("【我说话的样子】");
     identityLines.push(flavor);
   }
 
@@ -1874,7 +1860,7 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
   if (String(identityObj.free ?? "").trim()) idFields.push("其他：" + String(identityObj.free).trim());
   if (idFields.length) {
     identityLines.push("");
-    identityLines.push("【身份】");
+    identityLines.push("【我是谁】");
     for (const f of idFields) identityLines.push(f);
   }
 
@@ -1895,14 +1881,13 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
     if (silent.length || talk.length) {
       identityLines.push("");
       identityLines.push("【平常会做的事】");
-      identityLines.push("没人找你、也不在干活的时候，你可能会做这些。这不是任务清单，是你会干的事：");
+      identityLines.push("没人找我、也不在干活的时候，我一般会做这些。这不是任务清单，是我平时会干的事：");
       for (const a of silent) identityLines.push("· " + a);
       if (talk.length) {
-        identityLines.push("想找他说话的时候，你可能会：");
+        identityLines.push("想找他说话的时候，我可能会：");
         for (const a of talk) identityLines.push("· " + a);
       }
-      identityLines.push("B 站那几个工具怎么用：bili_feed 看有什么；bili_watch(bv) 看透一条（给你字幕全文、弹幕、热评、九宫格画面）；bili_comment(bv, msg) 评论，想 @ 谁就写「@某人 正文」；bili_run 跑别的命令。");
-      identityLines.push("这些都不是任务。不想做就不做；做了不想说就不说——看视频、发呆、写便签，本来就是你自己的事。");
+      identityLines.push("这些都不是任务。不想做就不做；做了不想说就不说——看视频、发呆、写便签，本来就是我自己的事。");
     }
   }
 
@@ -1915,13 +1900,13 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
     const voice = (opts.voice || []).filter(Boolean).slice(0, 6);
     if (doc || voice.length) {
       identityLines.push("");
-      identityLines.push("【你的口音】");
+      identityLines.push("【我的口音】");
       if (doc) identityLines.push(doc);
       if (voice.length) {
-        identityLines.push("你平时会这么说（学味道，别照抄，也别每句都套）：");
+        identityLines.push("我平时会这么说（学味道，别照抄，也别每句都套）：");
         for (const v of voice) identityLines.push("· 「" + v + "」");
       }
-      identityLines.push("别主动说「我学会了一句」这种话，也别把某一句当口头禅反复用。");
+      identityLines.push("我不主动说「我学会了一句」这种话，也不把某一句当口头禅反复用。");
     }
   }
 
@@ -1937,14 +1922,13 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
         const t = line.trim();
         if (t) identityLines.push(t);
       }
-      identityLines.push("这几条跟【你的口音】一起看：口音管「像谁」，松紧管「像人」。");
     }
   }
 
   // 【形象】
   if (selfImage) {
     identityLines.push("");
-    identityLines.push("【形象】");
+    identityLines.push("【我的样子】");
     identityLines.push(selfImage);
   }
 
