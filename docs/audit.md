@@ -11,7 +11,7 @@
 | 功能都是真的吗？ | 核心是真的：分层记忆、人格注入、学说话语料库、表情包、设置、语气后处理。**B 站、QQ、主动开口、贴吧扫码** 绑在作者环境上，别人装完用不了。另有 9 个死接口、1 套已废弃的学习写路径。 |
 | 文件好找吗？ | 改前 60 个文件平铺，混着个人 VPS 脚本和第三方补丁；改后按 `docs/features/*` 给每个功能一份文件树，个人脚本隔离进 `ops/`。 |
 
-这轮**修了 11 个 bug、4 处结构**（目录 / 打包 / 安装 / 文档），剩 5 件大件没动（见文末）。
+这轮**修了 16 个 bug、4 处结构**（目录 / 打包 / 安装 / 文档），剩 4 件大件没动（见文末）。
 
 ---
 
@@ -51,11 +51,11 @@
 
 | 功能 / 代码 | 现状 | 证据 | 这轮怎么处理 |
 |---|---|---|---|
-| **B 站全链路** | 只有作者机能跑 | `server.py: BILI_DIR = "/home/ubuntu/bili-cli"`、`NODE_BIN = "/home/ubuntu/.local/node/bin/node"`，无 env 覆盖 | 保留，文档标注「需外部 CLI + 改路径」 |
+| **B 站全链路** | 需要外部 CLI，但路径不再是硬的 | `BILI_DIR` / `NODE_BIN` 改为 `CMEM_BILI_DIR` / `CMEM_NODE_BIN`，没设时按老布局推断 | ✅ 已支持任意机器（装好 CLI 即可） |
 | **主动唤醒 / 日记 / 演化提醒** | 没 QQ 通道 = 不会开口 | `scheduler._inject()`：`if not self.inject_path: _log("no CMEM_INJECT_PATH")` | 结构如此，文档写清 |
-| **QQ 面板** | 依赖第三方 `dsh-onebot-qq` 和 `/home/ubuntu` 目录猜测 | `server.py` 里 5 处 `if HOME == "/home/ubuntu"` 分支 | 保留，文档标注 |
+| **QQ 面板** | 依赖第三方 `dsh-onebot-qq` | 原来 6 处 `if HOME == "/home/ubuntu"` 分支 | ✅ 抽成 `_profile_patch_path()` / `_onebot_media_dir()` / `_dsh_home()`，支持 `CMEM_DSH_PATCH` / `DSH_HOME` / `DSH_PROFILE` |
 | **贴吧扫码登录** | 接口在，前端不调用 | `/tieba/qr/start`、`/tieba/qr/poll` 只在 `server.py` 出现；`client.js` 只走 Cookie 粘贴 | 标为未完成路径 |
-| **`slang` 学习** | 还在写，没人读 | `index.mjs:848` 仍调 `recordSlang()` → `POST /slang`；而 358–362 行注释写明「slang 注入已删，统一走 expressions」，旁边还留着 `_unusedSlang` | 标注遗留死路径（未删，避免动线上数据） |
+| **`slang` 学习** | 已停写，只读历史数据 | 原来 `index.mjs:848` 调 `recordSlang()` → `POST /slang`，但没有任何注入读它 | ✅ 删掉写路径、死函数和 `_unusedSlang`；`/slang` 只留读接口兼容老数据 |
 | **死接口** | 有路由、无调用方 | `/bili/thought`、`/consolidate`、`/memes/seen`、`/phrases/scene`、`/public/status`、`/public/toggle`、`/qq/cmd`、`/tieba/qr/*` | 列清单，暂不删（兼容旧前端/外部调用） |
 | **`tasks` 表** | 有表、无工具、无接口 | `schema.sql` 建了 `tasks`；`index.mjs` 没有 create/complete 工具（README 却写「便签/任务」） | README 已改口径为「便签」 |
 | **`patches/*.js`（78KB）** | 不是本插件的代码，是第三方 `dsh-onebot-qq` 的整文件副本 | 只在 `ops/` 手工覆盖时用 | 隔离到 `ops/patches-onebot/` |
@@ -76,14 +76,20 @@
 9. **npm 包会把 `service/data`、`__pycache__`、测试库打进去**（`files: ["service"]`），改成显式白名单后 55 个文件、1.1MB、无用户数据。
 10. **测试与文档陈旧**：工具数 16→21、页面 7→9、slang 规则（`在吗/哈哈哈` 已被入口拦掉）、VPS 绝对路径、`run_all_tests.sh` 写死 `/home/ubuntu`。
 11. **默认语料一导入就把「学说话」页打崩**：`expr_import_seeds()` 的 INSERT 把 `raw` 写进了 `last_hit`，而 `/learn/stats` 对它做 `float()` → `could not convert string to float: '龙族只有前三部'`。新装必现（只要导了 seeds）。修了三处：INSERT 的 `last_hit` 改为时间戳、启动时把历史的非数字 `last_hit` 归零、`_learn_stats` 单条转换失败不再拖垮整页。
+12. **`_owner_qq()` 兜底写死作者 QQ 号**：解析不到时返回 `3169341724`，别人装了会把唤醒消息发给一个陌生人。改成 `CMEM_OWNER_QQ` > onebot `adminUsers` > `wakeChats` 第一个私聊 > 0（0 就跳过并记日志）。
+13. **B 站路径写死**：`BILI_DIR`/`NODE_BIN` 改成 `CMEM_BILI_DIR`/`CMEM_NODE_BIN`，没配时按老布局/`which node` 推断。
+14. **QQ/profile 路径写死**：6 处 `if HOME == "/home/ubuntu"` 分支抽成 `_profile_patch_path()` / `_onebot_media_dir()` / `_dsh_home()`，支持 `CMEM_DSH_PATCH`、`DSH_HOME`、`DSH_PROFILE`；VPS 两套布局行为不变。
+15. **`install.sh --port 8081` 解析错**：`for arg in "$@"` 里 `shift` 不改变循环，`8081` 会被当成未知参数退出。改成 `while` 循环。
+16. **`slang` 死写路径**：删除 `recordSlang()`、调用点和 `_unusedSlang`；`/slang` 只保留读接口兼容历史数据。
 
 ## 五、验证记录
 
 ```
 node --check                      17 个 js/mjs 全过
-run_all_tests.ps1                 8 个套件全绿（5 python + 3 node）
+run_all_tests.ps1                 9 个套件全绿（6 python + 3 node）
 tests/node/test_client.mjs        49/49（含新增的 tieba / learn 页）
-npm pack --dry-run                55 files / 1.14MB，无 data、无 pycache、无测试
+tests/python/test_seeds.py        11/11（last_hit 数字 / 幂等 / 老库修复）
+npm pack --dry-run                60 files / 1.14MB，无 data、无 pycache、无测试
 服务端实跑（8098, 空库）          /health 200、seeds 导入 1020 条、
                                   /learn/stats 1020、/state /proactive /expressions
                                   /persona /memories /tieba/status /config /notes

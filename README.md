@@ -128,7 +128,7 @@ dsh-remembers/
 | 语义召回 | embedding（不配就 BM25） |
 | 主动开口 | QQ 通道（`dsh-onebot-qq` + NapCat） |
 | 贴吧 | Node + 贴吧 Cookie（回帖默认关） |
-| B 站 | 外部 `bili-cli`，且要改 `server.py` 里两条写死路径 |
+| B 站 | 外部 `bili-cli`，用 `CMEM_BILI_DIR` / `CMEM_NODE_BIN` 指过去 |
 
 完整矩阵：[compatibility](docs/compatibility.md)。
 

@@ -18,14 +18,19 @@ PORT="${CMEM_PORT:-8080}"
 DO_PLUGIN=1
 DO_SERVICE=1
 
-for arg in "$@"; do
-  case "$arg" in
+while [ $# -gt 0 ]; do
+  case "$1" in
     --no-service) DO_SERVICE=0 ;;
     --no-plugin) DO_PLUGIN=0 ;;
-    --port) shift; PORT="${1:-8080}" ;;
+    --port)
+      [ $# -ge 2 ] || { echo "--port 需要值"; exit 1; }
+      PORT="$2"
+      shift
+      ;;
     -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
-    *) echo "未知参数: $arg"; exit 1 ;;
+    *) echo "未知参数: $1"; exit 1 ;;
   esac
+  shift
 done
 
 info() { printf '\033[36m[install]\033[0m %s\n' "$*"; }

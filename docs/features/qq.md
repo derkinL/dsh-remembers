@@ -37,6 +37,6 @@ ops/patches-onebot/           # 对第三方 dsh-onebot-qq 的两个本地补丁
 ## 已知边界
 
 - **没装 `dsh-onebot-qq` 时**：设置页的 QQ 面板读不到 profile 配置，唤醒只写日志、不会开口。
-- `service/server.py` 里找 profile 配置的路径优先按 `HOME=/home/ubuntu` 的分支走，其他机器靠兜底逻辑（见体检报告）。要稳定支持任意布局，建议用环境变量显式指定。
-- `/qq/cmd`（直接下发 CLI 命令）没有调用方，属于遗留接口。
+- profile 配置路径按 `CMEM_DSH_PATCH` > `DSH_HOME/profiles/<DSH_PROFILE>` > `web` > `qq2` 顺序推断；任意布局都能用环境变量显式指定。
+- `/qq/cmd`（直接下发 CLI 命令）没有调用方，属于遗留接口。\n- 主人 QQ：`CMEM_OWNER_QQ` > onebot 的 `adminUsers` > `wakeChats` 里第一个私聊；都拿不到就不主动开口（不会发给陌生人）。
 - 补丁是**改第三方文件**，插件一升级就被覆盖，需重打（`ops/patches-onebot/README.md`）。

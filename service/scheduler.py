@@ -153,7 +153,11 @@ class Scheduler:
                 if kind in ("private", "group") and tid.isdigit():
                     out.append((kind, tid))
             return out
-        return [("private", str(self._owner_qq()))]
+        owner = self._owner_qq()
+        if owner <= 0:
+            _log("wake: 没有配置 wakeChats，也没有 owner QQ，跳过")
+            return []
+        return [("private", str(owner))]
 
     def _tick_wake(self, st: dict, now: float) -> bool:
         cfg = self._proactive_cfg()
@@ -529,19 +533,43 @@ class Scheduler:
         return True
 
     # ---------- 工具 ----------
+    def _profile_patch_path(self) -> str:
+        """当前实例 profile 的 cordis.patch.yml（与 server.py 同一套推断规则）。"""
+        explicit = (os.environ.get("CMEM_DSH_PATCH") or "").strip()
+        if explicit:
+            return explicit
+        home = os.environ.get("HOME") or os.path.expanduser("~")
+        dsh_home = (os.environ.get("DSH_HOME") or "").strip()
+        if not dsh_home:
+            # 主套 ~/.dsh/profiles，第二套 ~/dsh2/profiles
+            for base in (os.path.join(home, ".dsh"), home):
+                if os.path.isdir(os.path.join(base, "profiles")):
+                    dsh_home = base
+                    break
+            else:
+                dsh_home = home
+        profile = (os.environ.get("DSH_PROFILE") or "").strip()
+        cands = []
+        if profile:
+            cands.append(os.path.join(dsh_home, "profiles", profile, "cordis.patch.yml"))
+        for name in ("web", "qq2"):
+            cands.append(os.path.join(dsh_home, "profiles", name, "cordis.patch.yml"))
+        for cand in cands:
+            if os.path.exists(cand):
+                return cand
+        return cands[0] if cands else ""
+
     def _owner_qq(self) -> int:
-        """主人的 QQ 号。
+        """主人的 QQ 号。解析不到就返回 0（调用方跳过，不要发给陌生人）。
 
         必须是真实号：原来 _inject() 里写死 user_id: 0，唤醒跑完、话也生成了，
-        但 onebot 回复时发给「QQ 号 0」，QQ 直接拒：
-            final send failed: OneBot action failed (retcode 1400): user_id: must be >= 1
-        结果所有服务内唤醒的回复一条都没发出去。
+        但 onebot 回复时发给「QQ 号 0」，QQ 直接拒（retcode 1400）。
         """
-        cfg_home = os.environ.get("HOME", "/home/ubuntu")
-        if cfg_home.rstrip("/") == "/home/ubuntu":
-            cfg = "/home/ubuntu/.dsh/profiles/web/cordis.patch.yml"
-        else:
-            cfg = os.path.join(cfg_home, "profiles/qq2/cordis.patch.yml")
+        env = (os.environ.get("CMEM_OWNER_QQ") or "").strip()
+        if env.isdigit() and len(env) >= 5:
+            return int(env)
+        # 1) onebot 配置里的 adminUsers
+        cfg = self._profile_patch_path()
         try:
             import yaml
             for item in (yaml.safe_load(open(cfg, encoding="utf-8")) or []):
@@ -552,10 +580,17 @@ class Scheduler:
                             return int(s)
         except Exception:
             pass
-        env = os.environ.get("CMEM_OWNER_QQ", "").strip()
-        if env.isdigit() and len(env) >= 5:
-            return int(env)
-        return 3169341724
+        # 2) config.json 里开了主动唤醒的第一个私聊
+        try:
+            cfg_data = json.load(open(os.path.join(self.data_dir, "config.json"), encoding="utf-8")) or {}
+            for key, on in (cfg_data.get("wakeChats") or {}).items():
+                kind, _, tid = str(key).partition(":")
+                if on and kind == "private" and tid.isdigit():
+                    return int(tid)
+        except Exception:
+            pass
+        _log("owner_qq: 未配置（设 CMEM_OWNER_QQ，或在 onebot 配置里填 adminUsers）")
+        return 0
 
     def _inject(self, msg: str, silent: bool = False, target=None) -> None:
         """往 qq-inject.jsonl 写一条合成消息。
@@ -571,6 +606,9 @@ class Scheduler:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             # 用真实 QQ 号！0 会让回复发不出去（retcode 1400）
             kind, tid = (target if target else ("private", str(self._owner_qq())))
+            if not str(tid).isdigit() or int(tid) <= 0:
+                _log("inject: 主人 QQ 未知，跳过（设 CMEM_OWNER_QQ）")
+                return
             owner = self._owner_qq()
             uid = int(tid)
             ev = {

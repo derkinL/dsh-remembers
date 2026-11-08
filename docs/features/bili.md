@@ -12,13 +12,20 @@
 ## 依赖（关键）
 
 ```
-/home/ubuntu/bili-cli/tools/bili.mjs      ← 外部 CLI，不在本仓库
-/home/ubuntu/.local/node/bin/node         ← 写死的 node 路径
-~/.bili-ai/credentials.json               ← 登录凭据
-~/.dsh/bili-whale.config.json             ← 她的 B 站口味/UID/白名单
+<CMEM_BILI_DIR>/tools/bili.mjs              ← 外部 CLI，不在本仓库
+<CMEM_NODE_BIN>                             ← node（默认自动找）
+~/.bili-ai/credentials.json                 ← 登录凭据
+~/.dsh/bili-whale.config.json               ← 她的 B 站口味/UID/白名单
 ```
 
-`server.py` 里是类属性 `BILI_DIR` / `NODE_BIN`，**没有环境变量覆盖**。换机器要改这两行（见 [体检报告](../audit.md)）。
+两个路径都能用环境变量指定，不再需要改源码：
+
+```env
+CMEM_BILI_DIR=/opt/bili-cli
+CMEM_NODE_BIN=/usr/bin/node
+```
+
+没设时按老布局推断（`~/bili-cli` + `/home/ubuntu/.local/node/bin/node` → `/usr/local/bin/node` → `which node`）。
 
 ## 文件树
 
@@ -33,7 +40,7 @@ service/data/bili.json        # enabled / tools 白名单 / frameGrid 等
 
 ## 已知边界
 
-- 装好也没法直接用：需要另装 `bili-cli` 并改两条路径。
+- 装好也没法直接用：需要另装 `bili-cli`，用 `CMEM_BILI_DIR` 指过去。
 - 登录二维码走 `/bili/qr` + `/bili/qr/poll`，凭据落 `~/.bili-ai/`。
 - 评论是写操作，受风控限制；同一出口 IP 多实例会互相触发熔断。
 - 配好 `bili-cli` 之前，`bili_*` 工具全部返回 `{"ok": false}`，不影响其他功能。

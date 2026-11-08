@@ -31,9 +31,9 @@
 | 学说话（看/查） | 默认语料随包发布 | — |
 | 学说话（转正/口音） | **LLM key** | 停在候选池 |
 | 表情包 | 图库目录有图（默认 `~/.dsh/media/onebot/memes`） | 工具返回空 |
-| 主动消息 | **QQ 通道**（`CMEM_INJECT_PATH`） | 只写日志，不会开口 |
+| 主动消息 | **QQ 通道**（`CMEM_INJECT_PATH`）+ 主人 QQ（`CMEM_OWNER_QQ` 或 onebot 的 adminUsers） | 只写日志，不会开口 |
 | 贴吧 | Node + Cookie（BDUSS） | 工具返回 `ok:false` |
-| B 站 | 外部 `bili-cli` + 改两条写死路径 | 全部 `ok:false` |
+| B 站 | 外部 `bili-cli`（`CMEM_BILI_DIR`） | 全部 `ok:false` |
 | QQ 通道 | 第三方 `dsh-onebot-qq` + NapCat | 无 QQ 面板数据 |
 | `tone_fix` | 无 | — |
 

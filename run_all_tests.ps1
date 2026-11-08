@@ -44,7 +44,7 @@ function Invoke-Suite([string]$Label, [string]$LogName, [string]$Exe, [string]$S
 Write-Host "================================================================"
 Write-Host "服务端（Python: $Python）"
 Write-Host "================================================================"
-foreach ($t in @("test_json_parse", "test_core", "test_gating", "test_transfer", "test_slang")) {
+foreach ($t in @("test_json_parse", "test_core", "test_gating", "test_transfer", "test_slang", "test_seeds")) {
   Invoke-Suite $t $t $Python (Join-Path $Root "tests\python\$t.py")
 }
 

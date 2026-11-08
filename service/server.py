@@ -78,6 +78,91 @@ AUTH_TOKEN = os.environ.get("CMEM_AUTH_TOKEN", "")
 MAX_BODY = 1 << 20  # 1 MiB
 
 
+# ---------------------------------------------------------------------------
+# 路径解析：不再把作者的 /home/ubuntu 布局写死在代码里
+# ---------------------------------------------------------------------------
+# 全部「能用环境变量显式指定，不行再按老布局推断」，老 VPS 上的行为不变。
+def _home() -> str:
+    return os.environ.get("HOME") or os.path.expanduser("~")
+
+
+def _dsh_home() -> str:
+    """DSH 数据根。
+
+    优先 `DSH_HOME`；否则看哪个目录下真的有 `profiles/`：
+    主套是 `~/.dsh/profiles`，第二套是 `~/dsh2/profiles`（HOME 直接指到实例根）。
+    """
+    explicit = (os.environ.get("DSH_HOME") or "").strip()
+    if explicit:
+        return explicit
+    home = _home()
+    for base in (os.path.join(home, ".dsh"), home):
+        if os.path.isdir(os.path.join(base, "profiles")):
+            return base
+    return home
+
+
+def _profile_patch_path() -> str:
+    """当前实例 profile 的 cordis.patch.yml。
+
+    `CMEM_DSH_PATCH` 显式指定 > `DSH_HOME/profiles/<DSH_PROFILE>` > web > qq2。
+    """
+    explicit = (os.environ.get("CMEM_DSH_PATCH") or "").strip()
+    if explicit:
+        return explicit
+    dsh_home = _dsh_home()
+    cands = []
+    profile = (os.environ.get("DSH_PROFILE") or "").strip()
+    if profile:
+        cands.append(os.path.join(dsh_home, "profiles", profile, "cordis.patch.yml"))
+    for name in ("web", "qq2"):
+        cands.append(os.path.join(dsh_home, "profiles", name, "cordis.patch.yml"))
+    for cand in cands:
+        if os.path.exists(cand):
+            return cand
+    return cands[0] if cands else ""
+
+
+def _onebot_media_dir() -> str:
+    """QQ 通道的媒体目录（memes / qq-inject.jsonl 都在这下面）。"""
+    explicit = (os.environ.get("CMEM_ONEBOT_MEDIA") or "").strip()
+    if explicit:
+        return explicit
+    home = _home()
+    for cand in (
+        os.path.join(home, ".dsh", "media", "onebot"),
+        os.path.join(home, "media", "onebot2"),
+        os.path.join(home, ".dsh", "media", "onebot2"),
+    ):
+        if os.path.isdir(cand):
+            return cand
+    return os.path.join(home, ".dsh", "media", "onebot")
+
+
+def _default_meme_dir() -> str:
+    explicit = (os.environ.get("CMEM_MEME_DIR") or "").strip()
+    if explicit:
+        return explicit
+    return os.path.join(_onebot_media_dir(), "memes")
+
+
+def _node_bin() -> str:
+    explicit = (os.environ.get("CMEM_NODE_BIN") or "").strip()
+    if explicit:
+        return explicit
+    for cand in ("/home/ubuntu/.local/node/bin/node", "/usr/local/bin/node", "/usr/bin/node"):
+        if os.path.exists(cand):
+            return cand
+    return shutil.which("node") or "node"
+
+
+def _bili_dir() -> str:
+    explicit = (os.environ.get("CMEM_BILI_DIR") or "").strip()
+    if explicit:
+        return explicit
+    return os.path.join(_home(), "bili-cli")
+
+
 def _mask(secret: str) -> str:
     """返回给前端时只露头尾，避免 key 明文出现在页面/日志里。"""
     if not secret:
@@ -432,7 +517,7 @@ class Handler(BaseHTTPRequestHandler):
             import urllib.parse as _up
             name = _up.unquote(path.rsplit("/", 1)[-1])
             import os as _os
-            meme_dir = _os.environ.get("CMEM_MEME_DIR", "/home/ubuntu/.dsh/media/onebot/memes")
+            meme_dir = _default_meme_dir()
             fp = _os.path.join(meme_dir, _os.path.basename(name))
             if not _os.path.exists(fp):
                 self._json(404, {"ok": False, "error": "not found"})
@@ -1651,13 +1736,7 @@ class Handler(BaseHTTPRequestHandler):
     #   · 新写的一句跟已有的意思一样也照收（7 条同模板就是这么来的）
     # 这里补上：去重 / 条数上限 / 溢出策略 / 写前快照 / 可回滚。
 
-    VERSIONS_DIR = __import__("os").path.join(
-        __import__("os").environ.get(
-            "CMEM_DATA_DIR",
-            "/home/ubuntu/dsh-agentchat/_deploy/dsh-remembers/service/data",
-        ),
-        "persona-versions",
-    )
+    VERSIONS_DIR = os.path.join(DATA_DIR, "persona-versions")
 
     def _self_cfg(self) -> dict:
         cfg = self._load_proactive()
@@ -1884,10 +1963,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- 主动消息配置：页面可改，cron 读它 -------------------------------------
 
-    PROACTIVE_FILE = __import__("os").path.join(
-        __import__("os").environ.get("CMEM_DATA_DIR", "/home/ubuntu/dsh-agentchat/_deploy/dsh-remembers/service/data"),
-        "proactive.json",
-    )
+    PROACTIVE_FILE = os.path.join(DATA_DIR, "proactive.json")
     PROACTIVE_DEFAULTS = {
         "enabled": True,          # 自动唤醒总开关
         "startHour": 8,           # 时间窗开始（含）
@@ -2050,7 +2126,7 @@ class Handler(BaseHTTPRequestHandler):
         import os as _os
         import urllib.parse as _up
         qs = _up.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
-        raw = (qs.get("path") or [""])[0] or _os.environ.get("HOME", "/home/ubuntu")
+        raw = (qs.get("path") or [""])[0] or _home()
         path = _os.path.abspath(_os.path.expanduser(raw))
         if not _os.path.isdir(path):
             self._json(400, {"ok": False, "error": "不是目录: " + path})
@@ -2078,12 +2154,12 @@ class Handler(BaseHTTPRequestHandler):
         """从 cordis.patch.yml 读 workspacePath，推出会话目录名。"""
         import os as _os
         import re as _re
-        import yaml as _yaml
-        home = _os.environ.get("HOME", "/home/ubuntu")
-        if home.rstrip("/") == "/home/ubuntu":
-            cfg = "/home/ubuntu/.dsh/profiles/web/cordis.patch.yml"
-        else:
-            cfg = _os.path.join(home, "profiles/qq2/cordis.patch.yml")
+        try:
+            import yaml as _yaml
+        except ImportError:      # 没装 pyyaml：QQ 面板降级成空，不要 500
+            _yaml = None
+        home = _home()
+        cfg = _profile_patch_path()
         ws = ""
         try:
             data = _yaml.safe_load(open(cfg, encoding="utf-8"))
@@ -2094,32 +2170,21 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
         if not ws:
-            ws = "/home/ubuntu/qq-workspace"
+            ws = _os.path.join(_home(), "qq-workspace")
         # /home/ubuntu/qq-duan → --home-ubuntu-qq-duan--
         slug = ws.rstrip("/").replace("/", "-")
         if slug.startswith("-"):
             slug = "-" + slug          # 保留开头的单横线，前面再加一个 → --
-        # DSH_HOME：主套 /home/ubuntu/.dsh，第二套 /home/ubuntu/dsh2
-        dsh_home = _os.environ.get("DSH_HOME", "")
-        if not dsh_home:
-            dsh_home = _os.path.join(home, ".dsh") if home.rstrip("/") == "/home/ubuntu" else home
+        dsh_home = _dsh_home()
         return _os.path.join(dsh_home, "sessions/" + slug + "--")
 
     def _qq_sessions_root(self) -> str:
         """当前实例的 sessions 根目录。"""
         import os as _os
-        home = _os.environ.get("HOME", "/home/ubuntu")
-        dsh_home = _os.environ.get("DSH_HOME", "")
-        if not dsh_home:
-            dsh_home = _os.path.join(home, ".dsh") if home.rstrip("/") == "/home/ubuntu" else home
-        return _os.path.join(dsh_home, "sessions")
+        return _os.path.join(_dsh_home(), "sessions")
 
     def _qq_media_dir(self) -> str:
-        import os as _os
-        home = _os.environ.get("HOME", "/home/ubuntu")
-        if home.rstrip("/") == "/home/ubuntu":
-            return "/home/ubuntu/.dsh/media/onebot"
-        return _os.path.join(home, "media/onebot2")
+        return _onebot_media_dir()
 
     def _qq_session_history(self, chat: str) -> dict:
         """读文件列出某个 chat 的全部会话（不发 QQ 消息）。"""
@@ -2264,7 +2329,7 @@ class Handler(BaseHTTPRequestHandler):
         """列出 QQ 的所有会话（每个 chat 一条，取最新的那个）。"""
         import os as _os
         import re as _re
-        home = _os.environ.get("HOME", "/home/ubuntu")
+        home = _home()
         base = self._qq_workspace_dir()
         if not _os.path.isdir(base):
             self._json(200, {"ok": True, "sessions": [], "base": base, "note": "会话目录不存在"})
@@ -2313,12 +2378,16 @@ class Handler(BaseHTTPRequestHandler):
     def _get_qq_config(self) -> None:
         """读 cordis.patch.yml 的 dsh-onebot 配置，套上 schema 返回。"""
         import os as _os
-        import yaml
-        home = _os.environ.get("HOME", "/home/ubuntu")
-        if home.rstrip("/") == "/home/ubuntu":
-            cfg_path = "/home/ubuntu/.dsh/profiles/web/cordis.patch.yml"
-        else:
-            cfg_path = _os.path.join(home, "profiles/qq2/cordis.patch.yml")
+        try:
+            import yaml
+        except ImportError:      # 没装 pyyaml：QQ 面板降级成空，不要 500
+            yaml = None
+        cfg_path = _profile_patch_path()
+
+        if yaml is None:
+            # 依赖没装齐时给一条能看懂的提示，别抛 NoneType
+            self._json(503, {"ok": False, "error": "缺 pyyaml：pip install pyyaml", "path": cfg_path})
+            return
 
         cur = {}
         try:
@@ -2398,12 +2467,11 @@ class Handler(BaseHTTPRequestHandler):
     def _qq_admin_users(self) -> set:
         """读 cordis.patch.yml 的 dsh-onebot.adminUsers，返回管理员 QQ 集合。"""
         import os as _os
-        import yaml
-        HOME = _os.environ.get("HOME", "/home/ubuntu")
-        if HOME.rstrip("/") == "/home/ubuntu":
-            cfg_path = "/home/ubuntu/.dsh/profiles/web/cordis.patch.yml"
-        else:
-            cfg_path = _os.path.join(HOME, "profiles/qq2/cordis.patch.yml")
+        try:
+            import yaml
+        except ImportError:      # 没装 pyyaml：QQ 面板降级成空，不要 500
+            yaml = None
+        cfg_path = _profile_patch_path()
         try:
             data = yaml.safe_load(open(cfg_path, encoding="utf-8"))
             for item in data or []:
@@ -2553,8 +2621,8 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- 逛 B 站（借 dsh-bili-whale 的 CLI，但人格/记忆/情绪全走我们这套） --------
 
-    BILI_DIR = "/home/ubuntu/bili-cli"
-    NODE_BIN = "/home/ubuntu/.local/node/bin/node"
+    BILI_DIR = _bili_dir()
+    NODE_BIN = _node_bin()
 
     def _run_bili(self, args: list, timeout: int = 90) -> dict:
         import subprocess as _sp
@@ -2913,7 +2981,11 @@ class Handler(BaseHTTPRequestHandler):
         cand = [
             os.environ.get("CMEM_NODE_BIN", ""),
             shutil.which("node") or "",
+            os.environ.get("CMEM_NODE_BIN", ""),
             "/home/ubuntu/.local/node/bin/node",
+            "/usr/local/bin/node",
+            "/usr/bin/node",
+            shutil.which("node") or "",
             "/usr/local/bin/node",
             "/usr/bin/node",
         ]
@@ -3232,7 +3304,7 @@ class Handler(BaseHTTPRequestHandler):
         """
         import json as _json
         import os as _os
-        home = _os.environ.get("HOME", "/home/ubuntu")
+        home = _home()
         cache_path = _os.path.join(home, ".bili-ai", "api-cache.json")
         try:
             cache = _json.load(open(cache_path, encoding="utf-8"))
@@ -3262,8 +3334,8 @@ class Handler(BaseHTTPRequestHandler):
         import time as _t
         if code == "BILI_TRAFFIC_PAUSED":
             home = (_os.environ.get("BILI_SHARED_HOME")
-                    or ("/home/ubuntu" if _os.path.isdir("/home/ubuntu/.bili-ai")
-                        else _os.environ.get("HOME", "/home/ubuntu")))
+                    or (_home() if _os.path.isdir(_os.path.join(_home(), ".bili-ai"))
+                        else _home()))
             ban = _os.path.join(home, ".bili-ai", "api-ban.json")
             left, why = 10, "风控"
             try:
@@ -3483,7 +3555,7 @@ class Handler(BaseHTTPRequestHandler):
                     "bili_jct": cookies.get("bili_jct", ""),
                     "buvid3": cookies.get("buvid3", ""),
                 }
-                cred_dir = _os.path.join(_os.environ.get("HOME", "/home/ubuntu"), ".bili-ai")
+                cred_dir = _os.path.join(_home(), ".bili-ai")
                 cred_path = _os.path.join(cred_dir, "credentials.json")
                 _os.makedirs(cred_dir, exist_ok=True)
                 with open(cred_path, "w", encoding="utf-8") as f:
@@ -3575,7 +3647,7 @@ class Handler(BaseHTTPRequestHandler):
             "bili_jct": str(body.get("bili_jct") or "").strip(),
             "buvid3": str(body.get("buvid3") or "").strip(),
         }
-        cred_dir = _os.path.join(_os.environ.get("HOME", "/home/ubuntu"), ".bili-ai")
+        cred_dir = _os.path.join(_home(), ".bili-ai")
         cred_path = _os.path.join(cred_dir, "credentials.json")
         _os.makedirs(cred_dir, exist_ok=True)
         try:
@@ -3604,7 +3676,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
         bw = self._load_bili_whale()
-        cred = _os.path.join(_os.environ.get("HOME", "/home/ubuntu"), ".bili-ai", "credentials.json")
+        cred = _os.path.join(_home(), ".bili-ai", "credentials.json")
         logged_in = _os.path.exists(cred) and _os.path.getsize(cred) > 20
         return {
             "ok": True,
@@ -3973,7 +4045,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         import base64 as _b64
         import os as _os
-        meme_dir = _os.environ.get("CMEM_MEME_DIR", "/home/ubuntu/.dsh/media/onebot/memes")
+        meme_dir = _default_meme_dir()
         _os.makedirs(meme_dir, exist_ok=True)
         # 防路径穿越
         safe = _os.path.basename(name)
@@ -4004,7 +4076,7 @@ class Handler(BaseHTTPRequestHandler):
         body = self._body()
         name = str(body.get("file") or "")
         import os as _os
-        meme_dir = _os.environ.get("CMEM_MEME_DIR", "/home/ubuntu/.dsh/media/onebot/memes")
+        meme_dir = _default_meme_dir()
         path = _os.path.join(meme_dir, _os.path.basename(name))
         try:
             if _os.path.exists(path):
@@ -4030,7 +4102,7 @@ class Handler(BaseHTTPRequestHandler):
         body = self._body()
         file = str(body.get("file") or "").strip()
         from_path = str(body.get("path") or "").strip()
-        meme_dir = _os.environ.get("CMEM_MEME_DIR", "/home/ubuntu/.dsh/media/onebot/memes")
+        meme_dir = _default_meme_dir()
         _os.makedirs(meme_dir, exist_ok=True)
 
         # 传的是路径：复制进 memes 目录
@@ -4298,11 +4370,7 @@ class Handler(BaseHTTPRequestHandler):
         import shutil as _shutil
         import time as _time
 
-        home = _os.environ.get("HOME", "/home/ubuntu")
-        if home.rstrip("/") == "/home/ubuntu":
-            cfg_path = "/home/ubuntu/.dsh/profiles/web/cordis.patch.yml"
-        else:
-            cfg_path = _os.path.join(home, "profiles/qq2/cordis.patch.yml")
+        cfg_path = _profile_patch_path()
 
         body = self._body()
         if not isinstance(body, dict) or not body:
@@ -4472,13 +4540,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"ok": False, "error": "cmd 必须以 / 开头"})
             return
 
-        home = _os.environ.get("HOME", "/home/ubuntu")
-        if home.rstrip("/") == "/home/ubuntu":
-            inject = "/home/ubuntu/.dsh/media/onebot/qq-inject.jsonl"
-            cfg = "/home/ubuntu/.dsh/profiles/web/cordis.patch.yml"
-        else:
-            inject = _os.path.join(home, "media/onebot2/qq-inject.jsonl")
-            cfg = _os.path.join(home, "profiles/qq2/cordis.patch.yml")
+        inject = _os.path.join(_onebot_media_dir(), "qq-inject.jsonl")
+        cfg = _profile_patch_path()
 
         owner = ""
         try:
@@ -4525,11 +4588,7 @@ class Handler(BaseHTTPRequestHandler):
         import json as _json
         import os as _os
 
-        home = _os.environ.get("HOME", "/home/ubuntu")
-        if home.rstrip("/") == "/home/ubuntu":
-            mdir = "/home/ubuntu/.dsh/media/onebot"
-        else:
-            mdir = _os.path.join(home, "media/onebot2")
+        mdir = _onebot_media_dir()
 
         m = {}
         retired = []
@@ -4569,14 +4628,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": "chat 格式不对，应为 private:<QQ> / group:<群号> / all"})
                 return
 
-        home = _os.environ.get("HOME", "/home/ubuntu")
+        home = _home()
         # 按实例定位 inject 文件和主人 QQ
-        if home.rstrip("/") == "/home/ubuntu":
-            inject = "/home/ubuntu/.dsh/media/onebot/qq-inject.jsonl"
-            cfg = "/home/ubuntu/.dsh/profiles/web/cordis.patch.yml"
-        else:
-            inject = _os.path.join(home, "media/onebot2/qq-inject.jsonl")
-            cfg = _os.path.join(home, "profiles/qq2/cordis.patch.yml")
+        inject = _os.path.join(_onebot_media_dir(), "qq-inject.jsonl")
+        cfg = _profile_patch_path()
 
         # 主人 QQ：从 cordis.patch.yml 的 allowFrom 抓第一个
         owner = ""

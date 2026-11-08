@@ -90,22 +90,6 @@ async function bumpAffinity() {
   }
 }
 
-/** 学说话：把用户短消息记成口头禅候选（fire-and-forget）。 */
-async function recordSlang(text) {
-  const msg = String(text || "").trim();
-  if (msg.length < 2 || msg.length > 12) return;
-  try {
-    await fetch(config.endpoint + "/slang", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phrase: msg }),
-      signal: AbortSignal.timeout(3000),
-    });
-  }
-  catch {
-    /* 忽略 */
-  }
-}
 
 /** 记一条活动日志（fire-and-forget）。 */
 async function logActivity(kind, detail) {
@@ -354,15 +338,6 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
     }
   }
 
-  // ---------- 6.5 学到的词 / 还没搞懂意思的词 ----------
-  // 以前只有 recordSlang 在写，提示词里从不读 —— 攒了一堆词她一个没学会。
-  // 2026-11-06：slang 的两段注入删掉了。
-  // 学说话统一走 expressions（词 + 场合一起学），不再是「词表 + 待教」两套并行。
-  {
-    const _unusedSlang = null;
-    if (false) {
-    }
-  }
 
   // ---------- 7. 关系阶段（变了才加） ----------
   if (state.stage && state.stage.name) {
@@ -845,8 +820,7 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
     // 之前把它记成 chat、学进口头禅、还触发情绪传染，全是假的。
     if (keptUser) {
       void logActivity("chat", keptUser.slice(0, 80));
-      void recordSlang(keptUser);
-      void bumpAffinity();
+        void bumpAffinity();
       void scanSeen();
       // 情绪传染：他难过她就跟着沉，他开心她就跟着亮
       if (/(累|烦|难过|难受|不想|沮丧|焦虑|崩溃|哭)/.test(keptUser)) {

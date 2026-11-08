@@ -18,6 +18,7 @@ bash run_all_tests.sh        # Linux / macOS / WSL / Git Bash
 | `python/test_gating.py` | 惊讶度门控（纯文本）+ ADD/UPDATE/DELETE/NONE + **LLM 挂了必须返回 degraded** |
 | `python/test_transfer.py` | A 库 → JSONL → B 库，内容一字不差 |
 | `python/test_slang.py` | 旧口头禅表的收录门槛 / 计数 / 转正（历史表，仍保留） |
+| `python/test_seeds.py` | 默认语料导入：`last_hit` 必须是数字（否则 `/learn/stats` 500）、幂等、老库修复 |
 | `node/test_plugin.mjs` | `apply()` 注册了 1 个 systemPrompt 段、4 个钩子、21 个工具 |
 | `node/test_client.mjs` | `client.js` 的模块协议、入口页 9 张卡、9 个二级页、返回按钮位置 |
 | `node/tone.test.mjs` | `tone_fix` 的每条规则 + 不该动的（代码块/表格/数字结尾） |
