@@ -861,13 +861,33 @@ class Extractor:
                             "why": str(g.get("why") or "")[:80]})
         return out
 
-    def build_voice_doc(self, samples: list[str]) -> str:
-        """子 AI：把「已启用」的原句归纳成一段口音档案（200 字内）。"""
+    def build_voice_doc(self, samples: list[str], stats: dict | None = None) -> str:
+        """子 AI：把「已启用」的原句归纳成一段口音档案（200 字内）。
+
+        参照 dsh-fish-tone 的做法（MIT，MX3a48c5/dsh-fish-tone）：
+        人味是可量化的 —— 句长、句尾标点比例、语气词密度、梗密度，
+        而不是"学几句原话"。所以这里把统计一起喂给模型，让它写数字，而不是形容词。
+        """
         body = "\n".join("- " + str(x) for x in samples if str(x).strip())[:2000]
         if not body:
             return ""
+        st = stats or {}
+        facts = []
+        if st.get("median_len"):
+            facts.append(f"句子长度中位数 {st['median_len']} 字")
+        if st.get("no_punct_rate") is not None:
+            facts.append(f"{int(st['no_punct_rate'] * 100)}% 的句子句尾不带标点")
+        if st.get("emoji_rate") is not None:
+            facts.append(f"{int(st['emoji_rate'] * 100)}% 的句子带表情/方括号标签")
+        if st.get("short_rate") is not None:
+            facts.append(f"{int(st['short_rate'] * 100)}% 的句子短于 8 字")
+        if st.get("particles"):
+            facts.append("常带的语气词：" + "、".join(st["particles"]))
+        head = ""
+        if facts:
+            head = "【这批句子的实测统计】\n" + "；".join(facts) + "\n\n档案里必须原样出现这几个数字（比如'中位 10 字'、'80% 句尾不带标点'），不许只写'短句、随口'这种形容词。\n\n"
         try:
-            txt = self.llm.chat(self.VOICE_DOC_SYSTEM, body, max_tokens=500)
+            txt = self.llm.chat(self.VOICE_DOC_SYSTEM, head + body, max_tokens=500)
         except Exception:
             return ""
         return str(txt or "").strip()[:600]

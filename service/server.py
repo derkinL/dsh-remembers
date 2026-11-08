@@ -905,6 +905,41 @@ class Handler(BaseHTTPRequestHandler):
                 break
         return out
 
+    VOICE_PARTICLES = ["啊", "吧", "嘛", "啦", "呢", "哦", "哈", "呗", "就"]
+
+    def _voice_stats(self, samples: list[str]) -> dict:
+        """量一下这批句子的分布 —— 人味是数字，不是形容词（照 dsh-fish-tone 的思路）。
+
+        MIT: https://github.com/MX3a48c5/dsh-fish-tone
+        他们拿 10 万条 B 站评论量出来：评论中位 18 字、81% 句尾不带标点、
+        27% 带表情标签。所以我们自己的样本也先量，再让子 AI 写档案。
+        """
+        import re as _re
+        texts = [str(x).strip() for x in samples if str(x).strip()]
+        if not texts:
+            return {}
+        lens = sorted(len(t) for t in texts)
+        n = len(lens)
+        med = lens[n // 2] if n % 2 else (lens[n // 2 - 1] + lens[n // 2]) // 2
+        no_punct = sum(1 for t in texts if not _re.search(r"[。！？!?…~～.．]$", t))
+        emoji = sum(1 for t in texts if _re.search(r"\[[^\]]{1,8}\]", t))
+        short = sum(1 for t in texts if len(t) < 8)
+        joined = "".join(texts)
+        parts = []
+        for ch in self.VOICE_PARTICLES:
+            c = joined.count(ch)
+            if c >= max(2, len(texts) // 3):
+                parts.append(ch)
+        return {
+            "n": n,
+            "median_len": med,
+            "avg_len": round(sum(lens) / n, 1),
+            "no_punct_rate": round(no_punct / n, 3),
+            "emoji_rate": round(emoji / n, 3),
+            "short_rate": round(short / n, 3),
+            "particles": parts[:4],
+        }
+
     def rebuild_voice(self, force: bool = False) -> dict:
         """把候选送去子 AI 判定 → 转正/否决 → 重写口音档案。
 
@@ -945,13 +980,28 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
         samples = self._voice_samples(12)
+        stats = self._voice_stats(samples)
         doc = ""
         if samples and extractor is not None:
             try:
-                doc = extractor.build_voice_doc(samples)
+                doc = extractor.build_voice_doc(samples, stats)
             except Exception:
                 doc = ""
-        st = {"doc": doc, "builtAt": _t.time(), "samples": samples,
+        # 数字一定要在档案里露脸（模型爱把数字改写成"很短"），所以自己拼一行贴上去
+        if doc and stats:
+            bits = []
+            if stats.get("median_len"):
+                bits.append("中位 %s 字" % stats["median_len"])
+            if stats.get("no_punct_rate") is not None:
+                bits.append("%d%% 的句子句尾不带标点" % int(stats["no_punct_rate"] * 100))
+            if stats.get("emoji_rate"):
+                bits.append("%d%% 带表情标签" % int(stats["emoji_rate"] * 100))
+            if stats.get("particles"):
+                bits.append("常带" + "、".join(stats["particles"]))
+            if bits:
+                doc = doc.rstrip() + "（实测：" + "；".join(bits) + "）"
+
+        st = {"doc": doc, "builtAt": _t.time(), "samples": samples, "stats": stats,
               "judged": judged, "promoted": promoted, "count": len(samples)}
         try:
             os.makedirs(os.path.dirname(self._voice_path()), exist_ok=True)
