@@ -436,103 +436,101 @@ window.__ModuleLoader__.load({
                 "记忆服务地址会按当前页面自动推导（主套 /mem，第二套 /lan/mem）。本机开发默认 127.0.0.1:8080。"),
             ),
 
-            h(Field, { label: "对话模型提供商", hint: preset.hint },
-              h("select", {
-                style: S.select,
-                value: draft.provider,
-                onChange: (ev) => chooseProvider(ev.target.value),
-              }, Object.keys(LLM_PRESETS).map((k) => h("option", { key: k, value: k }, LLM_PRESETS[k].label))),
-            ),
+            // 2026-11-08：左对话、右向量 —— 两家经常不是同一个，并排放才好一对一看
+            h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginTop: 6 } },
 
-            h(Field, {
-              label: "API 密钥",
-              hint: current && current.llm_key_set
-                ? "当前： " + current.llm_key_masked + "　留空则保持原值"
-                : "还没配置。填好后点保存。",
-            },
-              h("input", {
-                style: S.input,
-                type: "password",
-                value: draft.llm_key,
-                placeholder: current && current.llm_key_set ? "留空保持原密钥" : "sk-...",
-                spellCheck: false,
-                autoComplete: "off",
-                onChange: (ev) => set({ llm_key: ev.target.value }),
-              }),
-            ),
+              // ---------- 左：对话模型 ----------
+              h("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
+                h("div", { style: { fontSize: 13, fontWeight: 700 } }, "对话模型"),
+                h("div", { style: S.muted }, "抽取事实、给说法分类、挑语料参考"),
 
-            !llmReady && !error
-              ? h("div", { style: S.hint }, preset.hint)
-              : null,
+                h(Field, { label: "提供商" },
+                  h("select", {
+                    style: S.select,
+                    value: draft.provider,
+                    onChange: (ev) => chooseProvider(ev.target.value),
+                  }, Object.keys(LLM_PRESETS).map((k) => h("option", { key: k, value: k }, LLM_PRESETS[k].label))),
+                ),
 
-            // 「自定义设置」折叠
-            h("div", null,
-              h("button", {
-                type: "button",
-                style: S.disclosure,
-                onClick: () => setAdvanced((v) => !v),
-              }, h("span", null, advanced ? "▾" : "▸"), "自定义设置"),
+                h(Field, {
+                  label: "API 密钥",
+                  hint: current && current.llm_key_set
+                    ? "当前： " + current.llm_key_masked + "　留空则保持原值"
+                    : "还没配置。填好后点保存。",
+                },
+                  h("input", {
+                    style: S.input,
+                    type: "password",
+                    value: draft.llm_key,
+                    placeholder: current && current.llm_key_set ? "留空保持原密钥" : "sk-...",
+                    spellCheck: false,
+                    autoComplete: "off",
+                    onChange: (ev) => set({ llm_key: ev.target.value }),
+                  }),
+                ),
 
-              advanced
-                ? h("div", { style: { display: "flex", flexDirection: "column", gap: 14, marginTop: 14 } },
+                h(Field, { label: "Base URL", optional: true },
+                  h("input", {
+                    style: S.input, value: draft.llm_base, spellCheck: false,
+                    onChange: (ev) => set({ llm_base: ev.target.value }),
+                  }),
+                ),
 
-                    h(Field, { label: "对话模型 Base URL", optional: true },
-                      h("input", {
-                        style: S.input, value: draft.llm_base, spellCheck: false,
-                        onChange: (ev) => set({ llm_base: ev.target.value }),
-                      }),
-                    ),
+                h(Field, { label: "模型名", optional: true },
+                  h("input", {
+                    style: S.input, value: draft.llm_model, spellCheck: false,
+                    onChange: (ev) => set({ llm_model: ev.target.value }),
+                  }),
+                ),
 
-                    h(Field, { label: "对话模型名", optional: true },
-                      h("input", {
-                        style: S.input, value: draft.llm_model, spellCheck: false,
-                        onChange: (ev) => set({ llm_model: ev.target.value }),
-                      }),
-                    ),
+                preset.hint ? h("div", { style: S.hint }, preset.hint) : null,
+              ),
 
-                    h(Field, {
-                      label: "向量模型 Base URL", optional: true,
-                      hint: "和对话模型不是同一家时才需要单独填；阿里云那套两边可以共用同一个 key。",
-                    },
-                      h("input", {
-                        style: S.input, value: draft.embed_base, spellCheck: false,
-                        placeholder: "留空 = 和对话模型同源",
-                        onChange: (ev) => set({ embed_base: ev.target.value }),
-                      }),
-                    ),
+              // ---------- 右：向量模型 ----------
+              h("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
+                h("div", { style: { fontSize: 13, fontWeight: 700 } }, "向量模型"),
+                h("div", { style: S.muted }, "算语义相似度：记忆检索 + 语料库按话题检索"),
 
-                    h(Field, { label: "向量模型名", optional: true },
-                      h("input", {
-                        style: S.input, value: draft.embed_model, spellCheck: false,
-                        placeholder: "qwen3.7-text-embedding-flash",
-                        onChange: (ev) => set({ embed_model: ev.target.value }),
-                      }),
-                    ),
+                h(Field, { label: "提供商" },
+                  h("select", {
+                    style: S.select,
+                    value: draft.embedProvider,
+                    onChange: (ev) => chooseEmbedProvider(ev.target.value),
+                  }, Object.keys(EMBED_PRESETS).map((k) => h("option", { key: k, value: k }, EMBED_PRESETS[k].label))),
+                ),
 
-                    h(Field, { label: "向量模型提供商", hint: embedPreset.hint },
-                      h("select", {
-                        style: S.select,
-                        value: draft.embedProvider,
-                        onChange: (ev) => chooseEmbedProvider(ev.target.value),
-                      }, Object.keys(EMBED_PRESETS).map((k) => h("option", { key: k, value: k }, EMBED_PRESETS[k].label))),
-                    ),
+                h(Field, {
+                  label: "API 密钥",
+                  hint: current && current.embed_key_set
+                    ? "当前： " + current.embed_key_masked + "　留空则保持原值"
+                    : "留空 = 和对话模型用同一个密钥",
+                },
+                  h("input", {
+                    style: S.input, type: "password", value: draft.embed_key,
+                    autoComplete: "off", spellCheck: false,
+                    placeholder: current && current.embed_key_set ? "留空保持原密钥" : "留空 = 同上",
+                    onChange: (ev) => set({ embed_key: ev.target.value }),
+                  }),
+                ),
 
-                    h(Field, {
-                      label: "向量模型 API 密钥", optional: true,
-                      hint: current && current.embed_key_set
-                        ? "当前： " + current.embed_key_masked + "　留空则保持原值"
-                        : "留空 = 和对话模型用同一个密钥",
-                    },
-                      h("input", {
-                        style: S.input, type: "password", value: draft.embed_key,
-                        autoComplete: "off", spellCheck: false,
-                        placeholder: current && current.embed_key_set ? "留空保持原密钥" : "留空 = 同上",
-                        onChange: (ev) => set({ embed_key: ev.target.value }),
-                      }),
-                    ),
+                h(Field, { label: "Base URL", optional: true },
+                  h("input", {
+                    style: S.input, value: draft.embed_base, spellCheck: false,
+                    placeholder: "留空 = 和对话模型同源",
+                    onChange: (ev) => set({ embed_base: ev.target.value }),
+                  }),
+                ),
 
-                  )
-                : null,
+                h(Field, { label: "模型名", optional: true },
+                  h("input", {
+                    style: S.input, value: draft.embed_model, spellCheck: false,
+                    placeholder: "text-embedding-v3",
+                    onChange: (ev) => set({ embed_model: ev.target.value }),
+                  }),
+                ),
+
+                embedPreset.hint ? h("div", { style: S.hint }, embedPreset.hint) : null,
+              ),
             ),
           ),
 
