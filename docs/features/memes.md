@@ -6,7 +6,7 @@
 
 - **找图**：`find_meme` 按情绪（happy/angry/sad/shy/confused/daily）+ 关键词搜，返回完整路径。
 - **学图**：`learn_meme` 收录一张新图（自动识别分类/描述/关键词）。
-- **计数**：`mark_meme_used`（她发过几次）、`/memes/scan`（扫你发来的图并计入「见过」）。
+- **计数**：`mark_meme_used`（显式记一次）；**发图自动记**——她从会话里调 `qq_send_image` 且路径在 memes/ 下时，插件自动 `POST /memes/used`，所以 `used_count` 现在反映真实发送量；`/memes/scan` 扫你发来的图并计入「见过」。
 - **图库**：多 pack、上传、重命名、设封面、删除；界面按 pack 平铺卡片。
 - **频率**：0 / 0.2 / 0.5 / 1.0 四档，写进人格段（「每 N 句配一张」），每轮提醒。
 - **文字颜 / emoji**：跟表情包同级的另外两个频率开关。
@@ -30,7 +30,7 @@ config.mjs                    # memeDir（默认 ~/.dsh/media/onebot/memes）
 
 图片本身不入库，只在磁盘上；数据库存相对文件名，取图走 `/memes/file/<name>`。
 
-## 已知边界
+## 实测（2026-11-08，两套线上库 / 18 个会话）\n\n```\nfind_meme      28 次\nqq_send_image  21 次   ← 真正发出去的图\nmark_meme_used  6 次   ← 旧口径只数这个，所以 used_count 严重低估\nlearn_meme      7 次\n```\n\n结论：表情包是**真在用**的模块（只是以前统计错了）。\n\n## 已知边界
 
 - 表情包目录默认 `~/.dsh/media/onebot/memes`（QQ 通道的媒体目录）。不用 QQ 的人要在插件 config 里改 `memeDir`，或者把图放进去。
 - 分类/描述识别要 LLM；没配 key 时只按文件名和手工编辑的元数据检索。

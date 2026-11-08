@@ -109,6 +109,29 @@ async function logActivity(kind, detail) {
   }
 }
 
+/** 从工具参数里抠出 memes 文件名（qq_send_image 的 sources 数组 / 单路径都认）。 */
+function memeFileFrom(value, depth = 0) {
+  if (depth > 3 || value == null) return "";
+  if (typeof value === "string") {
+    const m = value.match(/memes[\\/]+([^"'\\/\r\n]+?\.(?:png|jpe?g|gif|webp))/i);
+    return m ? m[1].trim() : "";
+  }
+  if (Array.isArray(value)) {
+    for (const v of value) {
+      const f = memeFileFrom(v, depth + 1);
+      if (f) return f;
+    }
+    return "";
+  }
+  if (typeof value === "object") {
+    for (const v of Object.values(value)) {
+      const f = memeFileFrom(v, depth + 1);
+      if (f) return f;
+    }
+  }
+  return "";
+}
+
 /** 人设演化：让服务端从这段对话生一句「我发现自己……」（fire-and-forget）。 */
 async function requestEvolve(userText, assistantText) {
   try {
@@ -808,6 +831,8 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
     const state = stateFor(session);
     const message = eventMessage(event);
     if (!message) return;
+    // 表情包用量：qq_send_image 是别的插件的工具，只能从这条消息的 tool-call 里认
+    if (message.role === "assistant") trackMemeSends(message);
     if (isSynthetic(message)) return;   // 别的插件注入的块、time-context 都不要
 
     const text = extractText(message);
@@ -1149,6 +1174,38 @@ async function scanSeen() {
   }
   catch {
     /* 忽略 */
+  }
+}
+
+
+/** 她发图时自动记一笔「用过了」。
+
+`qq_send_image` 是 dsh-onebot-qq 提供的工具，不是我们注册的 —— 但它调用时会出现在
+assistant 消息的 tool-call 里，所以从会话事件里认：路径命中 memes/ 就 +1。
+原来只有模型主动调 `mark_meme_used` 才计数（18 个会话里只调了 6 次，实际发了 21 张），
+used_count 严重低估。
+*/
+function trackMemeSends(message) {
+  const parts = Array.isArray(message?.content) ? message.content : [];
+  for (const p of parts) {
+    if (!p || p.type !== "tool-call") continue;
+    if (String(p.name || "") !== "qq_send_image") continue;
+    let args = p.arguments ?? p.args ?? {};
+    if (typeof args === "string") {
+      try {
+        args = JSON.parse(args);
+      } catch {
+        args = { raw: args };
+      }
+    }
+    const file = memeFileFrom(args);
+    if (!file) continue;
+    void fetch(config.endpoint + "/memes/used", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file }),
+      signal: AbortSignal.timeout(4000),
+    }).catch(() => {});
   }
 }
 

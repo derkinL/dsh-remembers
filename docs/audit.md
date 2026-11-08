@@ -81,6 +81,7 @@
 14. **QQ/profile 路径写死**：6 处 `if HOME == "/home/ubuntu"` 分支抽成 `_profile_patch_path()` / `_onebot_media_dir()` / `_dsh_home()`，支持 `CMEM_DSH_PATCH`、`DSH_HOME`、`DSH_PROFILE`；VPS 两套布局行为不变。
 15. **`install.sh --port 8081` 解析错**：`for arg in "$@"` 里 `shift` 不改变循环，`8081` 会被当成未知参数退出。改成 `while` 循环。
 16. **`slang` 死写路径**：删除 `recordSlang()`、调用点和 `_unusedSlang`；`/slang` 只保留读接口兼容历史数据。
+17. **表情包用量统计错了**：`meme.used_count` 只在模型主动调 `mark_meme_used` 时 +1（18 个会话里 6 次），而她真正发图走的是 onebot 的 `qq_send_image`（21 次）。改从 `session/event` 的 tool-call 里认 `qq_send_image` + memes 路径自动计数；新增 `tests/node/test_meme_usage.mjs`。
 
 ## 五、1.2.1：把「空转」的模块换掉（2026-11-08 晚）
 
@@ -91,7 +92,7 @@
 | 学说话 · 口音 | **换机制** | 口音不再等「网友原句转正」（线上 hits 全是 1、active=0、doc 空），改成从她自己说过的话（新表 `self_line`）统计句长/标点/语气词；满 8 句生成，3 天重写；没有 LLM 就用规则拼 |
 | 学说话 · 参考语料 | 保留 | 1020 条 + 抓来的原句，每轮 hints 挑 1–2 句；不再决定口音 |
 | 日记 | **修通** | 新增 `write_diary` 工具（`POST /diary` 支持直接存她写的正文）；原来只有 `read_diary`，提醒了也没笔 |
-| 表情包 | **保留前端** | 面板是给人用的，不动；文档里注明「重度使用建议配 dsh-meme」 |
+| 表情包 | **保留前端（实际在用）** | 18 个会话里 `find_meme` 28 次、`qq_send_image` 21 次、`learn_meme` 7 次；面板一行没动。另修了用量统计：`qq_send_image` 不是本插件的工具，原来只有 `mark_meme_used` 计数，导致 `used_count` 严重低估 |
 | 工具 | **加埋点** | 每个工具调用写 `~/.dsh/remembers-tool-trace.jsonl`（ts/tool/ok/ms），一周后按数据决定砍谁 |
 | 宪法区 | **撤掉** | 人格段不再渲染、界面不再提交；字段留着兼容老库（两套线上都是 0 字） |
 | B 站 / 贴吧 | **默认关** | `biliBrowseEnabled` 默认 false；贴吧本来就默认 false。要用自己在面板打开 |
@@ -107,7 +108,7 @@
 | 人格 | identity 1022/1008 字，self_model 116/1107 字 | 真在用 |
 | 主动唤醒 | 407 次；B 站 85 次、见闻 319 条 | 真在用 |
 | 便签 | 122 条 | 模型愿意用 |
-| 表情包 | 图库 212 张；她发过 9 / 0 次 | 消费端几乎不用，管理端保留给人用 |
+| 表情包 | 图库 212 张；`find_meme` 28 次、`qq_send_image` 21 次、`learn_meme` 7 次 | 真在用（早前看 `used_count=9` 是错指标，见下） |
 | 学说话（hints） | 两套都能生成（embedding / LLM） | 机制在跑，效果无埋点可证 |
 | 学说话（口音） | 33 条候选全 hits=1，active=0，`/voice` doc 空 | 旧机制不可达 → 已在 1.2.1 换掉 |
 | 日记 | 主 2 篇 / 副 1 篇，停在 10-24 | 只有读工具、没有写工具 → 已补 |

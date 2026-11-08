@@ -2198,7 +2198,7 @@ class MemoryStore:
         """扫 mediaDir 下用户发来的图，按内容 hash 计数。返回新图数量。"""
         import hashlib
         import os as _os
-        meme_dir = _os.environ.get("CMEM_MEME_DIR", "/home/ubuntu/.dsh/media/onebot/memes")
+        meme_dir = _os.environ.get("CMEM_MEME_DIR", _os.path.expanduser("~/.dsh/media/onebot/memes"))
         media_dir = _os.path.dirname(meme_dir)
         if not _os.path.isdir(media_dir):
             return 0
