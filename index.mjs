@@ -1436,16 +1436,33 @@ async function scanSeen() {
       registerTool(defineTool({
         name: "tieba_browse",
         description:
-          "逛一个吧，列最近的帖子（标题 + 帖子号 + 回复数）。kw 填吧名，不要带「吧」字（显卡、猫、钓鱼）。"
+          "逛一个吧，列最近的帖子（标题 + 帖子号 + 回复数）。"
+          + "kw 填吧名（不要带「吧」字，比如 显卡 / 猫 / 钓鱼）；**不填也行**——会从「她常逛的吧」里挑一个。"
           + "挑感兴趣的再 tieba_read 进去读；别一口气把所有帖子都读了。",
         parameters: {
-          kw: { type: "string", required: true, description: "吧名，比如 显卡 / 猫 / 钓鱼" },
+          kw: { type: "string", description: "吧名，比如 显卡 / 猫 / 钓鱼；不填就从常逛的里面挑一个" },
           pn: { type: "number", description: "第几页，从 0 开始" },
         },
         output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
         execute: async (args) => {
-          const p = new URLSearchParams({ kw: String(args.kw || ""), pn: String(Number(args.pn) || 0) });
-          return (await get("/tieba/browse?" + p.toString())) || { ok: false };
+          let kw = String(args.kw || "").trim();
+          let note = "";
+          if (!kw) {
+            // 没指定吧：用前端「常逛的吧」里配的那几个，随机挑一个
+            try {
+              const st = await (await fetch(config.endpoint + "/tieba/status", { signal: AbortSignal.timeout(6000) })).json();
+              const bars = (st && st.bars) || [];
+              if (bars.length) {
+                kw = String(bars[Math.floor(Math.random() * bars.length)]);
+                note = "没指定吧，我挑了常去的「" + kw + "吧」。";
+              }
+            } catch { /* 拿不到就算了 */ }
+          }
+          if (!kw) return { ok: false, error: "没指定吧，而且「常逛的吧」是空的" };
+          const p = new URLSearchParams({ kw, pn: String(Number(args.pn) || 0) });
+          const r = (await get("/tieba/browse?" + p.toString())) || { ok: false };
+          if (note && r && typeof r === "object") r.note = note;
+          return r;
         },
       }));
 
