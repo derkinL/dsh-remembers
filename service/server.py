@@ -1654,6 +1654,7 @@ class Handler(BaseHTTPRequestHandler):
         samples = self._self_voice_samples(12)
         stats = self._voice_stats(lines) if len(lines) >= 8 else {}
         doc = ""
+        preview = ""
         source = "self"
         if len(lines) >= 8:
             if extractor is not None:
@@ -1664,17 +1665,14 @@ class Handler(BaseHTTPRequestHandler):
             if not doc:
                 doc = self._voice_doc_rule(stats, samples)
         else:
-            # 样本还不够（刚装 / 刚清库）：用参考语料垫一版，但**不写成第一人称**。
-            # 「我说话中位 3 字」如果来自 233/笑死 这批梗，是假的自我描述。
+            # 样本还不够（刚装 / 刚清库）：**不进人格**。
+            # 参考语料是 233/笑死 这批梗，写进「我的口音」会让她以为自己是梗库；
+            # 只在 voice.json 里留一份 preview 给设置页看，满 8 句自发言再正式生成。
             source = "corpus"
             refs = [str(r.get("raw") or "").strip() for r in store.expr_voice_samples(8)]
             refs = [t for t in refs if t]
             if refs:
-                ref_stats = self._voice_stats(refs)
-                doc = self._voice_doc_rule(ref_stats, refs, first_person=False)
-                if doc:
-                    doc = ("（参考语料，还不是她自己的口音）" + doc
-                           + "她自己说过 %d 句，满 8 句后自动换成她自己的说法。" % len(lines))
+                preview = self._voice_doc_rule(self._voice_stats(refs), refs, first_person=False)
         # 兜底：模型有时把数字改写成"很短"这种形容词。
         # 只有档案里一个数字都没出现时，才补一句实测 —— 否则会跟正文重复（用户看到过）。
         if doc and stats:
@@ -1695,7 +1693,7 @@ class Handler(BaseHTTPRequestHandler):
 
         st = {"doc": doc, "builtAt": _t.time(), "samples": samples, "stats": stats,
               "judged": judged, "promoted": promoted, "count": len(samples),
-              "source": source, "selfCount": len(lines)}
+              "source": source, "selfCount": len(lines), "preview": preview}
         try:
             os.makedirs(os.path.dirname(self._voice_path()), exist_ok=True)
             tmp = self._voice_path() + ".tmp"
