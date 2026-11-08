@@ -38,25 +38,52 @@ window.__ModuleLoader__.load({
       }
       const URL_KEY = "dsh-remembers:serviceUrl";
 
-      const PRESETS = {
+      // 2026-11-08：对话模型和向量模型拆成两套预设 —— 它们经常不是同一家。
+      const LLM_PRESETS = {
         deepseek: {
           label: "DeepSeek",
-          llm_base: "https://api.deepseek.com/v1",
-          llm_model: "deepseek-flash",
+          base: "https://api.deepseek.com/v1",
+          model: "deepseek-flash",
           hint: "DeepSeek 官方 API。密钥在 platform.deepseek.com 申请。",
         },
         aliyun: {
-          label: "阿里云百炼（含 embedding）",
-          llm_base: "https://ws-bzw864scfibokwzf.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-          llm_model: "qwen-plus",
-          embed_model: "qwen3.7-text-embedding-flash",
-          hint: "阿里云一套 key 同时给对话模型和向量模型用。",
+          label: "阿里云百炼",
+          base: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          model: "qwen-plus",
+          hint: "阿里云百炼的 OpenAI 兼容端点。",
         },
         custom: {
           label: "自定义（OpenAI 兼容）",
-          llm_base: "",
-          llm_model: "",
+          base: "",
+          model: "",
           hint: "任何 OpenAI 兼容端点都可以，末尾记得带 /v1。",
+        },
+      };
+
+      const EMBED_PRESETS = {
+        aliyun: {
+          label: "阿里云百炼",
+          base: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          model: "text-embedding-v3",
+          hint: "百炼的向量模型。它现在不只给记忆用，也给语料库（学到的说法）做语义检索。",
+        },
+        openai: {
+          label: "OpenAI",
+          base: "https://api.openai.com/v1",
+          model: "text-embedding-3-small",
+          hint: "OpenAI 的向量模型。",
+        },
+        same: {
+          label: "跟随对话模型（同一家）",
+          base: "",
+          model: "",
+          hint: "留空就用对话模型的地址与密钥，只单独填模型名即可。",
+        },
+        custom: {
+          label: "自定义（OpenAI 兼容）",
+          base: "",
+          model: "",
+          hint: "任何 OpenAI 兼容的 /embeddings 端点。",
         },
       };
 
@@ -246,9 +273,10 @@ window.__ModuleLoader__.load({
         const [pubPort, setPubPort] = React.useState("28582");
         const [draft, setDraft] = React.useState({
           provider: "deepseek",
+          embedProvider: "same",
           llm_key: "",
-          llm_base: PRESETS.deepseek.llm_base,
-          llm_model: PRESETS.deepseek.llm_model,
+          llm_base: LLM_PRESETS.deepseek.base,
+          llm_model: LLM_PRESETS.deepseek.model,
           embed_base: "",
           embed_model: "",
           embed_key: "",
@@ -267,8 +295,22 @@ window.__ModuleLoader__.load({
             setStatus(data.status);
             setConfigPath(data.path || "");
             setNotice(null);
+            // 按 base URL 反推是哪家（保存只存 base/model，不存 provider 名）
+            const guessBy = (presets, base) => {
+              const b = String(base || "").trim();
+              if (!b) return "";
+              const hit = Object.keys(presets).find((k) => {
+                const pb = String(presets[k].base || "").trim();
+                return pb && (pb === b || pb.replace(/\/v1\/?$/, "") === b.replace(/\/v1\/?$/, ""));
+              });
+              return hit || "custom";
+            };
             setDraft((d) => ({
               ...d,
+              provider: guessBy(LLM_PRESETS, data.current.llm_base) || "custom",
+              embedProvider: data.current.embed_base
+                ? (guessBy(EMBED_PRESETS, data.current.embed_base) || "custom")
+                : "same",
               llm_base: data.current.llm_base || "",
               llm_model: data.current.llm_model || "",
               llm_key: "",
@@ -290,9 +332,15 @@ window.__ModuleLoader__.load({
         React.useEffect(() => { load(); }, [load]);
 
         const chooseProvider = (key) => {
-          const p = PRESETS[key];
+          const p = LLM_PRESETS[key];
           if (p === undefined) return;
-          set({ provider: key, llm_base: p.llm_base, llm_model: p.llm_model });
+          set({ provider: key, llm_base: p.base, llm_model: p.model });
+        };
+
+        const chooseEmbedProvider = (key) => {
+          const p = EMBED_PRESETS[key];
+          if (p === undefined) return;
+          set({ embedProvider: key, embed_base: p.base, embed_model: p.model });
         };
 
 
@@ -354,7 +402,8 @@ window.__ModuleLoader__.load({
         const llmReady = status ? status.llm_enabled : false;
         const embedReady = status ? status.embedding_enabled : false;
         const extractOn = status ? status.extract_enabled : false;
-        const preset = PRESETS[draft.provider] || PRESETS.custom;
+        const preset = LLM_PRESETS[draft.provider] || LLM_PRESETS.custom;
+        const embedPreset = EMBED_PRESETS[draft.embedProvider] || EMBED_PRESETS.custom;
 
         return h("div", { style: S.wrap },
 
@@ -367,7 +416,8 @@ window.__ModuleLoader__.load({
           ),
 
           h("div", { style: S.desc },
-            "记忆服务要用一个对话模型来抽取事实、一个向量模型来算语义相似度。",
+            "两个模型各管一半：对话模型负责抽取事实、给说法分类；向量模型负责算语义相似度。",
+            "向量模型现在不只给记忆用 —— 语料库（默认 1000 多条 + 她学到的说法）按话题检索也靠它。",
             "填一次就能一直用，密钥只存在服务端。",
           ),
 
@@ -386,12 +436,12 @@ window.__ModuleLoader__.load({
                 "记忆服务地址会按当前页面自动推导（主套 /mem，第二套 /lan/mem）。本机开发默认 127.0.0.1:8080。"),
             ),
 
-            h(Field, { label: "提供商" },
+            h(Field, { label: "对话模型提供商", hint: preset.hint },
               h("select", {
                 style: S.select,
                 value: draft.provider,
                 onChange: (ev) => chooseProvider(ev.target.value),
-              }, Object.keys(PRESETS).map((k) => h("option", { key: k, value: k }, PRESETS[k].label))),
+              }, Object.keys(LLM_PRESETS).map((k) => h("option", { key: k, value: k }, LLM_PRESETS[k].label))),
             ),
 
             h(Field, {
@@ -457,6 +507,14 @@ window.__ModuleLoader__.load({
                         placeholder: "qwen3.7-text-embedding-flash",
                         onChange: (ev) => set({ embed_model: ev.target.value }),
                       }),
+                    ),
+
+                    h(Field, { label: "向量模型提供商", hint: embedPreset.hint },
+                      h("select", {
+                        style: S.select,
+                        value: draft.embedProvider,
+                        onChange: (ev) => chooseEmbedProvider(ev.target.value),
+                      }, Object.keys(EMBED_PRESETS).map((k) => h("option", { key: k, value: k }, EMBED_PRESETS[k].label))),
                     ),
 
                     h(Field, {
