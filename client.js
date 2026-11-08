@@ -4269,39 +4269,6 @@ const [data, setData] = React.useState(null);
                 ),
               ),
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 10 } },
-                h("span", { style: { ...S.muted, fontSize: 12 } }, "说话方式"),
-                h("textarea", {
-                  style: { ...S.input, minHeight: 60, resize: "vertical", fontFamily: "inherit" },
-                  value: idFields.speaking,
-                  placeholder: "例：像发微信，最多 3 句、80 字以内，只发对话，不写动作旁白。",
-                  onChange: (ev) => setId("speaking", ev.target.value),
-                }),
-                h("label", {
-                  style: {
-                    display: "flex", alignItems: "flex-start", gap: 6, cursor: "pointer", marginTop: 4,
-                    padding: "8px 10px", borderRadius: 8,
-                    border: "1.5px solid " + (idFields.ai_flavor_on !== false ? "#4084ff" : "rgba(0,0,0,.10)"),
-                    background: idFields.ai_flavor_on !== false ? "rgba(64,132,255,.04)" : "#ffffff",
-                    transition: "border-color .15s, background .15s",
-                  },
-                },
-                  h("input", {
-                    type: "checkbox",
-                    checked: idFields.ai_flavor_on !== false,
-                    onChange: (ev) => setId("ai_flavor_on", ev.target.checked),
-                    style: { marginTop: 1 },
-                  }),
-                  h("span", { style: { fontSize: 12 } }, "去 AI 味（默认开启）"),
-                ),
-                h("textarea", {
-                  style: { ...S.input, minHeight: 60, resize: "vertical", fontFamily: "inherit", opacity: idFields.ai_flavor_on === false ? 0.5 : 1 },
-                  value: idFields.ai_flavor,
-                  placeholder: "人味瑕疵清单，可以改",
-                  onChange: (ev) => setId("ai_flavor", ev.target.value),
-                  disabled: idFields.ai_flavor_on === false,
-                }),
-              ),
-              h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 10 } },
                 h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
                   h("span", { style: { ...S.muted, fontSize: 12 } }, "不能做的事"),
                   h("span", { style: { fontSize: 11, color: "#9ca3af" } }, "（勾上 = 生效，取消勾 = 暂时不管）"),
@@ -4609,6 +4576,7 @@ const [data, setData] = React.useState(null);
         const [prompts, setPrompts] = React.useState({ chat: "", public: "" });
         const [voiceDoc, setVoiceDoc] = React.useState("");
         const [tightText, setTightText] = React.useState("");
+        const [styleForm, setStyleForm] = React.useState({ speaking: "", ai_flavor_on: true, ai_flavor: "" });
         const [voiceBuiltAt, setVoiceBuiltAt] = React.useState(0);
         const [msg, setMsg] = React.useState(null);
         const [busy, setBusy] = React.useState(false);
@@ -4619,6 +4587,11 @@ const [data, setData] = React.useState(null);
             let ident = {};
             try { ident = JSON.parse((pr && pr.identity) || "{}"); } catch { ident = {}; }
             setOn(ident.learn_speak_on !== false);
+            setStyleForm({
+              speaking: ident.speaking || "",
+              ai_flavor_on: ident.ai_flavor_on !== false,
+              ai_flavor: ident.ai_flavor || "",
+            });
           } catch { /* 读不到就当开着 */ }
           try { setStats(await call("/learn/stats")); } catch { setStats(null); }
           try {
@@ -4771,6 +4744,61 @@ const [data, setData] = React.useState(null);
               "只编辑「学什么」这段。输出格式和结构规则是公共的，自动拼在后面。"),
             editor("public", "学网友（B 站热评 / 贴吧）",
               "只编辑「学什么」这段。B 站和贴吧共用，默认保留了评论区的阴阳怪气。"),
+            h("div", { style: S.card },
+              h("div", { style: S.label }, "说话方式（进人格）"),
+              h("div", { style: { ...S.muted, fontSize: 11, lineHeight: 1.6, marginBottom: 6 } },
+                "这段会原样进她的系统提示词，管的是「怎么说」：长度、只发对话、能不能用文字颜。"),
+              h("textarea", {
+                style: { ...S.input, minHeight: 80, resize: "vertical", fontFamily: "inherit", fontSize: 12.5, lineHeight: 1.7 },
+                value: styleForm.speaking,
+                placeholder: "例：像发微信，最多 3 句、80 字以内，只发对话，有情绪起伏。",
+                onChange: (ev) => setStyleForm({ ...styleForm, speaking: ev.target.value }),
+              }),
+              h("label", {
+                style: {
+                  display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginTop: 10,
+                  padding: "10px 12px", borderRadius: 10,
+                  border: "1.5px solid " + (styleForm.ai_flavor_on ? "#4084ff" : "rgba(0,0,0,.10)"),
+                  background: styleForm.ai_flavor_on ? "rgba(64,132,255,.04)" : "#fff",
+                  transition: "border-color .15s, background .15s",
+                },
+              },
+                h("input", {
+                  type: "checkbox", checked: styleForm.ai_flavor_on, style: { marginTop: 3 },
+                  onChange: (ev) => setStyleForm({ ...styleForm, ai_flavor_on: ev.target.checked }),
+                }),
+                h("div", { style: { display: "flex", flexDirection: "column", gap: 3 } },
+                  h("span", { style: { fontSize: 13, fontWeight: 600 } }, "去 AI 味"),
+                  h("span", { style: { ...S.muted, fontSize: 11 } }, "人味瑕疵：错字、省略、跑题、口癖、网络标点"),
+                ),
+              ),
+              h("textarea", {
+                style: {
+                  ...S.input, minHeight: 70, marginTop: 8, resize: "vertical",
+                  fontFamily: "inherit", fontSize: 12.5, lineHeight: 1.7,
+                  opacity: styleForm.ai_flavor_on ? 1 : 0.5,
+                },
+                value: styleForm.ai_flavor,
+                placeholder: "人味瑕疵清单，可以改",
+                disabled: !styleForm.ai_flavor_on,
+                onChange: (ev) => setStyleForm({ ...styleForm, ai_flavor: ev.target.value }),
+              }),
+              h("div", { style: { display: "flex", gap: 8, marginTop: 8 } },
+                h("button", {
+                  style: S.btn(true),
+                  disabled: busy,
+                  onClick: async () => {
+                    setBusy(true); setMsg(null);
+                    try {
+                      await call("/persona/style", { method: "POST", body: JSON.stringify(styleForm) });
+                      setMsg("说话方式已保存");
+                    } catch (e) {
+                      setMsg("保存失败：" + String((e && e.message) || e));
+                    } finally { setBusy(false); }
+                  },
+                }, "保存"),
+              ),
+            ),
             h("div", { style: S.card },
               h("div", { style: S.label }, "说话的松紧（密度配额 + 微标记）"),
               h("div", { style: { ...S.muted, fontSize: 11, lineHeight: 1.6, marginBottom: 6 } },

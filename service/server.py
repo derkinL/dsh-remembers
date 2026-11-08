@@ -714,6 +714,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._post_tieba_reply())
         elif path == "/tieba/config":
             self._guard(lambda: self._post_tieba_cfg())
+        elif path == "/persona/style":
+            self._guard(lambda: self._post_persona_style())
         elif path == "/tightness":
             self._guard(lambda: self._post_tightness())
         elif path == "/voice/rebuild":
@@ -917,8 +919,9 @@ class Handler(BaseHTTPRequestHandler):
 · 书面腔（不是…而是、最…的是、不仅…更、首先/其次/综上）：每 200 字最多 1 个。一两句话的时候，一个都别用。
 · 不确定就说不确定：好像 / 应该 / 感觉 / 可能 / 估计 —— 你平时用得多，别省。
 · 该夸张就夸张：根本 / 简直 / 特别 / 贼 / 巨 —— 真人比 AI 多一个量级。
-· 句尾可以挂一个没用的尾巴：啊 / 啦 / 嘛 / 吧 / 的，一句最多一个，「吧」只用在建议上。
-· 不必把话说完：该停就停，不用每句都收尾、都下结论。"""
+· 不必把话说完：该停就停，不用每句都收尾、都下结论。
+
+（语气词和口癖的配额在「去 AI 味」那段里管，这里不重复。）"""
 
     def _tightness_path(self) -> str:
         return os.path.join(DATA_DIR, "tightness.txt")
@@ -3563,6 +3566,33 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"ok": True})
 
     # -- 学说话 / 亲和度 / 任务 / 便签 / 睡眠 --------------------------------
+
+    def _post_persona_style(self) -> None:
+        """「说话方式」+「去 AI 味」写进 persona.identity，页面从人格设定搬到学说话。"""
+        body = self._body()
+        try:
+            row = store.conn.execute("SELECT identity FROM persona WHERE id=1").fetchone()
+            ident = {}
+            if row and row[0]:
+                try:
+                    ident = json.loads(row[0]) or {}
+                except Exception:
+                    ident = {}
+            if "speaking" in body:
+                ident["speaking"] = str(body.get("speaking") or "")[:2000]
+            if "ai_flavor_on" in body:
+                ident["ai_flavor_on"] = bool(body.get("ai_flavor_on"))
+            if "ai_flavor" in body:
+                ident["ai_flavor"] = str(body.get("ai_flavor") or "")[:2000]
+            store.conn.execute("UPDATE persona SET identity=? WHERE id=1",
+                               (json.dumps(ident, ensure_ascii=False),))
+            store.conn.commit()
+            self._json(200, {"ok": True,
+                             "speaking": ident.get("speaking", ""),
+                             "ai_flavor_on": ident.get("ai_flavor_on", True),
+                             "ai_flavor": ident.get("ai_flavor", "")})
+        except Exception as e:
+            self._json(500, {"ok": False, "error": str(e)})
 
     def _post_tightness(self) -> None:
         """存「说话的松紧」那段。传空 = 关掉（不注入）。restore=true 恢复默认。"""
