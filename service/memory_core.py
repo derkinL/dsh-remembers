@@ -1381,7 +1381,9 @@ class MemoryStore:
             return
         for name, ddl in (("raw", "TEXT NOT NULL DEFAULT ''"),
                           ("source", "TEXT NOT NULL DEFAULT ''"),
-                          ("likes", "INTEGER NOT NULL DEFAULT 0")):
+                          ("likes", "INTEGER NOT NULL DEFAULT 0"),
+                          ("hits", "INTEGER NOT NULL DEFAULT 1"),
+                          ("status", "TEXT NOT NULL DEFAULT 'candidate'")):
             if name in cols:
                 continue
             try:
@@ -1409,7 +1411,7 @@ class MemoryStore:
             "count, ts, last_hit) "
             "VALUES (?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(scope, situation, style) DO UPDATE SET "
-            "  count = count + ?, last_hit = ?, "
+            "  count = count + ?, hits = hits + 1, last_hit = ?, "
             "  raw = CASE WHEN excluded.raw != '' THEN excluded.raw ELSE expressions.raw END, "
             "  source = CASE WHEN excluded.source != '' THEN excluded.source ELSE expressions.source END, "
             "  likes = MAX(expressions.likes, excluded.likes)",
@@ -1595,6 +1597,34 @@ class MemoryStore:
             (cur["situation"], cur["style"], cur["example"], eid))
         self.conn.commit()
         return {"ok": True, "id": eid, **cur}
+
+    def expr_candidates(self, min_hits: int = 3, limit: int = 30) -> list[dict]:
+        """出现次数够、但还没定性的条目 —— 等子 AI 判一次。"""
+        try:
+            return [dict(r) for r in self.conn.execute(
+                "SELECT id, scope, situation, style, raw, source, likes, hits, count, status "
+                "FROM expressions WHERE status='candidate' AND hits >= ? "
+                "ORDER BY hits DESC, likes DESC LIMIT ?", (max(1, int(min_hits)), max(1, int(limit))))]
+        except Exception:
+            return []
+
+    def expr_set_status(self, eid: int, status: str) -> int:
+        st = str(status or "")
+        if st not in ("candidate", "active", "rejected"):
+            return 0
+        cur = self.conn.execute("UPDATE expressions SET status=? WHERE id=?", (st, int(eid)))
+        self.conn.commit()
+        return int(cur.rowcount or 0)
+
+    def expr_active(self, limit: int = 40) -> list[dict]:
+        """已转正的说法 —— 只有这些才会进口音区。"""
+        try:
+            return [dict(r) for r in self.conn.execute(
+                "SELECT id, scope, situation, style, raw, source, likes, hits "
+                "FROM expressions WHERE status='active' "
+                "ORDER BY hits DESC, likes DESC, last_hit DESC LIMIT ?", (max(1, int(limit)),))]
+        except Exception:
+            return []
 
     def expr_delete(self, eid: int) -> int:
         cur = self.conn.execute("DELETE FROM expressions WHERE id=?", (int(eid),))

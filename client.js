@@ -2701,6 +2701,18 @@ window.__ModuleLoader__.load({
                                       },
                                     }, "改"),
                                     h("button", {
+                                      key: "act",
+                                      style: { ...S.btn(false), fontSize: 11, padding: "2px 8px" },
+                                      title: "转正：只有启用过的说法才会进人格的口音区",
+                                      onClick: async () => {
+                                        try {
+                                          await call("/expressions", { method: "POST", body: JSON.stringify({ op: "status", id: e.id, status: "active" }) });
+                                          setExprList((exprList || []).map((x) => (x.id === e.id ? { ...x, status: "active" } : x)));
+                                          setMsg("已转正，下次重写口音档案时生效");
+                                        } catch (err) { setMsg("操作失败：" + String(err && err.message || err)); }
+                                      },
+                                    }, "启用"),
+                                    h("button", {
                                       key: "del",
                                       style: { ...S.btn(false), fontSize: 11, padding: "2px 8px" },
                                       onClick: async () => {
@@ -4595,6 +4607,8 @@ const [data, setData] = React.useState(null);
         const [on, setOn] = React.useState(true);
         const [stats, setStats] = React.useState(null);
         const [prompts, setPrompts] = React.useState({ chat: "", public: "" });
+        const [voiceDoc, setVoiceDoc] = React.useState("");
+        const [voiceBuiltAt, setVoiceBuiltAt] = React.useState(0);
         const [msg, setMsg] = React.useState(null);
         const [busy, setBusy] = React.useState(false);
 
@@ -4606,6 +4620,11 @@ const [data, setData] = React.useState(null);
             setOn(ident.learn_speak_on !== false);
           } catch { /* 读不到就当开着 */ }
           try { setStats(await call("/learn/stats")); } catch { setStats(null); }
+          try {
+            const v = await call("/voice");
+            setVoiceDoc((v && v.doc) || "");
+            setVoiceBuiltAt(Number((v && v.builtAt) || 0));
+          } catch { /* 没有就算了 */ }
           try {
             const a = await call("/learn/prompt?kind=chat");
             const b = await call("/learn/prompt?kind=public");
@@ -4702,6 +4721,34 @@ const [data, setData] = React.useState(null);
                 : null,
               h("div", { style: { ...S.muted, fontSize: 11, marginTop: 8, lineHeight: 1.6 } },
                 "每个来源最多留 40 条（按见过次数和最近用上排序）。想看具体条目去「记忆 → 学说话」。"),
+            ),
+            h("div", { style: S.card },
+              h("div", { style: S.label }, "口音区（写进人格的那一段）"),
+              h("div", { style: { ...S.muted, fontSize: 12, lineHeight: 1.7 } },
+                voiceDoc
+                  ? "「" + voiceDoc.slice(0, 160) + (voiceDoc.length > 160 ? "…" : "") + "」"
+                  : "还没有口音档案。出现 3 次以上的说法先由子 AI 判定，通过后才会写进来；三天重写一次。"),
+              h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" } },
+                h("button", {
+                  style: { ...S.btn(false), fontSize: 12 },
+                  disabled: busy,
+                  onClick: async () => {
+                    setBusy(true); setMsg(null);
+                    try {
+                      const r = await call("/voice/rebuild", { method: "POST" });
+                      setVoiceDoc((r && r.doc) || "");
+                      setMsg(r && r.skipped ? "还没到三天，跳过" : "口音档案已重写");
+                      void load();
+                    } catch (e) {
+                      setMsg("重写失败：" + String((e && e.message) || e));
+                    } finally { setBusy(false); }
+                  },
+                }, "立即重写"),
+                h("span", { style: { ...S.muted, fontSize: 11 } },
+                  voiceBuiltAt
+                    ? "上次：" + new Date(voiceBuiltAt * 1000).toLocaleString()
+                    : "还没生成过"),
+              ),
             ),
             h("div", { style: S.card },
               h("div", { style: S.label }, "两套提示词分别管什么"),

@@ -798,6 +798,74 @@ class Extractor:
                             "example": str(item.get("example") or "").strip()[:200], "likes": 0})
         return out
 
+    # ------------------------------------------------------------------
+    # 口音区（2026-11-08）：候选 -> 子 AI 判定 -> 启用 -> 三天重写一次
+    # ------------------------------------------------------------------
+
+    JUDGE_SYSTEM = """你在帮一个聊天机器人筛「说话方式」的样本。
+
+给它一堆从聊天/评论区摘出来的原句，你要判断**每一句是不是值得学的说话方式**：
+- 是：口头禅、语气词、玩梗、接话方式、特定标点习惯（「典」「前排，凉了」「就这？」）
+- 不是：具体内容 / 交易信息 / 纯事实 / 广告 / 人身攻击 / 一句完整的长叙述
+
+重复出现过（hits 高）说明这是它环境里真常见的说法，权重更高，但**仍然只看是不是说话方式**。
+
+只输出 JSON 数组，每条一项：
+[{"i":序号,"keep":true/false,"why":"一句话理由"}]
+"""
+
+    VOICE_DOC_SYSTEM = """你要给一个聊天机器人写「口音档案」。
+
+给它一批她平时会说的原句（来自她自己学到的说法）。你要归纳出她的**说话习惯**，写成一段给她自己看的说明（不是规则清单）：
+- 句子长度：通常几个字？什么时候会长一点
+- 语气词/口头禅：常带哪些
+- 玩梗方式：爱怎么玩（接梗、阴阳、自嘲、反问）
+- 标点习惯：爱不爱用问号/感叹号/省略号
+- 一定不要写成"你要怎样怎样"的指令，用"你平时…"这种叙述
+
+要求：200 字以内，中文，直接输出正文，不要标题、不要 JSON。
+"""
+
+    def judge_voice_candidates(self, items: list[dict]) -> list[dict]:
+        """子 AI：判断候选里哪些真的是「说话方式」。返回 [{i, keep, why}]。"""
+        if not self.enabled or not items:
+            return []
+        payload = [{
+            "i": k,
+            "raw": str(it.get("raw") or it.get("style") or "")[:80],
+            "tag": str(it.get("situation") or ""),
+            "hits": int(it.get("hits") or 1),
+        } for k, it in enumerate(items)]
+        import json as _json
+        try:
+            got = self.llm.chat_json(self.JUDGE_SYSTEM, _json.dumps(payload, ensure_ascii=False), max_tokens=800)
+        except Exception:
+            return []
+        if not isinstance(got, list):
+            return []
+        out = []
+        for g in got:
+            if not isinstance(g, dict):
+                continue
+            try:
+                i = int(g.get("i"))
+            except (TypeError, ValueError):
+                continue
+            if 0 <= i < len(items):
+                out.append({"i": i, "keep": bool(g.get("keep")), "why": str(g.get("why") or "")[:80]})
+        return out
+
+    def build_voice_doc(self, samples: list[str]) -> str:
+        """子 AI：把「已启用」的原句归纳成一段口音档案（200 字内）。"""
+        body = "\n".join("- " + str(x) for x in samples if str(x).strip())[:2000]
+        if not body:
+            return ""
+        try:
+            txt = self.llm.chat(self.VOICE_DOC_SYSTEM, body, max_tokens=500)
+        except Exception:
+            return ""
+        return str(txt or "").strip()[:600]
+
     def learn_expressions(self, user_text: str, assistant_text: str = "") -> list[dict]:
         """单独一次小调用，只学「他说话的方式」。抽不到就返回 []，不报错。
 

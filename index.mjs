@@ -496,6 +496,8 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
       persona.selfModel = String(data?.self_model ?? "").trim();
     // 口音样本：几条「她平时怎么说话」的原句，常驻人格段（低频刷新，稳定缓存）
     persona.voice = Array.isArray(data?.voice) ? data.voice.map((x) => String(x || "").trim()).filter(Boolean) : [];
+    // 口音档案：子 AI 归纳的一段话，三天才重写一次（稳定，不破坏 prompt cache）
+    persona.voiceDoc = String(data?.voiceDoc ?? "").trim();
 
       // 手编画像整份缓存：只有 manual_profile 进系统提示词，profile（自动累积）不进
       const map = {};
@@ -1024,6 +1026,7 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
             : "以下是老大是谁（他的画像，你该知道的基本信息）：",
           footer: notOwnerNote,
           voice: persona.voice || [],
+          voiceDoc: persona.voiceDoc || "",
         });
       }
     }
@@ -1032,6 +1035,7 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
       profileText: persona.ownerManual,
       profileHeader: "以下是老大是谁（他的画像，你该知道的基本信息）：",
       voice: persona.voice || [],
+      voiceDoc: persona.voiceDoc || "",
     });
   }
 
@@ -1903,13 +1907,17 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
   // 现在改成：挑几条短原句常驻在这里，她每轮都看得到「自己平时怎么说话」。
   // 低频刷新（跟人格一起），同一个会话内稳定。
   {
-    const voice = (opts.voice || []).filter(Boolean).slice(0, 8);
-    if (voice.length) {
+    const doc = String(opts.voiceDoc || "").trim();
+    const voice = (opts.voice || []).filter(Boolean).slice(0, 6);
+    if (doc || voice.length) {
       identityLines.push("");
-      identityLines.push("【你平时说话的样子】");
-      identityLines.push("下面几句是你会说的那种话。学的是那股味道（短、随口、带梗），不是让你照抄：");
-      for (const v of voice) identityLines.push("· 「" + v + "」");
-      identityLines.push("别主动说「我学会了一句」这种话，也别把它们当口头禅反复用。");
+      identityLines.push("【你的口音】");
+      if (doc) identityLines.push(doc);
+      if (voice.length) {
+        identityLines.push("你平时会这么说（学味道，别照抄，也别每句都套）：");
+        for (const v of voice) identityLines.push("· 「" + v + "」");
+      }
+      identityLines.push("别主动说「我学会了一句」这种话，也别把某一句当口头禅反复用。");
     }
   }
 

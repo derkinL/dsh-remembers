@@ -174,6 +174,26 @@ def _init() -> None:
         flush=True,
     )
 
+    # 启动时：口音区过期就重写一次（异步，别卡启动）；之后每 6 小时看一眼，
+    # 满 3 天才真的重写（rebuild_voice 自己会跳过）。
+    try:
+        import threading as _th
+        import time as _t
+
+        def _voice_loop() -> None:
+            h = Handler.__new__(Handler)
+            _t.sleep(30)
+            while True:
+                try:
+                    h.rebuild_voice(False)
+                except Exception:
+                    pass
+                _t.sleep(6 * 3600)
+
+        _th.Thread(target=_voice_loop, name="voice-rebuild", daemon=True).start()
+    except Exception:
+        pass
+
     # 启动时把每个来源的说法裁到上限（老库里可能已经堆到 55+）
     try:
         for _row in store.conn.execute("SELECT DISTINCT scope FROM expressions"):
@@ -432,6 +452,8 @@ class Handler(BaseHTTPRequestHandler):
                     "prompt": full,
                 }
             self._guard(lambda: self._json(200, _lp()))
+        elif path == "/voice":
+            self._guard(lambda: self._json(200, {"ok": True, **self._voice_state()}))
         elif path == "/learn/stats":
             self._guard(lambda: self._json(200, self._learn_stats()))
         elif path == "/expressions":
@@ -686,6 +708,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._post_tieba_reply())
         elif path == "/tieba/config":
             self._guard(lambda: self._post_tieba_cfg())
+        elif path == "/voice/rebuild":
+            self._guard(lambda: self._json(200, self.rebuild_voice(True)))
         elif path == "/learn/switch":
             self._guard(lambda: self._post_learn_switch())
         elif path == "/learn/prompt":
@@ -855,28 +879,76 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- 人格设定（二合一里的「人」那一半） ---------------------------------
 
-    def _voice_samples(self, limit: int = 8) -> list[str]:
-        """挑几条「她平时怎么说话」的原句，给系统提示词当固定样本。
+    VOICE_MIN_HITS = 3          # 出现几次才够格让子 AI 判
+    VOICE_REBUILD_DAYS = 3      # 口音区多久重写一次
 
-        要短（2~24 字）、带赞/用过的优先。这是常驻口音，不是每轮现抽——
-        系统提示词是 prompt cache 的最顶层前缀，一变整段历史就废。
-        """
-        out = []
+    def _voice_path(self) -> str:
+        return os.path.join(DATA_DIR, "voice.json")
+
+    def _voice_state(self) -> dict:
         try:
-            rows = store.conn.execute(
-                "SELECT raw, count, likes, last_hit FROM expressions "
-                "WHERE raw != '' AND length(raw) BETWEEN 2 AND 24 "
-                "ORDER BY likes DESC, count DESC, last_hit DESC LIMIT ?",
-                (max(1, int(limit)),)).fetchall()
-            seen = set()
-            for r in rows:
-                t = str(r[0] or "").strip()
-                if t and t not in seen:
-                    seen.add(t)
-                    out.append(t)
+            return json.load(open(self._voice_path(), encoding="utf-8")) or {}
         except Exception:
-            return []
+            return {}
+
+    def _voice_samples(self, limit: int = 8) -> list[str]:
+        """已启用的原句（只有 status=active 才有资格进口音区）。"""
+        out = []
+        seen = set()
+        for r in store.expr_active(40):
+            t = str(r.get("raw") or r.get("style") or "").strip()
+            if not t or t in seen:
+                continue
+            seen.add(t)
+            out.append(t)
+            if len(out) >= limit:
+                break
         return out
+
+    def rebuild_voice(self, force: bool = False) -> dict:
+        """把候选送去子 AI 判定 → 转正/否决 → 重写口音档案。
+
+        口音区在系统提示词里，**不能每轮变**：只有这里（三天一次或手动）才重写。
+        """
+        import time as _t
+        st = self._voice_state()
+        built = float(st.get("builtAt") or 0)
+        if not force and (_t.time() - built) < self.VOICE_REBUILD_DAYS * 86400 and st.get("doc"):
+            return {"ok": True, "skipped": True, **st}
+
+        judged = 0
+        try:
+            cands = store.expr_candidates(self.VOICE_MIN_HITS, 30)
+            if cands:
+                verdicts = extractor.judge_voice_candidates(cands) if extractor is not None else []
+                by_i = {v["i"]: v for v in verdicts}
+                for k, it in enumerate(cands):
+                    v = by_i.get(k)
+                    if v is None:
+                        continue          # 子 AI 没判到，留在候选里下次再判
+                    store.expr_set_status(int(it["id"]), "active" if v.get("keep") else "rejected")
+                    judged += 1
+        except Exception:
+            pass
+
+        samples = self._voice_samples(12)
+        doc = ""
+        if samples and extractor is not None:
+            try:
+                doc = extractor.build_voice_doc(samples)
+            except Exception:
+                doc = ""
+        st = {"doc": doc, "builtAt": _t.time(), "samples": samples,
+              "judged": judged, "count": len(samples)}
+        try:
+            os.makedirs(os.path.dirname(self._voice_path()), exist_ok=True)
+            tmp = self._voice_path() + ".tmp"
+            json.dump(st, open(tmp, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+            os.replace(tmp, self._voice_path())
+        except Exception:
+            pass
+        print(f"[cmem] voice rebuilt: judged={judged} samples={len(samples)} doc={len(doc)}", flush=True)
+        return {"ok": True, **st}
 
     def _persona_payload(self, data: dict) -> dict:
         data = dict(data or {})
@@ -895,6 +967,8 @@ class Handler(BaseHTTPRequestHandler):
                 "self_model": MemoryStore.SELF_MODEL_MAX,
             },
             "voice": self._voice_samples(8),
+            "voiceDoc": (self._voice_state().get("doc") or ""),
+            "voiceBuiltAt": float(self._voice_state().get("builtAt") or 0),
         }
 
     def _get_persona(self) -> None:
@@ -3458,6 +3532,14 @@ class Handler(BaseHTTPRequestHandler):
     def _post_expressions(self) -> None:
         """POST 增一条 / DELETE 删一条。"""
         body = self._body()
+        if str(body.get("op") or "") == "status":
+            try:
+                n = store.expr_set_status(int(body.get("id")), str(body.get("status") or ""))
+            except (TypeError, ValueError):
+                self._json(400, {"ok": False, "error": "bad id"})
+                return
+            self._json(200, {"ok": bool(n), "changed": n})
+            return
         if str(body.get("op") or "") == "update":
             eid = body.get("id")
             try:
