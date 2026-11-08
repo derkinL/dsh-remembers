@@ -1277,8 +1277,10 @@ async function scanSeen() {
       registerTool(defineTool({
         name: "find_meme",
         description:
-          "按情绪找表情包。emotion 可选 happy / angry / sad / shy / confused / daily；"
-          + "也可以给 q 用关键词找（比如「饼干」「下班」「比心」）。"
+          "找表情包。**先想场景（这一轮在聊什么、发生了什么），再定情绪**，两个一起用最准："
+          + "q 用关键词描述场景（比如「加班」「被夸」「下雪」「吃泡面」），"
+          + "emotion 可选 happy / angry / sad / shy / confused / daily 描述当下的情绪。"
+          + "只给 emotion 也能找，但容易挑到不贴的图。"
           + "返回匹配的图片文件名，挑一张用 qq_send_image 发出去。"
           + "发多勤看你上下文里「表情包：现在大约每 N 句配一张」那条——按那个频率来，别自己乱定。",
         parameters: {
@@ -1815,8 +1817,9 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
     } else if (_memeRate >= 1) {
       // 1.0 的语义是「不设上限」，不是「每句必须带图」
       // 100% = 强制每句都配一张（用户明确要的语义：想要不强制就选别的档位）
-      identityLines.push("【表情包】我每条消息都配一张：开口前后用 find_meme 按当时的情绪找一张，"
-        + "再用 qq_send_image 发出去。找不到完全对口的，就挑最接近的那张。");
+      identityLines.push("【表情包】我每条消息都配一张：开口前后按当时在聊什么、我什么情绪，"
+        + "用 find_meme 找一张（场景写 q，情绪写 emotion），再用 qq_send_image 发出去。"
+        + "找不到完全对口的，就挑最接近的那张。");
     } else {
       identityLines.push("【表情包】我大约每 " + _everyOf(_memeRate) + " 句配一张（"
         + Math.round(_memeRate * 100) + "%）。气氛对上就 find_meme 找一张发出去；"
