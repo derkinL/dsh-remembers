@@ -354,7 +354,12 @@ class Scheduler:
         bar = random.choice(bars) if bars else ""
         where = f"{bar}吧" if bar else "贴吧"
         tail = "看到有意思的可以发给老大。" if cfg.get("shareEnabled", True) else "自己看看就行，别打扰他。"
-        msg = f"（现在 {hour} 点。你自己待着，这会儿有点想去{where}逛逛。{tail}）"
+        # 2026-11-08：以前只说「想去逛逛」，没告诉它怎么逛 —— 结果一次都没真的逛过。
+        # 现在把工具名写进提示里。
+        how = "逛的话用 tieba_browse(kw=\"吧名\") 看首页，想细看某帖用 tieba_read(tid=帖子号)"
+        if cfg.get("replyEnabled"):
+            how += "，想回就用 tieba_reply(tid=帖子号, text=\"要说的话\")"
+        msg = f"（现在 {hour} 点。你自己待着，这会儿有点想去{where}逛逛。{how}。{tail}）"
         self._inject(msg, silent=False)
         _log(f"tieba: nudged model ({count + 1}/{per_day} today, bar={bar or '-'})")
         return True

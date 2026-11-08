@@ -501,6 +501,13 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
     persona.voiceDoc = String(data?.voiceDoc ?? "").trim();
     // 「说话的松紧」：密度配额 + 微标记补差。空串 = 用户关掉了，不注入。
     persona.tightness = String(data?.tightness ?? "").trim();
+    // 贴吧状态：人格里要告诉她「你会逛贴吧、常逛哪几个吧」，
+    // 否则工具在列表里但她根本不会想起用（实测上线后 0 次调用）。
+    try {
+      const _tbRes = await fetch(config.endpoint + "/tieba/status", { signal: AbortSignal.timeout(6000) });
+      const tb = await _tbRes.json();
+      persona.tieba = tb && tb.ok ? tb : null;
+    } catch { persona.tieba = persona.tieba || null; }
 
       // 手编画像整份缓存：只有 manual_profile 进系统提示词，profile（自动累积）不进
       const map = {};
@@ -1031,6 +1038,7 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
           voice: persona.voice || [],
           voiceDoc: persona.voiceDoc || "",
           tightness: persona.tightness || "",
+          tieba: persona.tieba || null,
         });
       }
     }
@@ -1041,6 +1049,7 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
       voice: persona.voice || [],
       voiceDoc: persona.voiceDoc || "",
       tightness: persona.tightness || "",
+      tieba: persona.tieba || null,
     });
   }
 
@@ -1939,6 +1948,25 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
         for (const a of talk) identityLines.push("· " + a);
       }
       identityLines.push("这些都不是任务。不想做就不做；做了不想说就不说——看视频、发呆、写便签，本来就是我自己的事。");
+    }
+  }
+
+  // 【贴吧】2026-11-08
+  // 工具注册了但人格里没提，她一次都没逛过（线上 0 次调用）。
+  // 这里把「你会逛、常逛哪几个吧、怎么逛」写进人格，唤醒提示里再点一次工具名。
+  {
+    const tb = opts.tieba || null;
+    if (tb && tb.enabled) {
+      const bars = (tb.bars || []).filter(Boolean).slice(0, 10);
+      identityLines.push("");
+      identityLines.push("【贴吧】");
+      identityLines.push("我会上贴吧逛逛" + (bars.length ? "，常去的是：" + bars.join("、") + "。" : "。"));
+      identityLines.push("想逛就用 tieba_browse(kw=\"吧名\") 看那个吧的首页，挑帖子看；"
+        + "想细看一条用 tieba_read(tid=帖子号)，会给我帖子正文和底下几条回复。");
+      identityLines.push(tb.replyEnabled
+        ? "真有想接的话，可以用 tieba_reply(tid=帖子号, text=\"要说的话\") 回一句——别客套，像吧里人那么说。"
+        : "现在回帖是关着的，我就只看看。");
+      identityLines.push("逛完不用汇报。看到真好笑的，再挑一句跟老大说；没什么感觉就自己待着。");
     }
   }
 
