@@ -174,6 +174,14 @@ def _init() -> None:
         flush=True,
     )
 
+    # 启动时后台补语料向量（配了 embedding 才有意义；没配就跳过）
+    try:
+        import threading as _th2
+        _th2.Thread(target=lambda: Handler.__new__(Handler)._expr_index_loop(),
+                    name="expr-index", daemon=True).start()
+    except Exception:
+        pass
+
     # 启动时：口音区过期就重写一次（异步，别卡启动）；之后每 6 小时看一眼，
     # 满 3 天才真的重写（rebuild_voice 自己会跳过）。
     try:
@@ -1033,57 +1041,163 @@ class Handler(BaseHTTPRequestHandler):
         (("吃", "饭", "食堂", "外卖", "饿", "宵夜", "白饭"), "搞笑"),
     ]
 
-    def _phrase_hints(self, text: str, limit: int = 2) -> list[dict]:
-        """按这轮在聊什么，从语料库（默认语料 + 她学到的）挑 1~2 句参考。
+    # ---- 语料向量索引（embedding 优先；没配 embedding 就走 LLM 挑） ----
+    def _expr_index_loop(self) -> None:
+        """后台把 active 语料的向量补齐。补齐前检索只用已有的那部分。"""
+        if embedder is None or not embedder.enabled:
+            return
+        model = embedder.model
+        for _ in range(200):
+            try:
+                need = store.expr_need_vec(model, 32)
+            except Exception:
+                return
+            if not need:
+                return
+            texts = [(str(r.get("raw") or "") + " " + str(r.get("meaning") or "")).strip() for r in need]
+            vecs = embedder.embed(texts)
+            got = 0
+            for r, v in zip(need, vecs):
+                if not v:
+                    continue
+                try:
+                    import struct as _st
+                    store.expr_vec_put(int(r["id"]), model, _st.pack("<%df" % len(v), *v))
+                    got += 1
+                except Exception:
+                    pass
+            print(f"[cmem] expr index: +{got} (left {len(need) - got})", flush=True)
+            if got == 0:
+                return
 
-        做法是「话题 → 分类 → 抽两条」：先在用户这句话里找话题词，
-        命中就翻那一类的说法；一句都对不上就什么都不给（宁缺勿滥）。
-        """
-        q = str(text or "").strip()
-        if len(q) < 4:
+    def _hints_by_embedding(self, text: str, limit: int = 2) -> list[dict]:
+        import struct as _st
+        model = embedder.model
+        qv = embedder.embed_one(str(text)[:300])
+        if not qv:
             return []
+        rows = store.expr_vec_all(model, 3000)
+        if not rows:
+            return []
+        import math as _m
+        qn = _m.sqrt(sum(x * x for x in qv)) or 1.0
+        best = []
+        for r in rows:
+            blob = r.get("vec")
+            if not blob:
+                continue
+            try:
+                v = _st.unpack("<%df" % (len(blob) // 4), blob)
+            except Exception:
+                continue
+            dot = 0.0
+            for a, b in zip(qv, v):
+                dot += a * b
+            vn = _m.sqrt(sum(x * x for x in v)) or 1.0
+            sim = dot / (qn * vn)
+            if sim >= 0.42:
+                best.append((sim, r))
+        best.sort(key=lambda x: -x[0])
+        out = []
+        for _sim, r in best[:limit]:
+            out.append({
+                "raw": str(r.get("raw") or "")[:40],
+                "tag": str(r.get("situation") or ""),
+                "scene": str(r.get("scene") or ""),
+                "meaning": str(r.get("meaning") or "")[:60],
+                "by": "embedding",
+            })
+        return out
+
+    def _topic_candidates(self, q: str, n: int = 30) -> tuple:
+        """按话题词表挑一批候选（给 LLM 挑，或者 embedding 没配时直接用）。"""
         topic = ""
         for words, vibe in self.PHRASE_TOPICS:
             if any(w in q for w in words):
                 topic = vibe
                 break
-        if not topic:
-            return []
-
-        # 先精确：场景词里带这个话题的（比如「周一上班」撞上「上班」）
+        rows = []
         try:
-            rows = [dict(r) for r in store.conn.execute(
-                "SELECT raw, situation, scene, meaning, likes FROM expressions "
-                "WHERE status='active' AND situation=? AND raw != '' "
-                "ORDER BY likes DESC, RANDOM() LIMIT 40", (topic,))]
+            if topic:
+                rows = [dict(r) for r in store.conn.execute(
+                    "SELECT id, raw, situation, scene, meaning, likes FROM expressions "
+                    "WHERE status='active' AND situation=? AND raw != '' "
+                    "ORDER BY likes DESC LIMIT ?", (topic, n))]
+            if not rows:
+                rows = [dict(r) for r in store.conn.execute(
+                    "SELECT id, raw, situation, scene, meaning, likes FROM expressions "
+                    "WHERE status='active' AND raw != '' ORDER BY likes DESC LIMIT ?", (n,))]
         except Exception:
             rows = []
-        if not rows:
-            # 这一类没有，就退到「整库随机」——但只在有话题时才退，不会每轮都塞
+        return topic, rows
+
+    _hint_cache: dict = {}
+
+    def _phrase_hints(self, text: str, limit: int = 2) -> list[dict]:
+        """带缓存的外壳：同一句话一轮里会被问两次（渲染 + 思考），别重复调 LLM。"""
+        q = str(text or "").strip()
+        if len(q) < 4:
+            return []
+        now = time.time()
+        key = (q[:120], limit)
+        hit = self._hint_cache.get(key)
+        if hit and now - hit[0] < 120:
+            return list(hit[1])
+        out = self._phrase_hints_raw(q, limit)
+        if len(self._hint_cache) > 200:
+            self._hint_cache.clear()
+        self._hint_cache[key] = (now, list(out))
+        return out
+
+    def _phrase_hints_raw(self, text: str, limit: int = 2) -> list[dict]:
+        """按这轮在聊什么，从语料库挑 1~2 句参考。
+
+        优先级：
+          1. embedding（配了才有）—— 语义最准
+          2. LLM 挑（没 embedding 时）—— 从候选里选最贴的，不贴就不给
+          3. 话题词表 —— 两个都不可用时的兜底
+        """
+        q = str(text or "").strip()
+        if len(q) < 4:
+            return []
+
+        # 1) embedding
+        if embedder is not None and embedder.enabled:
             try:
-                rows = [dict(r) for r in store.conn.execute(
-                    "SELECT raw, situation, scene, meaning, likes FROM expressions "
-                    "WHERE status='active' AND raw != '' ORDER BY likes DESC, RANDOM() LIMIT 20")]
+                got = self._hints_by_embedding(q, limit)
+                if got:
+                    return got
+                return []          # 语义上不贴就不给，别退回词表硬凑
             except Exception:
-                rows = []
+                pass
 
-        # 场景词里带这轮关键词的排前面（「周一上班」对「加班」这种）
-        words = []
-        for ws, vibe in self.PHRASE_TOPICS:
-            if vibe == topic:
-                words = [w for w in ws if w in q]
-                break
-        def _rank(r):
-            scene = str(r.get("scene") or "")
-            hot = any(w in scene for w in words)
-            return (0 if hot else 1, -int(r.get("likes") or 0))
-        rows.sort(key=_rank)
+        topic, rows = self._topic_candidates(q, 30)
+        if not rows:
+            return []
 
+        # 2) LLM 挑
+        if extractor is not None and extractor.enabled:
+            try:
+                picks = extractor.pick_phrase_hints(q, rows)
+                out = []
+                for i in picks:
+                    r = rows[i]
+                    out.append({
+                        "raw": str(r.get("raw") or "")[:40],
+                        "tag": str(r.get("situation") or ""),
+                        "scene": str(r.get("scene") or ""),
+                        "meaning": str(r.get("meaning") or "")[:60],
+                        "by": "llm",
+                    })
+                return out[:limit]
+            except Exception:
+                pass
+
+        # 3) 词表兜底
         out = []
         seen = set()
         for r in rows:
             raw = str(r.get("raw") or "").strip()
-            # 太长的不给（引用一句整段话没意义），纯符号的也不要
             if not raw or len(raw) > 12 or raw in seen:
                 continue
             seen.add(raw)
@@ -1092,7 +1206,7 @@ class Handler(BaseHTTPRequestHandler):
                 "tag": str(r.get("situation") or ""),
                 "scene": str(r.get("scene") or ""),
                 "meaning": str(r.get("meaning") or "")[:60],
-                "topic": topic,
+                "by": "topic",
             })
             if len(out) >= limit:
                 break

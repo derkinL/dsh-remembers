@@ -1681,6 +1681,36 @@ class MemoryStore:
             print(f"[cmem] expr_import_seeds failed: {e}", flush=True)
             return 0
 
+    def expr_vec_put(self, eid: int, model: str, vec_bytes: bytes) -> None:
+        try:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO expr_vec(eid, model, vec, ts) VALUES(?,?,?,?)",
+                (int(eid), str(model), vec_bytes, __import__("time").time()))
+            self.conn.commit()
+        except Exception:
+            pass
+
+    def expr_need_vec(self, model: str, limit: int = 64) -> list[dict]:
+        """还没有这个模型向量的 active 条目。"""
+        try:
+            return [dict(r) for r in self.conn.execute(
+                "SELECT e.id, e.raw, e.situation, e.scene, e.meaning FROM expressions e "
+                "LEFT JOIN expr_vec v ON v.eid = e.id AND v.model = ? "
+                "WHERE e.status='active' AND e.raw != '' AND v.eid IS NULL LIMIT ?",
+                (str(model), max(1, int(limit))))]
+        except Exception:
+            return []
+
+    def expr_vec_all(self, model: str, limit: int = 2000) -> list[dict]:
+        try:
+            return [dict(r) for r in self.conn.execute(
+                "SELECT e.id, e.raw, e.situation, e.scene, e.meaning, v.vec FROM expressions e "
+                "JOIN expr_vec v ON v.eid = e.id AND v.model = ? "
+                "WHERE e.status='active' AND e.raw != '' LIMIT ?",
+                (str(model), max(1, int(limit))))]
+        except Exception:
+            return []
+
     def expr_need_scene(self, limit: int = 40) -> list[dict]:
         """还没场景词的条目（默认语料导入时没有）。"""
         try:

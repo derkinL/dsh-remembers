@@ -308,3 +308,14 @@ CREATE TABLE IF NOT EXISTS profiles (
     first_seen  REAL,
     updated_at  REAL
 );
+
+-- ---------------------------------------------------------------------------
+-- 语料向量（2026-11-08）：给 expressions 做语义检索用
+--   vec = float32 小端；model 变了就重算，别混着比
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS expr_vec (
+  eid    INTEGER PRIMARY KEY,
+  model  TEXT    NOT NULL DEFAULT '',
+  vec    BLOB    NOT NULL,
+  ts     REAL    NOT NULL DEFAULT 0
+);

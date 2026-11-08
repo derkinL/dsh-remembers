@@ -851,6 +851,49 @@ class Extractor:
 只输出 JSON 数组：[{"i":序号,"scene":"场景词"}]
 """
 
+    PICK_SYSTEM = """你在帮一个聊天机器人挑「说话时可以借鉴的说法」。
+
+给你：她这一轮要回的那句话（context），和一批候选说法（每条带意思）。
+从候选里挑 0~2 条**真正贴这个话题**的。
+
+规则：
+- 一条都不贴就返回空数组，不要硬凑
+- 只挑语气/梗能用的，不挑只是字面相似的
+- 只输出 JSON：{"picks":[序号,...],"why":"一句话"}"""
+
+    def pick_phrase_hints(self, context: str, candidates: list[dict]) -> list[int]:
+        """返回候选里最贴的 0~2 个下标。"""
+        if not self.enabled or not candidates:
+            return []
+        import json as _json
+        payload = [{"i": k, "raw": str(c.get("raw") or "")[:30],
+                    "meaning": str(c.get("meaning") or "")[:40],
+                    "scene": str(c.get("scene") or "")[:20]}
+                   for k, c in enumerate(candidates)]
+        try:
+            got = self.llm.chat_json(self.PICK_SYSTEM,
+                                     "【这一轮的话】" + str(context)[:200] + "\n\n【候选】"
+                                     + _json.dumps(payload, ensure_ascii=False),
+                                     max_tokens=200)
+        except Exception:
+            return []
+        picks = []
+        if isinstance(got, dict):
+            picks = got.get("picks") or []
+        elif isinstance(got, list):
+            picks = got
+        out = []
+        for p in picks:
+            try:
+                i = int(p)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= i < len(candidates):
+                out.append(i)
+            if len(out) >= 2:
+                break
+        return out
+
     def extract_scenes(self, items: list[dict]) -> list[dict]:
         """批量给条目补「场景词」（默认语料导入时没有这个字段）。"""
         if not self.enabled or not items:
