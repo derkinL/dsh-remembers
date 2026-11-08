@@ -818,8 +818,13 @@ class Extractor:
 要具体、能一眼认出是什么事，别用「日常」「感慨」这种空的。
 例子：加班 / 被夸 / 下雪 / 吃泡面 / 被催更 / 看到离谱操作 / 吵架 / 求推荐 / 深夜睡不着。
 
+还要给三样（keep=true 的才给）：
+- meaning：一句话意思（≤20 字）。**拿不准就留空** —— 宁可不写，也不能瞎编。
+- usage：怎么用（≤20 字，比如「看到离谱操作时甩一句」）。
+- tail：能不能当句尾收口（能 = true，比如「绝了」「典」「离谱」；不能 = false）。
+
 只输出 JSON 数组，每条一项：
-[{"i":序号,"keep":true/false,"canon":"归一说法（不 keep 就留空）","scene":"场景词","why":"一句话理由"}]
+[{"i":序号,"keep":true/false,"canon":"归一说法","scene":"场景词","meaning":"意思","usage":"怎么用","tail":true/false,"why":"一句话理由"}]
 """
 
     VOICE_DOC_SYSTEM = """你要给一个聊天机器人写「口音档案」。
@@ -863,6 +868,9 @@ class Extractor:
                 out.append({"i": i, "keep": bool(g.get("keep")),
                             "canon": str(g.get("canon") or "")[:60],
                             "scene": str(g.get("scene") or "")[:24],
+                            "meaning": str(g.get("meaning") or "")[:40],
+                            "usage": str(g.get("usage") or "")[:40],
+                            "tail": bool(g.get("tail")),
                             "why": str(g.get("why") or "")[:80]})
         return out
 

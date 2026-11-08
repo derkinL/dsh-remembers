@@ -947,6 +947,9 @@ class Handler(BaseHTTPRequestHandler):
             "raw": (r.get("raw") or r.get("style") or ""),
             "tag": (r.get("situation") or ""),
             "scene": (r.get("scene") or ""),
+            "meaning": (r.get("meaning") or ""),
+            "usage": (r.get("usage") or ""),
+            "tail": bool(r.get("tail")),
             "likes": int(r.get("likes") or 0),
             "hits": int(r.get("hits") or 0),
         } for r in rows[:n] if (r.get("raw") or r.get("style"))]
@@ -1056,6 +1059,9 @@ class Handler(BaseHTTPRequestHandler):
                     store.expr_set_canon(int(it["id"]), canon)
                     if str(v.get("scene") or "").strip():
                         store.expr_set_scene(int(it["id"]), str(v["scene"]).strip())
+                    if str(v.get("meaning") or "").strip() or str(v.get("usage") or "").strip():
+                        store.expr_set_notes(int(it["id"]), str(v.get("meaning") or ""),
+                                             str(v.get("usage") or ""), bool(v.get("tail")))
                 # canon 攒够 3 次的整组转正
                 for canon, n in store.expr_canon_groups(self.VOICE_MIN_HITS):
                     for eid in store.expr_ids_by_canon(canon):

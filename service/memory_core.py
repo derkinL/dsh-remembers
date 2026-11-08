@@ -1385,6 +1385,9 @@ class MemoryStore:
                           ("hits", "INTEGER NOT NULL DEFAULT 1"),
                           ("canon", "TEXT NOT NULL DEFAULT ''"),
                           ("scene", "TEXT NOT NULL DEFAULT ''"),
+                          ("meaning", "TEXT NOT NULL DEFAULT ''"),
+                          ("usage", "TEXT NOT NULL DEFAULT ''"),
+                          ("tail", "INTEGER NOT NULL DEFAULT 0"),
                           ("status", "TEXT NOT NULL DEFAULT 'candidate'")):
             if name in cols:
                 continue
@@ -1614,6 +1617,13 @@ class MemoryStore:
         except Exception:
             return []
 
+    def expr_set_notes(self, eid: int, meaning: str, usage: str, tail: bool) -> int:
+        cur = self.conn.execute(
+            "UPDATE expressions SET meaning=?, usage=?, tail=? WHERE id=?",
+            (str(meaning or "")[:40], str(usage or "")[:40], 1 if tail else 0, int(eid)))
+        self.conn.commit()
+        return int(cur.rowcount or 0)
+
     def expr_set_scene(self, eid: int, scene: str) -> int:
         cur = self.conn.execute("UPDATE expressions SET scene=? WHERE id=?",
                                 (str(scene or "")[:24], int(eid)))
@@ -1655,7 +1665,7 @@ class MemoryStore:
         """已转正的说法 —— 只有这些才会进口音区。"""
         try:
             return [dict(r) for r in self.conn.execute(
-                "SELECT id, scope, situation, style, raw, source, likes, hits, scene "
+                "SELECT id, scope, situation, style, raw, source, likes, hits, scene, meaning, usage, tail "
                 "FROM expressions WHERE status='active' "
                 "ORDER BY hits DESC, likes DESC, last_hit DESC LIMIT ?", (max(1, int(limit)),))]
         except Exception:
