@@ -90,11 +90,14 @@ class Scheduler:
             st["tieba_count"] = 0
             changed = True
 
+        # 2026-11-08：节奏开了以后，这一次"醒着"就该是去刷 B 站 / 逛贴吧，
+        # 而不是再叠一条泛唤醒（之前两者各发各的，同一个小时能收两条提示）。
+        # 顺序：谁到期谁优先；两个都到期就随机挑一个；都没到期才走泛唤醒。
+        bili_due = self._tick_bili(st, now)
+        tieba_due = self._tick_tieba(st, now)
+        if bili_due or tieba_due:
+            changed = True
         if self._tick_wake(st, now):
-            changed = True
-        if self._tick_bili(st, now):
-            changed = True
-        if self._tick_tieba(st, now):
             changed = True
 
         if self._tick_diary(st, now):
@@ -183,6 +186,12 @@ class Scheduler:
             chat_n = 0
         if chat_n < min_chat:
             _log(f"wake: gate_chat chat={chat_n} < {min_chat}, skip")
+            return False
+
+        # 刚因为刷 B 站/逛贴吧醒过（1 小时内），这一轮泛唤醒跳过：
+        # 不然同一个时段会有「去看看 B 站」和「抽到这几件事」两条提示。
+        if now - float(st.get("_browse_fired", 0)) < 3600:
+            _log("wake: skip (刚刚因为刷 B 站/逛贴吧醒过)")
             return False
 
         st["last_wake"] = now
@@ -305,6 +314,7 @@ class Scheduler:
         # 这里只留一句内心状态，刷不刷、看不看、说不说，全由她自己决定。
         msg = f"（现在 {hour} 点。你自己待着，这会儿有点想上 B 站逛逛。）"
         self._inject(msg, silent=False)
+        st["_browse_fired"] = now
         _log(f"bili: nudged model ({count + 1}/{per_day} today)")
         return True
 
@@ -358,6 +368,7 @@ class Scheduler:
         # 工具怎么用写在工具描述里。提示里再讲一遍就变成任务式指令了。
         msg = f"（现在 {hour} 点。你自己待着，这会儿有点想去{where}逛逛。{tail}）"
         self._inject(msg, silent=False)
+        st["_browse_fired"] = now
         _log(f"tieba: nudged model ({count + 1}/{per_day} today, bar={bar or '-'})")
         return True
 
