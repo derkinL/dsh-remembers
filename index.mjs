@@ -1816,7 +1816,7 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
       // 1.0 的语义是「不设上限」，不是「每句必须带图」
       // 100% = 强制每句都配一张（用户明确要的语义：想要不强制就选别的档位）
       identityLines.push("【表情包】我每条消息都配一张：开口前后用 find_meme 按当时的情绪找一张，"
-        + "再用 qq_send_image 发出去。找不到完全对口的，就挑最接近的那张——这一档就是每句都要带图。");
+        + "再用 qq_send_image 发出去。找不到完全对口的，就挑最接近的那张。");
     } else {
       identityLines.push("【表情包】我大约每 " + _everyOf(_memeRate) + " 句配一张（"
         + Math.round(_memeRate * 100) + "%）。气氛对上就 find_meme 找一张发出去；"
