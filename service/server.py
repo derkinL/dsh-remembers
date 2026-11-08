@@ -1187,6 +1187,22 @@ class Handler(BaseHTTPRequestHandler):
         import time as _t
         st = self._voice_state()
         built = float(st.get("builtAt") or 0)
+        # 样本失效就重写：档案里引用的那几句可能已经被删/被否决，
+        # 不重写的话人格里会一直挂着一句库里已经没有的话。
+        stale = False
+        samples_old = [x for x in (st.get("samples") or []) if str(x).strip()]
+        if samples_old:
+            try:
+                alive = {str(r[0]) for r in store.conn.execute(
+                    "SELECT raw FROM expressions WHERE status='active' AND source!='seed'")}
+                stale = any(x not in alive for x in samples_old)
+            except Exception:
+                stale = False
+        elif st.get("doc"):
+            stale = True          # 有档案却没有样本 → 也重写
+        if stale:
+            print("[cmem] voice: 样本已失效，强制重写", flush=True)
+            force = True
         if not force and (_t.time() - built) < self.VOICE_REBUILD_DAYS * 86400 and st.get("doc"):
             return {"ok": True, "skipped": True, **st}
 

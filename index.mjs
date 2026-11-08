@@ -1966,12 +1966,17 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
   {
     const doc = String(opts.voiceDoc || "").trim();
     const voice = (opts.voice || []).filter(Boolean).slice(0, 6);
-    if (doc || voice.length) {
+    // 没有档案也保留这一段：只放「怎么查」，她才知道语料库存在
+    {
       identityLines.push("");
       identityLines.push("【我的口音】");
       if (doc) identityLines.push(doc);
+      if (voice.length) {
+        identityLines.push("我平时会这么说（学味道，别照抄）：");
+        for (const v of voice) identityLines.push("· 「" + v + "」");
+      }
       identityLines.push("想找「这种场合别人怎么说的」，用 find_phrases 按分类或场景查几句来参考；"
-        + "学味道，别照抄，也别把某一句当口头禅反复用。");
+        + "语料库里还有一千多条大家常用的梗和说法。学味道，别照抄，也别把某一句当口头禅反复用。");
     }
   }
 
