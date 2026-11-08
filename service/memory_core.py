@@ -1383,6 +1383,7 @@ class MemoryStore:
                           ("source", "TEXT NOT NULL DEFAULT ''"),
                           ("likes", "INTEGER NOT NULL DEFAULT 0"),
                           ("hits", "INTEGER NOT NULL DEFAULT 1"),
+                          ("canon", "TEXT NOT NULL DEFAULT ''"),
                           ("status", "TEXT NOT NULL DEFAULT 'candidate'")):
             if name in cols:
                 continue
@@ -1598,13 +1599,36 @@ class MemoryStore:
         self.conn.commit()
         return {"ok": True, "id": eid, **cur}
 
-    def expr_candidates(self, min_hits: int = 3, limit: int = 30) -> list[dict]:
-        """出现次数够、但还没定性的条目 —— 等子 AI 判一次。"""
+    def expr_candidates(self, min_hits: int = 1, limit: int = 60) -> list[dict]:
+        """还没定性的条目 —— 每三天让子 AI 全过一遍（不看 hits，相似度由 canon 归并）。"""
         try:
             return [dict(r) for r in self.conn.execute(
-                "SELECT id, scope, situation, style, raw, source, likes, hits, count, status "
+                "SELECT id, scope, situation, style, raw, source, likes, hits, canon, count, status "
                 "FROM expressions WHERE status='candidate' AND hits >= ? "
                 "ORDER BY hits DESC, likes DESC LIMIT ?", (max(1, int(min_hits)), max(1, int(limit))))]
+        except Exception:
+            return []
+
+    def expr_set_canon(self, eid: int, canon: str) -> int:
+        cur = self.conn.execute("UPDATE expressions SET canon=? WHERE id=?",
+                                (str(canon or "")[:60], int(eid)))
+        self.conn.commit()
+        return int(cur.rowcount or 0)
+
+    def expr_canon_groups(self, min_count: int = 3) -> list[tuple[str, int]]:
+        """相似说法归并后，出现过 >= min_count 次的组。"""
+        try:
+            return [(str(r[0]), int(r[1])) for r in self.conn.execute(
+                "SELECT canon, COUNT(*) AS n FROM expressions "
+                "WHERE canon != '' AND status != 'rejected' "
+                "GROUP BY canon HAVING n >= ? ORDER BY n DESC", (max(1, int(min_count)),))]
+        except Exception:
+            return []
+
+    def expr_ids_by_canon(self, canon: str) -> list[int]:
+        try:
+            return [int(r[0]) for r in self.conn.execute(
+                "SELECT id FROM expressions WHERE canon=?", (str(canon),))]
         except Exception:
             return []
 

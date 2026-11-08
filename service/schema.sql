@@ -192,7 +192,8 @@ CREATE TABLE IF NOT EXISTS expressions (
   raw        TEXT NOT NULL DEFAULT '',       -- 原句（2026-11-08：学味道靠这句，不靠抽象）
   source     TEXT NOT NULL DEFAULT '',       -- 来源，如 tieba:显卡 / bili / chat
   likes      INTEGER NOT NULL DEFAULT 0,     -- 真实赞数/互动数，质量门槛
-  hits       INTEGER NOT NULL DEFAULT 1,     -- 在语料里出现过几次（转正门槛）
+  hits       INTEGER NOT NULL DEFAULT 1,     -- 原文一模一样的次数
+  canon      TEXT NOT NULL DEFAULT '',       -- 归一后的说法（相似归并，按它数次数）
   status     TEXT NOT NULL DEFAULT 'candidate', -- candidate / active / rejected
   count      INTEGER NOT NULL DEFAULT 1,     -- 见过几次（加权抽样用）
   ts         REAL NOT NULL DEFAULT 0,

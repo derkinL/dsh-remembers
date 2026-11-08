@@ -810,8 +810,12 @@ class Extractor:
 
 重复出现过（hits 高）说明这是它环境里真常见的说法，权重更高，但**仍然只看是不是说话方式**。
 
+同一类说法要归到同一个 canon 上 —— canon 是**归一后的短说法**（≤16 字），
+比如「前排，凉了」「前排」「前排凉了」都该归到 canon「前排凉了」。
+这样相似的句子能把次数攒到一起去。
+
 只输出 JSON 数组，每条一项：
-[{"i":序号,"keep":true/false,"why":"一句话理由"}]
+[{"i":序号,"keep":true/false,"canon":"归一说法（不 keep 就留空）","why":"一句话理由"}]
 """
 
     VOICE_DOC_SYSTEM = """你要给一个聊天机器人写「口音档案」。
@@ -852,7 +856,9 @@ class Extractor:
             except (TypeError, ValueError):
                 continue
             if 0 <= i < len(items):
-                out.append({"i": i, "keep": bool(g.get("keep")), "why": str(g.get("why") or "")[:80]})
+                out.append({"i": i, "keep": bool(g.get("keep")),
+                            "canon": str(g.get("canon") or "")[:60],
+                            "why": str(g.get("why") or "")[:80]})
         return out
 
     def build_voice_doc(self, samples: list[str]) -> str:

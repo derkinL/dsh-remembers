@@ -2602,8 +2602,8 @@ window.__ModuleLoader__.load({
                   ? h("div", null,
                       h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 4 } }, `学到的说法（场合感） ${exprs.length}`),
                       h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 8, lineHeight: 1.5 } },
-                        "存的是**原句**（照抄的那句话）+ 一个分类标签，不再把素材压成「当X时可以Y」——压完语气和节奏就没了。"
-                        + "**闲聊不再注入**这些；只有她真要说话时（贴吧回帖）才按帖子话题挑原句当参考。"),
+                        "这里是**候选池**。存的是原句（照抄），不是抽象标签。相似说法攒够 3 次、并且子 AI 判定是「说话方式」之后，才会转正进口音区。"
+                        + "转正的口音三天写一次进人格；没转正的不会进提示词，只在贴吧回帖时按话题挑几句当参考。"),
                       h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
                         pageSlice(exprs).map((e) => {
                           const editing = editId === e.id;

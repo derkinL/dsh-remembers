@@ -917,8 +917,12 @@ class Handler(BaseHTTPRequestHandler):
             return {"ok": True, "skipped": True, **st}
 
         judged = 0
+        promoted = 0
         try:
-            cands = store.expr_candidates(self.VOICE_MIN_HITS, 30)
+            # 方案 2：每三天把候选全过一遍（不看 hits）。
+            # 子 AI 给每条一个 canon（归一说法），相似说法靠 canon 归并，
+            # canon 攒够 3 次才转正 —— 这就是「看到相似内容三次以上」。
+            cands = store.expr_candidates(1, 60)
             if cands:
                 verdicts = extractor.judge_voice_candidates(cands) if extractor is not None else []
                 by_i = {v["i"]: v for v in verdicts}
@@ -926,8 +930,17 @@ class Handler(BaseHTTPRequestHandler):
                     v = by_i.get(k)
                     if v is None:
                         continue          # 子 AI 没判到，留在候选里下次再判
-                    store.expr_set_status(int(it["id"]), "active" if v.get("keep") else "rejected")
                     judged += 1
+                    if not v.get("keep"):
+                        store.expr_set_status(int(it["id"]), "rejected")
+                        continue
+                    canon = str(v.get("canon") or "").strip() or str(it.get("raw") or "")
+                    store.expr_set_canon(int(it["id"]), canon)
+                # canon 攒够 3 次的整组转正
+                for canon, n in store.expr_canon_groups(self.VOICE_MIN_HITS):
+                    for eid in store.expr_ids_by_canon(canon):
+                        if store.expr_set_status(eid, "active"):
+                            promoted += 1
         except Exception:
             pass
 
@@ -939,7 +952,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 doc = ""
         st = {"doc": doc, "builtAt": _t.time(), "samples": samples,
-              "judged": judged, "count": len(samples)}
+              "judged": judged, "promoted": promoted, "count": len(samples)}
         try:
             os.makedirs(os.path.dirname(self._voice_path()), exist_ok=True)
             tmp = self._voice_path() + ".tmp"
