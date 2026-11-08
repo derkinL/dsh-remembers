@@ -445,7 +445,9 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
   //   ~/.dsh/remembers-tool-trace.jsonl
   // 写失败只 warn 一次，绝不影响工具本身的返回。
   // ---------------------------------------------------------------
-  const TRACE_FILE = joinPath(homedir(), ".dsh", "remembers-tool-trace.jsonl");
+  // CMEM_TRACE_DIR 可改落盘目录（默认 ~/.dsh；测试时指到工作区）
+  const TRACE_DIR = process.env.CMEM_TRACE_DIR || joinPath(homedir(), ".dsh");
+  const TRACE_FILE = joinPath(TRACE_DIR, "remembers-tool-trace.jsonl");
   let traceWarned = false;
   function tracedTool(def) {
     if (!def || typeof def.execute !== "function") return def;
@@ -469,7 +471,7 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
           }) + "\n";
           void (async () => {
             try {
-              await mkdir(joinPath(homedir(), ".dsh"), { recursive: true });
+              await mkdir(TRACE_DIR, { recursive: true });
               await appendFile(TRACE_FILE, line, "utf8");
             } catch (error) {
               if (!traceWarned) {
