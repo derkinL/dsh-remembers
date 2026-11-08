@@ -252,9 +252,20 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
     }
   }
 
-  // ---------- 2.5 学来的说法：2026-11-08 起不在闲聊里注入 ----------
-  // 之前每轮随机塞 3 条「当X时，可以Y」，跟当前话题不搭、还占提示词。
-  // 现在只在真正要说话的场景（贴吧回帖 / B 站评论）按话题给原句当参考。
+  // ---------- 2.5 相关说法（2026-11-08）----------
+  // 以前是「每轮随机塞 3 条」，跟话题不搭；现在改成按这一轮的话题检索，
+  // 只给 1~2 条、相似度够才给（服务端算好放在 state.phrase_hints 里）。
+  // 位置在消息里而不是系统提示词里，不毁 prompt cache。
+  {
+    const hints = Array.isArray(state.phrase_hints) ? state.phrase_hints : [];
+    if (hints.length) {
+      const h = hints.map((x) => "「" + String(x.raw || "") + "」").filter((x) => x.length > 2);
+      if (h.length) {
+        blocks.push("（这会儿聊到的事，网上一般这么说：" + h.join("、")
+          + "。学那股味道就行，别照抄。）");
+      }
+    }
+  }
   // ---------- 3. 心情 + 情绪（变了才加） ----------
   const moodMap = { happy: "开心", tired: "累", annoyed: "烦", bored: "无聊", normal: "平常" };
   let moodText = `心情：${moodMap[state.mood] || "平常"}`;

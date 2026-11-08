@@ -15,6 +15,7 @@ import base64
 import hashlib
 import json
 import math
+import os
 import re
 import sqlite3
 import threading
@@ -1617,16 +1618,38 @@ class MemoryStore:
         except Exception:
             return []
 
+    def _seeds_marker_path(self) -> str:
+        import os as _os
+        return _os.path.join(_os.path.dirname(self.path), "seeds.imported")
+
     def expr_import_seeds(self, items: list[dict]) -> int:
         """把内置语料库灌进 expressions（source='seed'）。幂等：条数一致就跳过。"""
         if not items:
             return 0
+        # 2026-11-08：按「条数相等」判断是个坑 —— 去重会丢几条，条数永远对不上，
+        # 于是每次重启都整体删了重灌，把补好的 scene / 意思全冲掉。
+        # 改成按 seeds.json 的 builtAt 打标记：标记一样就跳过。
+        marker = ""
         try:
-            cur = self.conn.execute("SELECT COUNT(*) FROM expressions WHERE source='seed'")
-            if int(cur.fetchone()[0]) == len(items):
-                return 0
+            marker = str(self._seeds_marker_path())
         except Exception:
-            pass
+            marker = ""
+        stamp = str((items[0] or {}).get("__builtAt") or "")
+        if marker and stamp:
+            try:
+                if os.path.exists(marker):
+                    prev = open(marker, encoding="utf-8").read().strip()
+                    if prev == stamp:
+                        return 0
+            except Exception:
+                pass
+        else:
+            try:
+                cur = self.conn.execute("SELECT COUNT(*) FROM expressions WHERE source='seed'")
+                if int(cur.fetchone()[0]) == len(items):
+                    return 0
+            except Exception:
+                pass
         try:
             self.conn.execute("DELETE FROM expressions WHERE source='seed'")
             now = __import__("time").time()
@@ -1648,6 +1671,11 @@ class MemoryStore:
                 " canon, raw, source, hits, status)"
                 " VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,'seed',1,'active')", rows)
             self.conn.commit()
+            if marker and stamp:
+                try:
+                    open(marker, "w", encoding="utf-8").write(stamp)
+                except Exception:
+                    pass
             return len(rows)
         except Exception as e:
             print(f"[cmem] expr_import_seeds failed: {e}", flush=True)
