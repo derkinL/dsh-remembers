@@ -98,26 +98,39 @@ md 相对链接                       56 条，0 断链
 文本编码                          全仓 UTF-8，0 个坏文件
 ```
 
+**线上部署（2026-11-08 17:01，两套 VPS 实例）**：
+
+```
+dsh-remembers / dsh-remembers2     active（重启后 /health 200，memories 250 / 179 条）
+插件版本                            两套 profile 都是 1.2.0，三份 client.js md5 一致
+/learn/stats                      8081: total 1056（seed 1020 + global 31 + tieba 5）
+                                  8082: total 1030 —— 修复前这里是 500
+bad_last_hit                      两库都从 1018 归零（启动修复生效）
+dsh-web / dsh-web2                active，4 分钟内无加载错误
+QQ 桥                              [dsh-onebot] OneBot connected（3 个会话恢复）
+网页                              28582 / 28583 都 200
+```
+
 **没有验证的**（诚实说明）：
 
-- **没在跑着的 DSH profile 里真装一次**：会改用户 profile、需要重启桌面端，不适合在审阅时动。安装命令用的是官方 `dsh plugin --profile <p> add file:<dir>`。
-- **Linux / systemd / Docker build 没跑**（本机是 Windows；`deploy-native.sh` 原作者也标注「未在真实 Ubuntu 上跑过」）。
-- **shell 语法没做 `bash -n`**：沙箱内 Git Bash 起不来（`couldn't create signal pipe`）。4 个移动过的部署脚本只改了 `cd` 基准目录，建议首次在 VPS 上跑时盯输出。
+- **没在跑着的 DSH profile 里用 `dsh plugin add` 真装一次**：本地没有干净的测试 profile，安装命令未实跑；VPS 用的是「拷 `node_modules` + 挂 bundles」的老方式。
+- **Docker build 没跑**（本机没有 Docker；VPS 上服务是裸跑）。
+- **shell 语法没做 `bash -n`**：沙箱内 Git Bash 起不来（`couldn't create signal pipe`）。改动过的 `install.sh` / `deploy-remote.sh` 都在 VPS 上实跑过。
+- **安装脚本没在全新 Windows / 全新 VPS 上跑过**：只验证了它用到的组件（venv、pip、systemd、node --check）。
 
 ## 六、没动的大件（结构性问题）
 
 | 大件 | 现状 | 为什么不动 |
 |---|---|---|
 | `client.js` | 5300 行单文件 | DSH 前端生态就是这么发的（`dsh-meme` 的 `client.js` 也 200KB）；拆模块要引入构建链 |
-| `service/server.py` | 4900 行、91 路由、一个 `Handler` 类 | 拆 router 会动所有路由，收益是「好看」，风险是线上两套实例 |
+| `service/server.py` | 4900 行、90+ 路由、一个 `Handler` 类 | 拆 router 会动所有路由，收益是「好看」，风险是线上两套实例 |
 | `index.mjs` | 2300 行 | 同上；钩子和工具注册耦合在 `apply` 闭包里 |
-| B 站 / QQ 写死路径 | 作者机专用 | 要改就得引入配置项 + 迁移文档，超出本轮 |
 | 死接口 | 保留 | 删了怕旧前端/外部脚本 404；先在文档里点名 |
+| 插件列表没有启停开关 | VPS 上 `dsh-remembers` 只在 `dsh.profile.bundles`，不在 `dependencies` | 要在 VPS 上跑 `dsh plugin add file:<目录>`（VPS 没有 dsh CLI）；手工加 dependency 有加载风险，留作可选项 |
 
 ## 七、下一步（按收益排序）
 
-1. 把 B 站的 `BILI_DIR` / `NODE_BIN` 做成 env（`CMEM_BILI_DIR`、`CMEM_NODE_BIN`）——一步就能让别人也用上。
-2. 删掉 `recordSlang()` 的写路径，或把 slang 接回注入；二选一，别两套并行。
-3. `server.py` 按 `memory / persona / phrases / memes / bili / tieba / qq / admin` 拆 router（有测试兜底后再动）。
-4. 真机跑一遍：Windows 全新安装、Linux systemd、`docker build`。
-5. 发 npm（`npm publish`）后，README 的首选命令可以简化成 `dsh plugin add dsh-remembers`。
+1. 在 VPS 上把插件登记成 `file:` 依赖（装一个 dsh CLI），插件页就会出现开关和版本信息。
+2. `server.py` 按 `memory / persona / phrases / memes / bili / tieba / qq / admin` 拆 router（有测试兜底后再动）。
+3. 真机跑一遍：Windows 全新安装、`docker build`。
+4. 发 npm（`npm publish`）后，README 的首选命令可以简化成 `dsh plugin add dsh-remembers`。
