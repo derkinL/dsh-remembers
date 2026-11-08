@@ -1018,19 +1018,23 @@ class Handler(BaseHTTPRequestHandler):
                 doc = extractor.build_voice_doc(samples, stats)
             except Exception:
                 doc = ""
-        # 数字一定要在档案里露脸（模型爱把数字改写成"很短"），所以自己拼一行贴上去
+        # 兜底：模型有时把数字改写成"很短"这种形容词。
+        # 只有档案里一个数字都没出现时，才补一句实测 —— 否则会跟正文重复（用户看到过）。
         if doc and stats:
-            bits = []
-            if stats.get("median_len"):
-                bits.append("中位 %s 字" % stats["median_len"])
-            if stats.get("no_punct_rate") is not None:
-                bits.append("%d%% 的句子句尾不带标点" % int(stats["no_punct_rate"] * 100))
-            if stats.get("emoji_rate"):
-                bits.append("%d%% 带表情标签" % int(stats["emoji_rate"] * 100))
-            if stats.get("particles"):
-                bits.append("常带" + "、".join(stats["particles"]))
-            if bits:
-                doc = doc.rstrip() + "（实测：" + "；".join(bits) + "）"
+            import re as _re
+            has_num = bool(_re.search(r"\d+\s*字", doc)) or bool(_re.search(r"\d+\s*%", doc))
+            if not has_num:
+                bits = []
+                if stats.get("median_len"):
+                    bits.append("中位 %s 字" % stats["median_len"])
+                if stats.get("no_punct_rate") is not None:
+                    bits.append("%d%% 的句子句尾不带标点" % int(stats["no_punct_rate"] * 100))
+                if stats.get("emoji_rate"):
+                    bits.append("%d%% 带表情标签" % int(stats["emoji_rate"] * 100))
+                if stats.get("particles"):
+                    bits.append("常带" + "、".join(stats["particles"]))
+                if bits:
+                    doc = doc.rstrip() + "（实测：" + "；".join(bits) + "）"
 
         st = {"doc": doc, "builtAt": _t.time(), "samples": samples, "stats": stats,
               "judged": judged, "promoted": promoted, "count": len(samples)}
