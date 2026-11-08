@@ -458,6 +458,8 @@ class Handler(BaseHTTPRequestHandler):
                 "text": self._tightness_text(),
                 "isDefault": self._tightness_text() == self.DEFAULT_TIGHTNESS,
             }))
+        elif path == "/phrases":
+            self._guard(lambda: self._get_phrases(query))
         elif path == "/voice":
             self._guard(lambda: self._json(200, {"ok": True, **self._voice_state()}))
         elif path == "/learn/stats":
@@ -900,6 +902,49 @@ class Handler(BaseHTTPRequestHandler):
             return json.load(open(self._voice_path(), encoding="utf-8")) or {}
         except Exception:
             return {}
+
+    def _get_phrases(self, query) -> None:
+        """按分类/场景查「已转正」的说法（canon 出现 ≥3 次才算）。
+
+        闲聊不再把例子写死在人格里；她要找具体说法时按场合来查。
+        """
+        tag = (query.get("tag") or [""])[0].strip()
+        q = (query.get("q") or [""])[0].strip()
+        try:
+            n = max(1, min(10, int((query.get("n") or ["4"])[0])))
+        except Exception:
+            n = 4
+        rows = []
+        try:
+            rows = store.expr_active(60)
+        except Exception:
+            rows = []
+        if tag:
+            rows = [r for r in rows if str(r.get("situation") or "") == tag]
+        if q and rows:
+            import re as _re
+            _P = set("，,。.！!？?、；;：:\"'“”‘’「」『』（）()…~～")
+            def _norm(x):
+                return "".join(c for c in str(x or "").lower() if not c.isspace() and c not in _P)
+            qt = _norm(q)
+            def score(r):
+                hit = 0
+                for field in ("raw", "situation", "style"):
+                    s2 = _norm(r.get(field) or "")
+                    if not s2:
+                        continue
+                    grams = {s2[i:i + 2] for i in range(len(s2) - 1)}
+                    hit += sum(1 for g in grams if g in qt)
+                return hit
+            rows = sorted(rows, key=lambda r: (-score(r), -(int(r.get("likes") or 0))))
+        out = [{
+            "raw": (r.get("raw") or r.get("style") or ""),
+            "tag": (r.get("situation") or ""),
+            "likes": int(r.get("likes") or 0),
+            "hits": int(r.get("hits") or 0),
+        } for r in rows[:n] if (r.get("raw") or r.get("style"))]
+        tags = sorted({(r.get("situation") or "") for r in rows if r.get("situation")})
+        self._json(200, {"ok": True, "items": out, "tags": tags, "total": len(rows)})
 
     def _voice_samples(self, limit: int = 8) -> list[str]:
         """已启用的原句（只有 status=active 才有资格进口音区）。"""

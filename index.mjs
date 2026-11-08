@@ -1379,6 +1379,30 @@ async function scanSeen() {
 
     try {
       registerTool(defineTool({
+        name: "find_phrases",
+        description:
+          "查「学来的说法」。我的口音库里存着从聊天/评论区攒下来的原句，只有反复出现过（≥3 次）的才会入库。"
+          + "想知道某种场合别人一般怎么说，就按分类或场景查几句当参考："
+          + "tag 是分类（接梗 / 吐槽 / 自嘲 / 阴阳 / 共鸣 / 反问 / 抖机灵 / 客套），"
+          + "q 是场景描述（比如「加班到半夜」「被夸了」）。"
+          + "查到的是别人的原话，学那股味道就行，别照抄。",
+        parameters: {
+          tag: { type: "string", description: "分类：接梗/吐槽/自嘲/阴阳/共鸣/反问/抖机灵/客套" },
+          q: { type: "string", description: "场景关键词，比如 加班 / 被夸 / 下雪 / 吃泡面" },
+          n: { type: "number", description: "要几条，默认 4" },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async (args) => {
+          const p = new URLSearchParams();
+          if (args.tag) p.set("tag", String(args.tag));
+          if (args.q) p.set("q", String(args.q));
+          if (args.n) p.set("n", String(Number(args.n) || 4));
+          const res = await fetch(config.endpoint + "/phrases?" + p.toString(), { signal: AbortSignal.timeout(8000) });
+          return res.json().catch(() => ({ ok: false }));
+        },
+      }));
+
+      registerTool(defineTool({
         name: "tieba_whoami",
         description: "查贴吧账号登录态。没登录就别往下逛了，先让老大去「她的记忆 → 贴吧」里贴 BDUSS。",
         parameters: {},
@@ -1906,11 +1930,8 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
       identityLines.push("");
       identityLines.push("【我的口音】");
       if (doc) identityLines.push(doc);
-      if (voice.length) {
-        identityLines.push("我平时会这么说（学味道，别照抄，也别每句都套）：");
-        for (const v of voice) identityLines.push("· 「" + v + "」");
-      }
-      identityLines.push("我不主动说「我学会了一句」这种话，也不把某一句当口头禅反复用。");
+      identityLines.push("想找「这种场合别人怎么说的」，用 find_phrases 按分类或场景查几句来参考；"
+        + "学味道，别照抄，也别把某一句当口头禅反复用。");
     }
   }
 
