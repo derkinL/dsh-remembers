@@ -1051,9 +1051,9 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 need = store.expr_need_vec(model, 32)
             except Exception:
-                return
+                break
             if not need:
-                return
+                break
             texts = [(str(r.get("raw") or "") + " " + str(r.get("meaning") or "")).strip() for r in need]
             vecs = embedder.embed(texts)
             got = 0
