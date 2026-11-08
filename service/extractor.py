@@ -709,10 +709,12 @@ class Extractor:
             convo += f"\n她：{assistant_text[:self.config.max_context_chars]}"
 
         last = None
+        saw_response = False
         for _attempt in range(2):
             result = self.llm.chat_json(EXTRACT_SYSTEM, convo, max_tokens=900)
             if result is None:
                 continue
+            saw_response = True
             if not isinstance(result, list):
                 nested = result.get("facts") if isinstance(result, dict) else None
                 if not isinstance(nested, list):
@@ -731,6 +733,10 @@ class Extractor:
             last = (cleaned, exprs)
             if cleaned or exprs:
                 return last
+        if not saw_response:
+            # 两次都没拿到响应（LLM 挂了 / 网络断 / 鉴权失败）：
+            # 必须让调用方看见 degraded，否则「抽取一直在失败」会被当成「这轮没东西可记」。
+            return None
         return last or ([], [])
 
     def learn_speak_enabled(self) -> bool:

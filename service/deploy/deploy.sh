@@ -14,7 +14,7 @@
 #   ./deploy.sh --offline img.tar  # 离线：从镜像 tar 导入后启动
 set -euo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 PUBLIC=0
 OFFLINE_TAR=""

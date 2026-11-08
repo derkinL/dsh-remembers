@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 import time
 
 import numpy as np
 
-import memory_core as mc
+# 测试在 tests/python/，被测代码在 service/ —— 显式加进 sys.path。
+SERVICE_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "service")
+)
+sys.path.insert(0, SERVICE_DIR)
+
+import memory_core as mc  # noqa: E402
 
 NOW = 1_780_000_000.0  # 固定时间，避免测试随日期漂移
 DAY = 86400.0
@@ -20,7 +27,7 @@ def build():
     db = os.path.join(tmp, "mem.db")
     if os.path.exists(db):
         os.remove(db)
-    store = mc.MemoryStore(db, schema_path=os.path.join(os.path.dirname(__file__), "schema.sql"))
+    store = mc.MemoryStore(db, schema_path=os.path.join(SERVICE_DIR, "schema.sql"))
 
     # L4 人格 / 关系设定（永不衰减）
     store.add(mc.MemoryInput(

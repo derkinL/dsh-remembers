@@ -10,7 +10,7 @@
 # 装之前会先真跑一次备份，跑不通就不写 cron——避免装了个永远失败的定时任务。
 set -euo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 SERVICE_DIR="$(pwd)"
 ROOT_DIR="$(cd .. && pwd)"
 

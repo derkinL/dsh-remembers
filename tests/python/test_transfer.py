@@ -11,13 +11,14 @@ import time
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "service")))
 from memory_core import MemoryInput, MemoryStore  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+SERVICE_DIR = os.path.abspath(os.path.join(HERE, "..", "..", "service"))
 TMP = os.path.join(HERE, "_transfer_tmp")
 os.makedirs(TMP, exist_ok=True)
-SCHEMA = os.path.join(HERE, "schema.sql")
+SCHEMA = os.path.join(SERVICE_DIR, "schema.sql")
 
 
 def fresh(name):

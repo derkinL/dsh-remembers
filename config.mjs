@@ -5,7 +5,24 @@
  * 所有名字都带 CMEM_ 前缀，避免和别的插件撞车。
  */
 
-export const PLUGIN_VERSION = "1.0.0";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+// 版本号只留一份真源（package.json），别在代码里再抄一遍。
+function readVersion() {
+  try {
+    const raw = readFileSync(new URL("./package.json", import.meta.url), "utf8");
+    return String(JSON.parse(raw).version || "0.0.0");
+  } catch {
+    return "0.0.0";
+  }
+}
+
+export const PLUGIN_VERSION = readVersion();
+
+// 表情包默认目录：跟 DSH 自己的 media 目录走，Windows / Linux 都能用。
+const DEFAULT_MEME_DIR = join(homedir(), ".dsh", "media", "onebot", "memes");
 
 const ENV = {
   endpoint: ["CMEM_URL", "CMEM_ENDPOINT"],
@@ -98,6 +115,6 @@ export function resolveConfig(input = {}, env = process.env) {
     episodeMaxMinutes: toInt(value("episodeMaxMinutes"), 120, 5, 1440),
 
     // 表情包目录：find_meme 返回完整路径时拼这个前缀
-    memeDir: String(value("memeDir") ?? "/home/ubuntu/.dsh/media/onebot/memes"),
+    memeDir: String(value("memeDir") ?? DEFAULT_MEME_DIR),
   };
 }

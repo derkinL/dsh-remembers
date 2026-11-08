@@ -16,7 +16,7 @@
 # 幂等：重复跑只会更新 unit 和依赖，不会动 data/ 里的记忆，也不会覆盖已填的 .env。
 set -euo pipefail
 
-SERVICE_DIR="$(cd "$(dirname "$0")" && pwd)"
+SERVICE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT_DIR="$(cd "$SERVICE_DIR/.." && pwd)"
 VENV_DIR="$ROOT_DIR/venv"
 DATA_DIR="$SERVICE_DIR/data"

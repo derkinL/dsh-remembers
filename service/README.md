@@ -13,6 +13,26 @@ Docker 单容器
 └── MCP stdio shim       → DSH 直接连，零插件先验证记忆质量
 ```
 
+## 模块地图
+
+| 文件 | 管什么 |
+|---|---|
+| `server.py` | HTTP 入口：90+ 路由、配置热重载、静态图、启动时的语料导入与调度器 |
+| `memory_core.py` | SQLite 建表/迁移、CJK BM25、向量余弦、衰减、人格/语料/表情/画像/状态等业务表 |
+| `extractor.py` | LLM 抽事实与说法、ADD/UPDATE/DELETE/NONE 判定、转正与口音归纳提示词 |
+| `scheduler.py` | 唤醒 / B 站 / 贴吧 / 日记 / 自我认知的节奏与注入 |
+| `llm.py` | OpenAI 兼容 chat + 容错 JSON 解析 |
+| `embedding.py` | embeddings（批次上限、失败对半拆） |
+| `surprisal.py` | 纯文本惊讶度门控 |
+| `schema.sql` | 建表基线（老库靠 `memory_core` 里的幂等迁移补齐） |
+| `seeds.json` | 1020 条默认语料（随包发布；`data/seeds.json` 存在时优先用后者） |
+| `backup.py` | 在线整库备份 / 校验 / 恢复 |
+| `mcp_server.py` | 备用 MCP 接入（和插件能力重复，不再推荐） |
+| `audit_fields.py` | 开发期字段体检脚本 |
+| `static/` | 教程图等只读资源 |
+| `deploy/` | systemd / cron / 离线打包脚本 |
+| `data/` | 运行时数据（gitignore） |
+
 ## 为什么这样设计（都有实测依据）
 
 | 发现 | 后果 | 这里的对策 |
@@ -29,10 +49,10 @@ Docker 单容器
 
 ```bash
 cp .env.example .env          # 填 CMEM_EMBED_*（语义召回）和 CMEM_LLM_*（episode 摘要）
-sudo ./deploy-native.sh       # 建 venv + cmem 用户 + systemd unit + 启动 + 等健康
+sudo bash deploy/deploy-native.sh   # 建 venv + cmem 用户 + systemd unit + 启动 + 等健康
 ```
 
-它做的事就是下面这些手工步骤的自动化版，出问题可以逐条对照：[../docs/NATIVE-DEPLOY.md](../docs/NATIVE-DEPLOY.md)。
+它做的事就是下面这些手工步骤的自动化版，出问题可以逐条对照：[../docs/deploy/linux.md](../docs/deploy/linux.md)。
 
 手工跑（前台，调试用；退出就停）：
 
@@ -173,7 +193,7 @@ DSH 的 profile MCP 配置里加一条 stdio 命令：
 ### 方式二：插件（已实现，在 `plugin/`）
 
 ```bash
-./deploy.sh     # 先起服务
+bash deploy/deploy.sh     # 先起服务
 ./install.sh    # 再装插件（DSH_PROFILE=desktop ./install.sh 换 profile）
 ```
 
@@ -245,11 +265,11 @@ numpy 在一次 `dot` 里算完，毫秒级。上 Qdrant / Milvus 只是多一�
 | `embedding.py` | 外部 embedding 客户端（失败降级） |
 | `server.py` | HTTP 服务（标准库） |
 | `mcp_server.py` | MCP stdio shim |
-| `test_core.py` | 本地自测，不依赖 Docker |
+| `../tests/python/test_core.py` | 本地自测，不依赖 Docker |
 | `Dockerfile` / `docker-compose.yml` | 部署 |
 
 跑自测：
 
 ```bash
-python test_core.py
+python ../tests/python/test_core.py
 ```

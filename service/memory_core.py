@@ -1400,6 +1400,16 @@ class MemoryStore:
             self.conn.commit()
         except Exception:
             pass
+        # 修老数据：1.2.0 之前 seeds 导入把 raw 写进了 last_hit，
+        # 而 /learn/stats 会 float(last_hit) —— 一条语料就能让整页计数 500。
+        try:
+            self.conn.execute(
+                "UPDATE expressions SET last_hit = 0 "
+                "WHERE last_hit IS NOT NULL AND typeof(last_hit) NOT IN ('integer','real')"
+            )
+            self.conn.commit()
+        except Exception:
+            pass
 
     def expr_add(self, scope: str, situation: str, style: str,
                  example: str = "", n: int = 1,
@@ -1660,10 +1670,12 @@ class MemoryStore:
                     continue
                 hits = int(it.get("hits") or 0)
                 # 12 个占位：scope/situation/style/example/meaning/usage/tail/likes/ts/last_hit/canon/raw
+                # 注意 last_hit 必须是时间戳（数字）：早先这里错写成 raw，导致
+                # /learn/stats 的 MAX(last_hit) 抛 "could not convert string to float"。
                 rows.append((
                     "seed", str(it.get("vibe") or "")[:12], raw, raw, str(it.get("meaning") or "")[:200],
                     str(it.get("usage") or "")[:200], 1 if it.get("tail") else 0,
-                    min(99999, hits), now, raw, raw, raw,
+                    min(99999, hits), now, now, raw, raw,
                 ))
             self.conn.executemany(
                 "INSERT OR IGNORE INTO expressions"

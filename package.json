@@ -1,12 +1,14 @@
 {
   "name": "dsh-remembers",
-  "version": "1.1.2",
-  "description": "情感陪伴向的 DSH 记忆插件：自动想起该想起的，宁可说想不起也不编。后端是 companion-memory 服务；含贴吧读帖/回帖与独立的学说话页。",
+  "version": "1.2.0",
+  "description": "情感陪伴向的 DSH 记忆插件：分层记忆 + 人格注入 + 学说话语料库，附「她的记忆」面板（记忆/人格/表情包/主动消息/B站/贴吧/QQ/学说话/服务）。后端是独立的 Python 服务（SQLite）。",
   "type": "module",
   "main": "index.mjs",
+  "icon": "icon.png",
   "exports": {
     ".": "./index.mjs",
     "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "files": [
@@ -15,12 +17,27 @@
     "client.mjs",
     "config.mjs",
     "cordis.patch.yml",
+    "install.mjs",
     "install.sh",
+    "install.ps1",
+    "icon.png",
+    "locale/*.json",
+    "docs/*.md",
+    "docs/**/*.md",
+    "tools/tone.js",
+    "tools/tieba/*",
+    "service/*.py",
+    "service/schema.sql",
+    "service/seeds.json",
+    "service/requirements.txt",
+    "service/Dockerfile",
+    "service/docker-compose.yml",
+    "service/README.md",
+    "service/static/*",
+    "service/deploy/*",
     "README.md",
-    "tools",
-    "service",
-    "scripts",
-    "patches"
+    "README.en.md",
+    "LICENSE"
   ],
   "dsh": {
     "bundle": {
@@ -30,12 +47,16 @@
       "platform": "web"
     }
   },
-  "_peerRangeNote": "用 * 而不是版本范围：npm 的预发布匹配规则要求范围里存在同元组且带预发布标签的比较符，否则像 0.2.1-rc.2 这样的宿主版本会被静默排除（用户侧表现为 ERESOLVE）。本插件只用到 @deepseek-ai/dsh-llm 的 createUserMessage，DSH 加载插件时也会自己检查 peer，所以这里不设上界，把兼容判断交给宿主。",
+  "_peerRangeNote": "用 * 而不是版本范围：npm 的预发布匹配规则要求范围里存在同元组且带预发布标签的比较符，否则像 0.2.1-rc.2 这样的宿主版本会被静默排除（用户侧表现为 ERESOLVE）。本插件只用到 dsh-llm 的 createUserMessage 和 dsh-tools 的 defineTool，DSH 加载插件时也会自己检查 peer，所以这里不设上限，把兼容判断交给宿主。",
   "peerDependencies": {
-    "@deepseek-ai/dsh-llm": "*"
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-tools": "*"
   },
   "engines": {
     "node": "^22.19.0 || >=24"
+  },
+  "scripts": {
+    "test": "node tests/node/test_plugin.mjs && node tests/node/test_client.mjs && node tests/node/tone.test.mjs"
   },
   "keywords": [
     "dsh",
@@ -44,6 +65,7 @@
     "memory",
     "long-term-memory",
     "companion",
+    "persona",
     "bm25",
     "rag"
   ],

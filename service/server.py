@@ -40,7 +40,38 @@ from llm import LLM
 from memory_core import MemoryInput, MemoryStore
 from surprisal import SurprisalGate
 
-DATA_DIR = os.environ.get("CMEM_DATA_DIR", "/data")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _load_env_file(path: str) -> None:
+    """读 KEY=VALUE 形式的 .env（支持 `#` 注释，不执行 shell）。
+
+    只补「进程里还没有」的变量：显式 env 永远优先，配置文件其次。
+    兼容 Windows 的 .env.win —— 老版本装完让人往里填 key，但服务端从来不读。
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+    except FileNotFoundError:
+        return
+    except Exception as exc:  # noqa: BLE001
+        print(f"[cmem] env file {path} unreadable: {type(exc).__name__}: {exc}", flush=True)
+
+
+for _env_name in (".env", ".env.win"):
+    _load_env_file(os.path.join(_HERE, _env_name))
+
+# 默认落在 service/data（裸跑 / Windows / 源码直跑都能写）；
+# Docker 里由 Dockerfile 显式给 CMEM_DATA_DIR=/data。
+DATA_DIR = os.environ.get("CMEM_DATA_DIR") or os.path.join(_HERE, "data")
 DB_PATH = os.path.join(DATA_DIR, "memories.db")
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 AUTH_TOKEN = os.environ.get("CMEM_AUTH_TOKEN", "")
@@ -234,7 +265,10 @@ def _init() -> None:
 
     # 启动时导入内置语料库（dsh-fish-tone-flavor, MIT）：默认就有一千条可用
     try:
+        # 默认语料随包走（service/seeds.json）；用户把自定义版本放进 data/ 时优先用那份。
         _seeds_path = os.path.join(DATA_DIR, "seeds.json")
+        if not os.path.exists(_seeds_path):
+            _seeds_path = os.path.join(_HERE, "seeds.json")
         if os.path.exists(_seeds_path):
             _seed_data = json.load(open(_seeds_path, encoding="utf-8"))
             _items = _seed_data.get("items") or []
@@ -2892,7 +2926,7 @@ class Handler(BaseHTTPRequestHandler):
         """跑 tools/tieba-cli.mjs，取它打在 stdout 的那行 JSON。"""
         import subprocess as _sp
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # service/ -> 包根
-        cli = os.path.join(root, "tools", "tieba-cli.mjs")
+        cli = os.path.join(root, "tools", "tieba", "tieba-cli.mjs")
         node = self._tieba_node()
         env = dict(os.environ)
         env["TIEBA_DIR"] = self._tieba_dir()
@@ -4099,7 +4133,13 @@ class Handler(BaseHTTPRequestHandler):
         try:
             for row in store.conn.execute(
                     "SELECT scope, COUNT(*), MAX(last_hit) FROM expressions GROUP BY scope"):
-                scope, n, last = str(row[0]), int(row[1]), float(row[2] or 0)
+                scope, n = str(row[0]), int(row[1])
+                try:
+                    last = float(row[2] or 0)
+                except (TypeError, ValueError):
+                    # 老库里 last_hit 可能是文本（1.2.0 前的 seeds 导入 bug）：
+                    # 一条脏数据不该让整页计数 500。
+                    last = 0.0
                 out["byScope"][scope] = n
                 out["total"] += n
                 out["lastHit"] = max(out["lastHit"], last)

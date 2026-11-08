@@ -12,7 +12,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY schema.sql memory_core.py embedding.py server.py mcp_server.py backup.py ./
+# 所有服务端模块都要进镜像：server.py 会 import extractor / llm / surprisal / scheduler，
+# 少拷一个就是启动即崩（旧版这里只拷了 5 个文件）。
+COPY schema.sql *.py seeds.json ./
+COPY static ./static
 
 RUN mkdir -p /data
 VOLUME ["/data"]

@@ -4,22 +4,25 @@ node_modules/
 # Python
 __pycache__/
 *.pyc
-_tmp/
+venv/
+service/.venv-win/
 
-# 记忆数据：极私密，永不入库
+# 运行时数据：极私密，永不入仓
 service/data/
 *.db
 *.db-wal
 *.db-shm
 
-# 密钥
+# 密钥 / 本地配置（service/seeds.json 是默认语料，要提交，别误伤）
 .env
+.env.win
 service/.env
+service/.env.win
 
 # 系统
 .DS_Store
 Thumbs.db
 
-# ������ʱĿ¼
-service/_*_tmp/
+# 测试临时目录
+_tmp/
 *_tmp/

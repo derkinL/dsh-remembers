@@ -1,4 +1,4 @@
-import { fixTone } from '../tools/tone.js';
+import { fixTone } from '../../tools/tone.js';
 import assert from 'node:assert';
 
 const cases = [

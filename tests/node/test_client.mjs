@@ -1,5 +1,5 @@
 /**
- * 浏览器半边测试（client.js）：模块协议 + 7 个设置段的注册面。
+ * 浏览器半边测试（client.js）：模块协议 + 入口页 9 张卡 + 二级页的注册面。
  *
  * 不跑真 React，用 minimal mock 把 client.js 的执行路径走通。
  * 运行：node test/test_client.mjs
@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const PLUGIN_ROOT = join(HERE, "..");
+const PLUGIN_ROOT = join(HERE, "..", "..");
 const code = readFileSync(join(PLUGIN_ROOT, "client.js"), "utf8");
 
 let pass = 0;
@@ -229,7 +229,7 @@ function byClass(tree, cls) {
   return walk(tree).filter((el) => el.props && el.props.className === cls);
 }
 
-const PAGES = ["memories", "persona", "memes", "proactive", "bili", "qq", "service"];
+const PAGES = ["memories", "persona", "memes", "proactive", "bili", "tieba", "qq", "learn", "service"];
 // 自带「保存」悬浮块的页面：返回按钮塞进那个块，入口页不再挂悬浮返回。
 const WITH_PANEL = new Set(["persona", "proactive", "bili", "qq", "service"]);
 
@@ -259,7 +259,7 @@ for (const page of PAGES) {
 // 那 5 个「保存」悬浮块在首屏是 loading 态，mock 里渲染不出来，
 // 所以这里查源码：每个块都得有返回按钮，而且排在保存按钮前面。
 // 标签在 data 加载完才渲染，mock 里首屏是 loading，所以查源码：
-// 7 处 className="dshm-tab"（其中 TIERS 那处 map 出 6 件，共渲染 12 张）。
+// 标签按钮：className="dshm-tab" 的源里有 6 处以上（TIERS 那处 map 出 6 件）。
 ok("B 站页左边工具、右边 UID/口味", () => {
   const src = readFileSync(join(PLUGIN_ROOT, "client.js"), "utf8");
   const left = src.indexOf('flex: "0 0 640px"');
