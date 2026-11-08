@@ -1386,7 +1386,9 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             n = 4
         try:
-            limit = max(1, min(200, int((query.get("limit") or ["0"])[0]))) or 0
+            # 注意：不能写成 max(1, min(200, int(...))) or 0 ——
+            # 缺省 limit 时 max(1,0)=1，会让「没传 limit」变成「只返回 1 条」。
+            limit = max(0, min(200, int((query.get("limit") or ["0"])[0])))
         except Exception:
             limit = 0
         try:
@@ -1432,6 +1434,9 @@ class Handler(BaseHTTPRequestHandler):
             scored.sort(key=lambda x: (-x[0], -(int(x[1].get("likes") or 0))))
             rows = [r for _sc, r in scored]
 
+        # 先剔掉没有原句的行，再分页 —— 之前是先切片再过滤，
+        # 导致 n=3 只返回 1 条（前几条 raw 为空）。
+        rows = [r for r in rows if (r.get("raw") or "").strip()]
         total = len(rows)
         take = limit or n
         rows = rows[offset:offset + take]

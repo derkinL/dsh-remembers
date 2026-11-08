@@ -90,7 +90,6 @@ const EXPECT_TOOLS = [
   "learn_meme",
   "mark_meme_used",
   "persona_update",
-  "read_activities",
   "read_diary",
   "set_my_activity",
   "tieba_browse",

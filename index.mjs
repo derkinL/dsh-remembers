@@ -1519,7 +1519,8 @@ function trackMemeSends(message) {
       registerTool(defineTool({
         name: "find_phrases",
         description:
-          "查语料库：1020 条默认语料 + 她从聊天/评论区学来的原句（含分类、场景、意思、能不能收尾）。"
+          "查语料库：**装好就有 1020 条默认语料**（分类/场景/意思/能不能收尾），再加上她从聊天和评论区学来的原句。"
+          + "不用先「学」、不用等转正，直接查就能用；不传 tag/q 就返回几条最常用的。"
           + "**回帖、发 B 站评论、接梗之前先用它查 2~3 句**，别凭记忆编。"
           + "tag 是分类（搞笑 / 可爱 / 抽象 / 燃 / 阴阳 / 破防 / 治愈 / 复古 / 职场 / 摸鱼），"
           + "q 是场景词（比如「加班到半夜」「被夸了」「开完会」）。拿不准分类就只传 q。"
@@ -1768,22 +1769,7 @@ function trackMemeSends(message) {
           };
         },
       }));
-      registerTool(defineTool({
-        name: "read_activities",
-        description:
-          "查你某天真实干了什么（时间线：聊天/刷B站/玩游戏/被唤醒做的事），带精确时间。"
-          + "什么时候用：想回忆某天具体做了些什么、老大问「你那天干嘛了」、或者在日记里看到一句话想追细节。"
-          + "不传日期 = 今天；传 date（YYYY-MM-DD）= 那一天。",
-        parameters: {
-          date: { type: "string", description: "哪一天（YYYY-MM-DD）。不传就是今天" },
-        },
-        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
-        execute: async (args) => {
-          const qs = args?.date ? "?date=" + encodeURIComponent(String(args.date)) : "";
-          return get("/activity" + qs);
-        },
-      }));
-      log("companion_tools_registered", { count: 7 });
+      log("companion_tools_registered", { count: 6 });
     } catch (error) {
       log("companion_tools_skipped", { reason: "register 失败", error: String(error?.message ?? error) });
     }

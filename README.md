@@ -26,7 +26,7 @@
 | **人格注入** | 身份卡 / 形象 / 主人画像 / 铁律 / 口音，走 systemPrompt 独立段，每轮必带 | [persona](docs/features/persona.md) |
 | **学说话** | 参考语料（1020 条默认 + 抓来的原句，每轮挑 1–2 句贴现场）+ 口音档案（从**她自己说过的话**统计，每 3 天写进人格） | [phrases](docs/features/phrases.md) |
 | **表情包** | 按情绪/关键词找图、学图、多图库、发送频率（0 / 20% / 50% / 100%） | [memes](docs/features/memes.md) |
-| **日记** | 23:00 提醒她写；`write_diary` 她自己写、`read_diary` 翻旧账 | [persona](docs/features/persona.md) |
+| **日记** | 23:00 提醒她写；`write_diary` 她自己写、`read_diary` 翻旧账（连当天活动一起返回） | [persona](docs/features/persona.md) |
 | **主动消息** | 内置调度：唤醒 / 刷 B 站 / 逛贴吧 / 写日记 / 自我认知，不依赖 cron | [proactive](docs/features/proactive.md) |
 | **贴吧** | 逛吧、读帖、楼中楼、回帖；回帖时给几句「那个吧的人这么说的」当参考 | [tieba](docs/features/tieba.md) |
 | **B 站** | 刷视频、看视频（字幕 + 九宫格帧）、发评论 | [bili](docs/features/bili.md) |
