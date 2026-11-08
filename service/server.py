@@ -452,6 +452,12 @@ class Handler(BaseHTTPRequestHandler):
                     "prompt": full,
                 }
             self._guard(lambda: self._json(200, _lp()))
+        elif path == "/tightness":
+            self._guard(lambda: self._json(200, {
+                "ok": True,
+                "text": self._tightness_text(),
+                "isDefault": self._tightness_text() == self.DEFAULT_TIGHTNESS,
+            }))
         elif path == "/voice":
             self._guard(lambda: self._json(200, {"ok": True, **self._voice_state()}))
         elif path == "/learn/stats":
@@ -708,6 +714,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._post_tieba_reply())
         elif path == "/tieba/config":
             self._guard(lambda: self._post_tieba_cfg())
+        elif path == "/tightness":
+            self._guard(lambda: self._post_tightness())
         elif path == "/voice/rebuild":
             self._guard(lambda: self._json(200, self.rebuild_voice(True)))
         elif path == "/learn/switch":
@@ -905,6 +913,27 @@ class Handler(BaseHTTPRequestHandler):
                 break
         return out
 
+    DEFAULT_TIGHTNESS = """下面几条是配额，不是禁令：配额内随便用，超了才收。
+· 书面腔（不是…而是、最…的是、不仅…更、首先/其次/综上）：每 200 字最多 1 个。一两句话的时候，一个都别用。
+· 不确定就说不确定：好像 / 应该 / 感觉 / 可能 / 估计 —— 你平时用得多，别省。
+· 该夸张就夸张：根本 / 简直 / 特别 / 贼 / 巨 —— 真人比 AI 多一个量级。
+· 句尾可以挂一个没用的尾巴：啊 / 啦 / 嘛 / 吧 / 的，一句最多一个，「吧」只用在建议上。
+· 不必把话说完：该停就停，不用每句都收尾、都下结论。"""
+
+    def _tightness_path(self) -> str:
+        return os.path.join(DATA_DIR, "tightness.txt")
+
+    def _tightness_text(self) -> str:
+        """「说话的松紧」那一段。空文件 = 关掉（不注入）。"""
+        try:
+            p = self._tightness_path()
+            if os.path.exists(p):
+                t = open(p, encoding="utf-8").read().strip()
+                return t          # 允许显式存空 → 关闭
+        except Exception:
+            pass
+        return self.DEFAULT_TIGHTNESS
+
     VOICE_PARTICLES = ["啊", "吧", "嘛", "啦", "呢", "哦", "哈", "呗", "就"]
 
     def _voice_stats(self, samples: list[str]) -> dict:
@@ -1031,6 +1060,7 @@ class Handler(BaseHTTPRequestHandler):
             },
             "voice": self._voice_samples(8),
             "voiceDoc": (self._voice_state().get("doc") or ""),
+            "tightness": self._tightness_text(),
             "voiceBuiltAt": float(self._voice_state().get("builtAt") or 0),
         }
 
@@ -3533,6 +3563,26 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"ok": True})
 
     # -- 学说话 / 亲和度 / 任务 / 便签 / 睡眠 --------------------------------
+
+    def _post_tightness(self) -> None:
+        """存「说话的松紧」那段。传空 = 关掉（不注入）。restore=true 恢复默认。"""
+        body = self._body()
+        if body.get("restore"):
+            try:
+                if os.path.exists(self._tightness_path()):
+                    os.remove(self._tightness_path())
+            except Exception:
+                pass
+            self._json(200, {"ok": True, "text": self.DEFAULT_TIGHTNESS, "isDefault": True})
+            return
+        text = str(body.get("text") or "").strip()
+        try:
+            p = self._tightness_path()
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            open(p, "w", encoding="utf-8").write(text + ("\n" if text else ""))
+            self._json(200, {"ok": True, "text": text, "isDefault": text == self.DEFAULT_TIGHTNESS})
+        except Exception as e:
+            self._json(500, {"ok": False, "error": str(e)})
 
     def _learn_stats(self) -> dict:
         """学了多少条、各来源多少。给「学说话」页做概览。"""

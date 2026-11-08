@@ -498,6 +498,8 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
     persona.voice = Array.isArray(data?.voice) ? data.voice.map((x) => String(x || "").trim()).filter(Boolean) : [];
     // 口音档案：子 AI 归纳的一段话，三天才重写一次（稳定，不破坏 prompt cache）
     persona.voiceDoc = String(data?.voiceDoc ?? "").trim();
+    // 「说话的松紧」：密度配额 + 微标记补差。空串 = 用户关掉了，不注入。
+    persona.tightness = String(data?.tightness ?? "").trim();
 
       // 手编画像整份缓存：只有 manual_profile 进系统提示词，profile（自动累积）不进
       const map = {};
@@ -1027,6 +1029,7 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
           footer: notOwnerNote,
           voice: persona.voice || [],
           voiceDoc: persona.voiceDoc || "",
+          tightness: persona.tightness || "",
         });
       }
     }
@@ -1036,6 +1039,7 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
       profileHeader: "以下是老大是谁（他的画像，你该知道的基本信息）：",
       voice: persona.voice || [],
       voiceDoc: persona.voiceDoc || "",
+      tightness: persona.tightness || "",
     });
   }
 
@@ -1922,20 +1926,19 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
   }
 
   // 【说话的松紧】2026-11-08
-  // 参照 dsh-fish-tone（MIT）的做法：不写"禁止清单"，改写"密度配额"。
-  // 真人也会说「不是…而是」，问题从来不是用不用，是用得比真人人多 5~37 倍。
-  // 所以这里给的是"多长的话允许多少个"，超了才收 —— 比"别写旁白"这种禁令可执行。
+  // 密度配额 + 微标记补差（参照 dsh-fish-tone，MIT）。
+  // 文本由服务端管（GET/POST /tightness），前端「学说话」页可看可改；空串 = 关掉。
   {
-    identityLines.push("");
-    identityLines.push("【说话的松紧】");
-    identityLines.push("下面几条是配额，不是禁令：配额内随便用，超了才收。");
-    identityLines.push("· 书面腔（不是…而是、最…的是、不仅…更、首先/其次/综上）：每 200 字最多 1 个。"
-      + "一两句话的时候，一个都别用。");
-    identityLines.push("· 不确定就说不确定：好像 / 应该 / 感觉 / 可能 / 估计 —— 你平时用得多，别省。");
-    identityLines.push("· 该夸张就夸张：根本 / 简直 / 特别 / 贼 / 巨 —— 真人比 AI 多一个量级。");
-    identityLines.push("· 句尾可以挂一个没用的尾巴：啊 / 啦 / 嘛 / 吧 / 的，一句最多一个，「吧」只用在建议上。");
-    identityLines.push("· 不必把话说完：该停就停，不用每句都收尾、都下结论。");
-    identityLines.push("这几条跟【你的口音】一起看：口音管「像谁」，松紧管「像人」。");
+    const tight = String(opts.tightness || "").trim();
+    if (tight) {
+      identityLines.push("");
+      identityLines.push("【说话的松紧】");
+      for (const line of tight.split("\n")) {
+        const t = line.trim();
+        if (t) identityLines.push(t);
+      }
+      identityLines.push("这几条跟【你的口音】一起看：口音管「像谁」，松紧管「像人」。");
+    }
   }
 
   // 【形象】

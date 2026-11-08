@@ -4608,6 +4608,7 @@ const [data, setData] = React.useState(null);
         const [stats, setStats] = React.useState(null);
         const [prompts, setPrompts] = React.useState({ chat: "", public: "" });
         const [voiceDoc, setVoiceDoc] = React.useState("");
+        const [tightText, setTightText] = React.useState("");
         const [voiceBuiltAt, setVoiceBuiltAt] = React.useState(0);
         const [msg, setMsg] = React.useState(null);
         const [busy, setBusy] = React.useState(false);
@@ -4620,6 +4621,10 @@ const [data, setData] = React.useState(null);
             setOn(ident.learn_speak_on !== false);
           } catch { /* 读不到就当开着 */ }
           try { setStats(await call("/learn/stats")); } catch { setStats(null); }
+          try {
+            const tg = await call("/tightness");
+            setTightText((tg && tg.text) || "");
+          } catch { /* 没有就算了 */ }
           try {
             const v = await call("/voice");
             setVoiceDoc((v && v.doc) || "");
@@ -4766,6 +4771,48 @@ const [data, setData] = React.useState(null);
               "只编辑「学什么」这段。输出格式和结构规则是公共的，自动拼在后面。"),
             editor("public", "学网友（B 站热评 / 贴吧）",
               "只编辑「学什么」这段。B 站和贴吧共用，默认保留了评论区的阴阳怪气。"),
+            h("div", { style: S.card },
+              h("div", { style: S.label }, "说话的松紧（密度配额 + 微标记）"),
+              h("div", { style: { ...S.muted, fontSize: 11, lineHeight: 1.6, marginBottom: 6 } },
+                "这一段会原样进她的系统提示词。它管的是「像人」：书面腔按 200 字配额压、"
+                + "补 AI 欠用的词（好像/应该/感觉）、句尾允许多一个尾巴。清空 = 关掉这一段。"),
+              h("textarea", {
+                style: { ...S.input, minHeight: 170, resize: "vertical", fontFamily: "inherit", fontSize: 12.5, lineHeight: 1.7 },
+                value: tightText,
+                onChange: (ev) => setTightText(ev.target.value),
+                placeholder: "留空 = 不加这一段",
+              }),
+              h("div", { style: { display: "flex", gap: 8, marginTop: 8 } },
+                h("button", {
+                  style: S.btn(true),
+                  disabled: busy,
+                  onClick: async () => {
+                    setBusy(true); setMsg(null);
+                    try {
+                      const r = await call("/tightness", { method: "POST", body: JSON.stringify({ text: tightText }) });
+                      setTightText((r && r.text) || "");
+                      setMsg((r && r.text) ? "松紧已保存" : "已关掉（不注入）");
+                    } catch (e) {
+                      setMsg("保存失败：" + String((e && e.message) || e));
+                    } finally { setBusy(false); }
+                  },
+                }, "保存"),
+                h("button", {
+                  style: S.btn(false),
+                  disabled: busy,
+                  onClick: async () => {
+                    setBusy(true); setMsg(null);
+                    try {
+                      const r = await call("/tightness", { method: "POST", body: JSON.stringify({ restore: true }) });
+                      setTightText((r && r.text) || "");
+                      setMsg("已恢复默认");
+                    } catch (e) {
+                      setMsg("恢复失败：" + String((e && e.message) || e));
+                    } finally { setBusy(false); }
+                  },
+                }, "恢复默认"),
+              ),
+            ),
           ),
         );
       }
