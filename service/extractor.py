@@ -814,8 +814,12 @@ class Extractor:
 比如「前排，凉了」「前排」「前排凉了」都该归到 canon「前排凉了」。
 这样相似的句子能把次数攒到一起去。
 
+另外给每条一个 **scene（场景词，2~6 个字）**：这句话一般在什么场合冒出来。
+要具体、能一眼认出是什么事，别用「日常」「感慨」这种空的。
+例子：加班 / 被夸 / 下雪 / 吃泡面 / 被催更 / 看到离谱操作 / 吵架 / 求推荐 / 深夜睡不着。
+
 只输出 JSON 数组，每条一项：
-[{"i":序号,"keep":true/false,"canon":"归一说法（不 keep 就留空）","why":"一句话理由"}]
+[{"i":序号,"keep":true/false,"canon":"归一说法（不 keep 就留空）","scene":"场景词","why":"一句话理由"}]
 """
 
     VOICE_DOC_SYSTEM = """你要给一个聊天机器人写「口音档案」。
@@ -858,6 +862,7 @@ class Extractor:
             if 0 <= i < len(items):
                 out.append({"i": i, "keep": bool(g.get("keep")),
                             "canon": str(g.get("canon") or "")[:60],
+                            "scene": str(g.get("scene") or "")[:24],
                             "why": str(g.get("why") or "")[:80]})
         return out
 

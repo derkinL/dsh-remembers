@@ -194,6 +194,7 @@ CREATE TABLE IF NOT EXISTS expressions (
   likes      INTEGER NOT NULL DEFAULT 0,     -- 真实赞数/互动数，质量门槛
   hits       INTEGER NOT NULL DEFAULT 1,     -- 原文一模一样的次数
   canon      TEXT NOT NULL DEFAULT '',       -- 归一后的说法（相似归并，按它数次数）
+  scene      TEXT NOT NULL DEFAULT '',       -- 场景词（加班 / 被夸 / 下雪），按场景查用
   status     TEXT NOT NULL DEFAULT 'candidate', -- candidate / active / rejected
   count      INTEGER NOT NULL DEFAULT 1,     -- 见过几次（加权抽样用）
   ts         REAL NOT NULL DEFAULT 0,

@@ -2667,6 +2667,7 @@ window.__ModuleLoader__.load({
                                           background: "rgba(64,132,255,.12)", color: "#4084ff",
                                         },
                                       }, e.situation || "未分类"),
+                                      e.scene ? h("span", { style: { fontSize: 11, padding: "1px 8px", borderRadius: 999, background: "rgba(240,128,60,.12)", color: "#c05621" } }, "场景 " + e.scene) : null,
                                       e.likes ? h("span", { style: { ...S.muted, fontSize: 11 } }, "赞 " + e.likes) : null,
                                       h("span", { style: { ...S.muted, fontSize: 11 } },
                                         `见过 ${e.count || 1} 次 · ${e.scope}${e.source ? " · " + e.source : ""}`),

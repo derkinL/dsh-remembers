@@ -922,6 +922,12 @@ class Handler(BaseHTTPRequestHandler):
         if tag:
             rows = [r for r in rows if str(r.get("situation") or "") == tag]
         if q and rows:
+            # 先看有没有场景词精确/包含匹配的，有就优先给它们
+            qq = q.strip()
+            exact = [r for r in rows if qq and (qq in str(r.get("scene") or "") or str(r.get("scene") or "") in qq)]
+            if exact:
+                rows = exact + [r for r in rows if r not in exact]
+        if q and rows:
             import re as _re
             _P = set("，,。.！!？?、；;：:\"'“”‘’「」『』（）()…~～")
             def _norm(x):
@@ -940,6 +946,7 @@ class Handler(BaseHTTPRequestHandler):
         out = [{
             "raw": (r.get("raw") or r.get("style") or ""),
             "tag": (r.get("situation") or ""),
+            "scene": (r.get("scene") or ""),
             "likes": int(r.get("likes") or 0),
             "hits": int(r.get("hits") or 0),
         } for r in rows[:n] if (r.get("raw") or r.get("style"))]
@@ -1047,6 +1054,8 @@ class Handler(BaseHTTPRequestHandler):
                         continue
                     canon = str(v.get("canon") or "").strip() or str(it.get("raw") or "")
                     store.expr_set_canon(int(it["id"]), canon)
+                    if str(v.get("scene") or "").strip():
+                        store.expr_set_scene(int(it["id"]), str(v["scene"]).strip())
                 # canon 攒够 3 次的整组转正
                 for canon, n in store.expr_canon_groups(self.VOICE_MIN_HITS):
                     for eid in store.expr_ids_by_canon(canon):
@@ -3739,6 +3748,7 @@ class Handler(BaseHTTPRequestHandler):
                     str(body.get("situation") or ""),
                     str(body.get("style") or ""),
                     str(body.get("example") or ""),
+                    str(body.get("scene") or ""),
                 )
             except (TypeError, ValueError):
                 self._json(400, {"ok": False, "error": "bad id"})

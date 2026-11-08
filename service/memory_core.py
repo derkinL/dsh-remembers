@@ -1384,6 +1384,7 @@ class MemoryStore:
                           ("likes", "INTEGER NOT NULL DEFAULT 0"),
                           ("hits", "INTEGER NOT NULL DEFAULT 1"),
                           ("canon", "TEXT NOT NULL DEFAULT ''"),
+                          ("scene", "TEXT NOT NULL DEFAULT ''"),
                           ("status", "TEXT NOT NULL DEFAULT 'candidate'")):
             if name in cols:
                 continue
@@ -1562,7 +1563,7 @@ class MemoryStore:
             return []
 
     def expr_update(self, eid: int, situation: str = "", style: str = "",
-                    example: str = "") -> dict:
+                    example: str = "", scene: str = "") -> dict:
         """改一条已学到的说法。三个字段给哪个改哪个；空串视为不改。
 
         改完可能跟另一条撞（同 scope + 同 situation + 同 style 有唯一索引）：
@@ -1584,6 +1585,10 @@ class MemoryStore:
             self.conn.execute("UPDATE expressions SET raw=? WHERE id=?", (cur["style"], eid))
         if example.strip():
             cur["example"] = example.strip()[:200]
+        if str(locals().get("scene") or "").strip():
+            self.conn.execute("UPDATE expressions SET scene=? WHERE id=?",
+                              (str(scene).strip()[:24], eid))
+            cur["scene"] = str(scene).strip()[:24]
         dup = self.conn.execute(
             "SELECT id, count FROM expressions WHERE scope=? AND situation=? AND style=? AND id!=?",
             (scope, cur["situation"], cur["style"], eid)).fetchone()
@@ -1608,6 +1613,12 @@ class MemoryStore:
                 "ORDER BY hits DESC, likes DESC LIMIT ?", (max(1, int(min_hits)), max(1, int(limit))))]
         except Exception:
             return []
+
+    def expr_set_scene(self, eid: int, scene: str) -> int:
+        cur = self.conn.execute("UPDATE expressions SET scene=? WHERE id=?",
+                                (str(scene or "")[:24], int(eid)))
+        self.conn.commit()
+        return int(cur.rowcount or 0)
 
     def expr_set_canon(self, eid: int, canon: str) -> int:
         cur = self.conn.execute("UPDATE expressions SET canon=? WHERE id=?",
@@ -1644,7 +1655,7 @@ class MemoryStore:
         """已转正的说法 —— 只有这些才会进口音区。"""
         try:
             return [dict(r) for r in self.conn.execute(
-                "SELECT id, scope, situation, style, raw, source, likes, hits "
+                "SELECT id, scope, situation, style, raw, source, likes, hits, scene "
                 "FROM expressions WHERE status='active' "
                 "ORDER BY hits DESC, likes DESC, last_hit DESC LIMIT ?", (max(1, int(limit)),))]
         except Exception:
