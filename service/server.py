@@ -1104,10 +1104,16 @@ class Handler(BaseHTTPRequestHandler):
         return out
 
     def _voice_samples(self, limit: int = 8) -> list[str]:
-        """已启用的原句（只有 status=active 才有资格进口音区）。"""
+        """已启用的**她自己学到的**原句（进口音区）。
+
+        默认语料（source='seed'）不能进这里：那是别人的梗，不是她的口音。
+        之前没过滤，种子一入库，口音档案就会拿「233」「笑死」当她的说话样本。
+        """
         out = []
         seen = set()
-        for r in store.expr_active(40):
+        for r in store.expr_active(60):
+            if str(r.get("source") or "") == "seed":
+                continue
             t = str(r.get("raw") or r.get("style") or "").strip()
             if not t or t in seen:
                 continue
