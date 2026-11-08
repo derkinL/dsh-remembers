@@ -20,6 +20,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { fixTone } from "./tools/tone.js";
 
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 
@@ -1378,6 +1379,28 @@ async function scanSeen() {
     };
 
     try {
+      registerTool(defineTool({
+        name: "tone_fix",
+        description:
+          "把一段已经写好的话按「人味」规则顺一遍。**纯规则、不调模型**，同样输入永远同样输出："
+          + "压重复标点（。。→。、!!!!→!、?????→???）、破折号换逗号、可选地在句尾挂一个没用的尾巴。"
+          + "代码块、表格、URL、数字结尾的地方不动。"
+          + "用在你觉得这段话「太整齐/太像报告」的时候，改完再发。",
+        parameters: {
+          text: { type: "string", description: "要顺的那段话" },
+          mode: { type: "string", description: "none（只修标点）/ cute（句尾挂呀嘛啦）/ abstract（句尾挂典、绝了、就这）" },
+          seed: { type: "number", description: "可选，同 seed 同结果" },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async (args) => {
+          const r = fixTone(String(args.text || ""), {
+            mode: String(args.mode || "none"),
+            seed: Number(args.seed || 0) || undefined,
+          });
+          return { ok: true, text: r.text, changes: r.changes, tail: r.tail };
+        },
+      }));
+
       registerTool(defineTool({
         name: "find_phrases",
         description:
