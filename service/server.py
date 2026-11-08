@@ -130,7 +130,7 @@ def _build_embedder(cfg: dict) -> Embedder:
         api_key=_pick(cfg, "embed_key", "CMEM_EMBED_KEY"),
         model=_pick(cfg, "embed_model", "CMEM_EMBED_MODEL"),
         timeout=float(_pick(cfg, "embed_timeout", "CMEM_EMBED_TIMEOUT", "20")),
-        batch_size=int(_pick(cfg, "embed_batch", "CMEM_EMBED_BATCH", "16")),
+        batch_size=int(_pick(cfg, "embed_batch", "CMEM_EMBED_BATCH", "10")),
     )
 
 
@@ -1067,6 +1067,44 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             print(f"[cmem] expr index: +{got} (left {len(need) - got})", flush=True)
+            if got == 0:
+                break
+        # 语料补完再补记忆（老记忆是在 embedding 关着的时候写的，没有向量）
+        try:
+            self._memory_index_loop()
+        except Exception:
+            pass
+
+    def _memory_index_loop(self) -> None:
+        """给 vector 为空的旧记忆补向量。"""
+        if embedder is None or not embedder.enabled:
+            return
+        for _ in range(200):
+            try:
+                rows = [dict(r) for r in store.conn.execute(
+                    "SELECT id, text FROM memory WHERE vec IS NULL LIMIT 32")]
+            except Exception:
+                return
+            if not rows:
+                return
+            vecs = embedder.embed([str(r.get("text") or "")[:400] for r in rows])
+            got = 0
+            for r, v in zip(rows, vecs):
+                if not v:
+                    continue
+                try:
+                    import struct as _st
+                    blob = _st.pack("<%df" % len(v), *v)
+                    store.conn.execute("UPDATE memory SET vec=?, vec_model=? WHERE id=?",
+                                       (blob, embedder.model, int(r["id"])))
+                    got += 1
+                except Exception:
+                    pass
+            try:
+                store.conn.commit()
+            except Exception:
+                pass
+            print(f"[cmem] memory index: +{got} (left {len(rows) - got})", flush=True)
             if got == 0:
                 return
 

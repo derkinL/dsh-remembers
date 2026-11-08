@@ -62,18 +62,28 @@ class Embedder:
 
         for start in range(0, len(pending), self.batch_size):
             chunk = pending[start:start + self.batch_size]
-            try:
-                vecs = self._request([t for _, t in chunk])
-            except Exception as exc:  # noqa: BLE001 - 任何异常都降级
-                self.failures += 1
-                self.last_error = f"{type(exc).__name__}: {exc}"
-                continue
-            for (idx, text), vec in zip(chunk, vecs):
+            got = self._embed_chunk(chunk)
+            for (idx, text), vec in zip(chunk, got):
                 if vec is None:
                     continue
                 out[idx] = vec
                 self._remember(self._key(text), vec)
         return out
+
+    def _embed_chunk(self, chunk: list[tuple[int, str]]) -> list[list[float] | None]:
+        """一批失败就对半拆再试 —— DashScope 的 embedding 上限是 10 条/次，
+        一次 400 不该让整批都白跑。拆到 1 条还失败才算真失败。"""
+        try:
+            return self._request([t for _, t in chunk])
+        except Exception as exc:  # noqa: BLE001 - 任何异常都降级
+            if len(chunk) > 1:
+                mid = len(chunk) // 2
+                left = self._embed_chunk(chunk[:mid])
+                right = self._embed_chunk(chunk[mid:])
+                return left + right
+            self.failures += 1
+            self.last_error = f"{type(exc).__name__}: {exc}"
+            return [None] * len(chunk)
 
     def embed_one(self, text: str) -> list[float] | None:
         return self.embed([text])[0]
