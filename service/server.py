@@ -729,6 +729,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._post_tieba_reply())
         elif path == "/tieba/config":
             self._guard(lambda: self._post_tieba_cfg())
+        elif path == "/phrases/scene":
+            self._guard(lambda: self._json(200, self.backfill_scenes()))
         elif path == "/persona/style":
             self._guard(lambda: self._post_persona_style())
         elif path == "/tightness":
@@ -938,6 +940,39 @@ class Handler(BaseHTTPRequestHandler):
                 agg[tag] = agg.get(tag, 0) + n
         out["tags"] = sorted([{"tag": k, "n": v} for k, v in agg.items()], key=lambda x: -x["n"])
         return out
+
+    def backfill_scenes(self, rounds: int = 60) -> dict:
+        """给没场景的条目补场景词（默认语料 1000 条要补一次）。"""
+        done = 0
+        failed = 0
+        for _ in range(max(1, int(rounds))):
+            try:
+                need = store.expr_need_scene(40)
+            except Exception:
+                break
+            if not need:
+                break
+            if extractor is None:
+                break
+            got = extractor.extract_scenes(need)
+            if not got:
+                failed += 1
+                break
+            for g in got:
+                try:
+                    store.expr_set_scene(int(need[g["i"]]["id"]), g["scene"])
+                    done += 1
+                except Exception:
+                    pass
+        left = 0
+        try:
+            left = int(store.conn.execute(
+                "SELECT COUNT(*) FROM expressions WHERE status='active' AND (scene IS NULL OR scene='')"
+            ).fetchone()[0])
+        except Exception:
+            pass
+        print(f"[cmem] scene backfill: done={done} left={left}", flush=True)
+        return {"ok": True, "done": done, "left": left}
 
     def _get_phrases(self, query) -> None:
         """按分类/场景查「已转正」的说法：默认语料（seed）+ 她学到的（active）。

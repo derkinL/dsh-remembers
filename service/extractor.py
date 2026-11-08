@@ -839,6 +839,48 @@ class Extractor:
 要求：200 字以内，中文，直接输出正文，不要标题、不要 JSON。
 """
 
+    SCENE_SYSTEM = """你在给一个「梗库」标场景。
+
+每条给你：梗、意思、用法。你要判断：这句话一般在什么场合冒出来。
+规则：
+- scene 写 2~6 个字的场景词，要具体，能一眼认出是什么事
+- 好例子：加班 / 被夸 / 下雪 / 吃泡面 / 群友拉人 / 求人帮忙 / 看到离谱操作 / 深夜睡不着
+- 坏例子：日常 / 感慨 / 聊天 / 通用（太虚）
+- 拿不准就写最接近的那个，不要空着
+
+只输出 JSON 数组：[{"i":序号,"scene":"场景词"}]
+"""
+
+    def extract_scenes(self, items: list[dict]) -> list[dict]:
+        """批量给条目补「场景词」（默认语料导入时没有这个字段）。"""
+        if not self.enabled or not items:
+            return []
+        import json as _json
+        payload = [{
+            "i": k,
+            "term": str(it.get("raw") or "")[:40],
+            "meaning": str(it.get("meaning") or "")[:80],
+            "usage": str(it.get("usage") or "")[:80],
+        } for k, it in enumerate(items)]
+        try:
+            got = self.llm.chat_json(self.SCENE_SYSTEM, _json.dumps(payload, ensure_ascii=False), max_tokens=1200)
+        except Exception:
+            return []
+        if not isinstance(got, list):
+            return []
+        out = []
+        for g in got:
+            if not isinstance(g, dict):
+                continue
+            try:
+                i = int(g.get("i"))
+            except (TypeError, ValueError):
+                continue
+            scene = str(g.get("scene") or "").strip()[:24]
+            if 0 <= i < len(items) and scene:
+                out.append({"i": i, "scene": scene})
+        return out
+
     def judge_voice_candidates(self, items: list[dict]) -> list[dict]:
         """子 AI：判断候选里哪些真的是「说话方式」。返回 [{i, keep, why}]。"""
         if not self.enabled or not items:

@@ -4793,6 +4793,7 @@ const [data, setData] = React.useState(null);
                     ),
                     it.meaning ? h("div", { style: { ...S.muted, fontSize: 12, lineHeight: 1.6 } }, it.meaning) : null,
                     it.usage ? h("div", { style: { fontSize: 11.5, color: "#666", lineHeight: 1.55 } }, "例：" + it.usage) : null,
+                    it.scene ? h("div", { style: { fontSize: 11.5, color: "#c05621" } }, "用在这种时候：" + it.scene) : null,
                     h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginTop: "auto", flexWrap: "wrap" } },
                       h("span", { style: { fontSize: 10.5, padding: "1px 7px", borderRadius: 999, background: "rgba(0,0,0,.05)", color: "#555" } }, it.tag || "未分类"),
                       h("span", { style: { fontSize: 10.5, color: it.source === "seed" ? "#4084ff" : "#f0803c" } },

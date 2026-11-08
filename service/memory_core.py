@@ -1653,6 +1653,16 @@ class MemoryStore:
             print(f"[cmem] expr_import_seeds failed: {e}", flush=True)
             return 0
 
+    def expr_need_scene(self, limit: int = 40) -> list[dict]:
+        """还没场景词的条目（默认语料导入时没有）。"""
+        try:
+            return [dict(r) for r in self.conn.execute(
+                "SELECT id, raw, meaning, usage FROM expressions "
+                "WHERE status='active' AND (scene IS NULL OR scene='') "
+                "ORDER BY id LIMIT ?", (max(1, int(limit)),))]
+        except Exception:
+            return []
+
     def expr_upsert_full(self, fields: dict, eid: int = 0) -> int:
         """语料库增改：raw / tag(situation) / scene / meaning / usage / tail 一把梭。
 
