@@ -2795,8 +2795,8 @@ function SettingsSection(props) {
                   ? h("div", null,
                       h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 4 } }, `学到的说法（场合感） ${exprs.length}`),
                       h("div", { style: { ...S.muted, fontSize: 11, marginBottom: 8, lineHeight: 1.5 } },
-                        "这里是**候选池**。存的是原句（照抄），不是抽象标签。相似说法攒够 3 次、并且子 AI 判定是「说话方式」之后，才会转正进口音区。"
-                        + "转正的口音三天写一次进人格；没转正的不会进提示词，只在贴吧回帖时按话题挑几句当参考。"),
+                        "这里是**参考语料**：网友怎么说话，原句照抄，不当成人格。它每轮按话题挑 1~2 句贴进状态给她参考；"
+                        + "口音档案不靠它——口音是从**她自己说过的话**里量出来的（见下面「口音区」）。"),
                       h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
                         pageSlice(exprs).map((e) => {
                           const editing = editId === e.id;
@@ -2897,12 +2897,12 @@ function SettingsSection(props) {
                                     h("button", {
                                       key: "act",
                                       style: { ...S.btn(false), fontSize: 11, padding: "2px 8px" },
-                                      title: "转正：只有启用过的说法才会进人格的口音区",
+                                      title: "启用：这条说法可以进参考池（不影响口音档案）",
                                       onClick: async () => {
                                         try {
                                           await call("/expressions", { method: "POST", body: JSON.stringify({ op: "status", id: e.id, status: "active" }) });
                                           setExprList((exprList || []).map((x) => (x.id === e.id ? { ...x, status: "active" } : x)));
-                                          setMsg("已转正，下次重写口音档案时生效");
+                                          setMsg("已启用为参考；口音档案不靠这个");
                                         } catch (err) { setMsg("操作失败：" + String(err && err.message || err)); }
                                       },
                                     }, "启用"),
@@ -4263,7 +4263,6 @@ const [data, setData] = React.useState(null);
             const res = await call("/persona", {
               method: "POST",
               body: JSON.stringify({
-                constitution: draft.constitution,
                 self_model: draft.self_model,
                 self_image: draft.self_image,
                 identity: JSON.stringify(idFields),
@@ -5122,7 +5121,7 @@ const TIEBA_ICON = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAMAAA
               h("div", { style: { ...S.muted, fontSize: 12, lineHeight: 1.7 } },
                 voiceDoc
                   ? "「" + voiceDoc.slice(0, 160) + (voiceDoc.length > 160 ? "…" : "") + "」"
-                  : "还没有口音档案。出现 3 次以上的说法先由子 AI 判定，通过后才会写进来；三天重写一次。"),
+                  : "还没有口音档案。它来自她自己说过的话（满 8 句就会生成），三天重写一次；也可以点「立即重写」。"),
               h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" } },
                 h("button", {
                   style: { ...S.btn(false), fontSize: 12 },

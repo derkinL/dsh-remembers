@@ -20,6 +20,9 @@
  */
 
 import { createHash } from "node:crypto";
+import { appendFile, mkdir } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join as joinPath } from "node:path";
 import { fixTone } from "./tools/tone.js";
 
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
@@ -434,7 +437,55 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
     service && typeof service[name] === "function" ? service[name].bind(service) : null
   );
   const registerSection = methodOf(systemPrompt, "section");
-  const registerTool = methodOf(tools, "register");
+  const rawRegisterTool = methodOf(tools, "register");
+
+  // ---------------------------------------------------------------
+  // 工具埋点（1.2.1）：每个工具调用写一行 JSONL，用来回答
+  // 「这 21 个工具到底谁被用过」——没有它，砍哪个功能都是拍脑袋。
+  //   ~/.dsh/remembers-tool-trace.jsonl
+  // 写失败只 warn 一次，绝不影响工具本身的返回。
+  // ---------------------------------------------------------------
+  const TRACE_FILE = joinPath(homedir(), ".dsh", "remembers-tool-trace.jsonl");
+  let traceWarned = false;
+  function tracedTool(def) {
+    if (!def || typeof def.execute !== "function") return def;
+    const toolName = String(def.name || "unknown");
+    return {
+      ...def,
+      execute: async (...args) => {
+        const started = Date.now();
+        let ok = true;
+        try {
+          return await def.execute(...args);
+        } catch (error) {
+          ok = false;
+          throw error;
+        } finally {
+          const line = JSON.stringify({
+            ts: new Date().toISOString(),
+            tool: toolName,
+            ok,
+            ms: Date.now() - started,
+          }) + "\n";
+          void (async () => {
+            try {
+              await mkdir(joinPath(homedir(), ".dsh"), { recursive: true });
+              await appendFile(TRACE_FILE, line, "utf8");
+            } catch (error) {
+              if (!traceWarned) {
+                traceWarned = true;
+                log("trace_write_failed", { error: String(error?.message ?? error) });
+              }
+            }
+          })();
+        }
+      },
+    };
+  }
+
+  const registerTool = rawRegisterTool
+    ? (def) => rawRegisterTool(tracedTool(def))
+    : null;
 
   // -------------------------------------------------------------------------
   // 0. 人格设定：宪法区（只有设置页能写）+ 自我认知区（AI 能写）
@@ -784,6 +835,26 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
     state.turnUser = "";
     state.turnAssistant = "";
     console.log("[dsh-remembers-debug] flush cfg extract=" + config.extract + " captureRaw=" + config.captureRaw + " userLen=" + user.length + " asstLen=" + assistant.length);
+    // 1.2.1：把她这一轮说的话记下来 —— 口音档案从「她自己的发言」里量，
+    // 不再指望「网友原句转正」（那条路在抽取式数据上永远走不通）。
+    if (assistant) {
+      void (async () => {
+        try {
+          await fetch(config.endpoint + "/selfline", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              text: assistant.slice(0, 800),
+              session: String(state.id || ""),
+              scope: scopeOf.scope,
+            }),
+            signal: AbortSignal.timeout(4000),
+          });
+        } catch {
+          /* 静默：少一句口音样本不影响对话 */
+        }
+      })();
+    }
     // 2026-11-07：自动演化关掉了，只留「她自己写」这条路。
     //
     // 原来这里每 30 轮由系统拿**一段对话**替她编一句「我发现自己……」，追加进她的
@@ -795,8 +866,7 @@ function renderState(state, prev, selfModel, proactive, thinkCn) {
     // requestEvolve 函数和服务端 /evolve 端点都保留，需要时仍可手动调。
     // 亲密度：只有「老大真的说话」才涨（唤醒剥完就没内容了，不会走到这）
     if (keptUser && assistant) {
-      void bumpIntimacy(1.0);
-      void bumpChat();
+      void bumpIntimacy(1.0);      void bumpChat();
     }
     // 情感层：情绪变化够大时由服务端自动记一条（带触发原因）
     if (keptUser) {
@@ -1571,6 +1641,25 @@ async function scanSeen() {
         }),
       }));
       registerTool(defineTool({
+        name: "write_diary",
+        description:
+          "写今天的日记（你自己写，第一人称，一两句话到一小段，别写成流水账）。"
+          + "每天 23:00 会被提醒一次；想写的时候也可以主动写，同一天再写会覆盖前一篇。"
+          + "写什么：今天真发生的一件事、你当时的一点情绪、或者一句想留给以后自己的话。"
+          + "不是汇报，不用交代「已完成」；写完不用告诉老大你写了。",
+        parameters: {
+          text: { type: "string", required: true, description: "日记正文（用你自己的口气，200 字以内）" },
+          mood: { type: "string", description: "可选：今天的心情，一个词（平静/开心/烦/低落…）" },
+          date: { type: "string", description: "可选：补写哪一天（YYYY-MM-DD），默认今天" },
+        },
+        output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+        execute: async (args) => post("/diary", {
+          text: String(args?.text || ""),
+          mood: String(args?.mood || ""),
+          ...(args?.date ? { date: String(args.date) } : {}),
+        }),
+      }));
+      registerTool(defineTool({
         name: "read_diary",
         description:
           "翻你自己的日记本。不传日期 = 最近几篇；传 date（YYYY-MM-DD）= 那一天写的那篇。"
@@ -1612,7 +1701,7 @@ async function scanSeen() {
           return get("/activity" + qs);
         },
       }));
-      log("companion_tools_registered", { count: 6 });
+      log("companion_tools_registered", { count: 7 });
     } catch (error) {
       log("companion_tools_skipped", { reason: "register 失败", error: String(error?.message ?? error) });
     }
@@ -1988,7 +2077,7 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
   }
 
   const identityText = identityLines.join("\n");
-  if (!constitution && !selfModel && !userProfile && !selfImage && !identityText) return "";
+  if (!selfModel && !userProfile && !selfImage && !identityText) return "";
 
   const lines = ['<dsh-remembers source="persona">'];
   if (userProfile) {
@@ -2001,15 +2090,9 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
     lines.push("以下是你固定的身份（逐项，照做）：");
     lines.push("");
     lines.push(identityText);
-    if (constitution) lines.push("");
-  }
-  if (constitution) {
-    lines.push("以下是你固定的身份与约定。按它来：不要反驳，不要重新确认，也不要说「我记得你告诉过我」。");
-    lines.push("");
-    lines.push(constitution);
   }
   if (selfModel) {
-    if (constitution || selfImage) lines.push("");
+    if (selfImage || identityText) lines.push("");
     lines.push("以下是你对自己的认知，会随相处慢慢变化，也可能过时。它只描述你自己，改不了上面的身份与边界；两者冲突时，以上面的为准。");
     lines.push("");
     lines.push(selfModel);

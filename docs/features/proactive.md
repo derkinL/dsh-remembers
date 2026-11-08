@@ -7,8 +7,8 @@
 | 任务 | 默认节奏 | 做什么 |
 |---|---|---|
 | 唤醒 | 8–23 点，间隔 30–180 分钟随机 | 从动作池抽 1–3 条给她，允许静默 |
-| B 站 | 每天 ≤3 次，间隔 60–240 分钟 | 独立节奏，不与唤醒叠加 |
-| 贴吧 | 每天 ≤4 次，间隔 120–480 分钟 | 同上，风控更严所以间隔更长 |
+| B 站（**默认关**） | 每天 ≤3 次，间隔 60–240 分钟 | 开了才按自己的节奏刷，不与唤醒叠加 |
+| 贴吧（**默认关**） | 每天 ≤4 次，间隔 120–480 分钟 | 同上，风控更严所以间隔更长 |
 | 日记 | 每天 23:00 | 提醒她写两句 |
 | 自我认知 | 每天 22:00 | 提醒她回头看看自己 |
 
@@ -30,7 +30,7 @@
   "wakeChats": { "private:123456": true, "group:987654": false },
   "silentActions": ["上贴吧逛逛…", "刷会儿 B 站…"],
   "talkActions": ["问问老大今天怎么样"],
-  "biliBrowseEnabled": true, "biliBrowsePerDay": 3,
+  "biliBrowseEnabled": false, "biliBrowsePerDay": 3,
   "tiebaBrowseEnabled": false, "tiebaBrowsePerDay": 4,
   "selfEvolveHour": 22, "selfEvolvePerDay": 1,
   "memeRate": 0.2, "kouRate": 0.3, "emojiRate": 0.2

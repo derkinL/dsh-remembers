@@ -636,6 +636,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._get_phrases(query))
         elif path == "/voice":
             self._guard(lambda: self._json(200, {"ok": True, **self._voice_state()}))
+        elif path == "/selfline":
+            self._guard(self._get_selfline)
         elif path == "/learn/stats":
             self._guard(lambda: self._json(200, self._learn_stats()))
         elif path == "/expressions":
@@ -905,6 +907,8 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(lambda: self._post_tightness())
         elif path == "/voice/rebuild":
             self._guard(lambda: self._json(200, self.rebuild_voice(True)))
+        elif path == "/selfline":
+            self._guard(self._post_selfline)
         elif path == "/learn/switch":
             self._guard(lambda: self._post_learn_switch())
         elif path == "/learn/prompt":
@@ -1074,7 +1078,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- 人格设定（二合一里的「人」那一半） ---------------------------------
 
-    VOICE_MIN_HITS = 3          # 出现几次才够格让子 AI 判
+    VOICE_MIN_HITS = 2          # 相似说法出现几次算「她常说」（1.2.1 起 3→2）
     VOICE_REBUILD_DAYS = 3      # 口音区多久重写一次
 
     def _voice_path(self) -> str:
@@ -1468,18 +1472,12 @@ class Handler(BaseHTTPRequestHandler):
         out["tags"] = sorted([{"tag": k, "n": v} for k, v in agg.items()], key=lambda x: -x["n"])
         return out
 
-    def _voice_samples(self, limit: int = 8) -> list[str]:
-        """已启用的**她自己学到的**原句（进口音区）。
-
-        默认语料（source='seed'）不能进这里：那是别人的梗，不是她的口音。
-        之前没过滤，种子一入库，口音档案就会拿「233」「笑死」当她的说话样本。
-        """
-        out = []
-        seen = set()
-        for r in store.expr_active(60):
-            if str(r.get("source") or "") == "seed":
-                continue
-            t = str(r.get("raw") or r.get("style") or "").strip()
+    def _self_voice_samples(self, limit: int = 8) -> list[str]:
+        """她自己最近说过的话（去重，新→旧）。"""
+        out: list[str] = []
+        seen: set[str] = set()
+        for r in store.self_lines(150):
+            t = str(r.get("text") or "").strip()
             if not t or t in seen:
                 continue
             seen.add(t)
@@ -1487,6 +1485,43 @@ class Handler(BaseHTTPRequestHandler):
             if len(out) >= limit:
                 break
         return out
+
+    def _voice_samples(self, limit: int = 8) -> list[str]:
+        """进口音区的原句。
+
+        1.2.1：**她自己的发言优先**——口音是「她怎么说话」，不是「网友怎么说」。
+        自己的样本不足 3 句时，才用参考语料垫一下（档案里会标「样本不足」）。
+        """
+        out = self._self_voice_samples(limit)
+        if len(out) >= 3:
+            return out[:limit]
+        for r in store.expr_voice_samples(max(6, limit)):
+            t = str(r.get("raw") or "").strip()
+            if not t or t in out:
+                continue
+            out.append(t)
+            if len(out) >= limit:
+                break
+        return out[:limit]
+
+    def _voice_doc_rule(self, stats: dict, samples: list[str]) -> str:
+        """没配 LLM 时的口音档案：直接拿统计拼一段，不编形容词。"""
+        bits: list[str] = []
+        if stats.get("median_len"):
+            bits.append("我说话中位 %s 字" % stats["median_len"])
+        if stats.get("short_rate") is not None:
+            bits.append("%d%% 的句子不到 8 字" % int(stats["short_rate"] * 100))
+        if stats.get("no_punct_rate") is not None:
+            bits.append("%d%% 的句子句尾不带标点" % int(stats["no_punct_rate"] * 100))
+        if stats.get("emoji_rate"):
+            bits.append("%d%% 带表情/方括号标签" % int(stats["emoji_rate"] * 100))
+        if stats.get("particles"):
+            bits.append("常带" + "、".join(stats["particles"]))
+        head = "；".join(bits)
+        if samples:
+            head += ("。" if head else "") + "最近说过：" + " / ".join(
+                "「" + s[:20] + "」" for s in samples[:3])
+        return (head + "。") if head else ""
 
     DEFAULT_TIGHTNESS = """下面几条是配额，不是禁令：配额内随便用，超了才收。
 · 书面腔（不是…而是、最…的是、不仅…更、首先/其次/综上）：每 200 字最多 1 个。一两句话的时候，一个都不用。
@@ -1545,25 +1580,29 @@ class Handler(BaseHTTPRequestHandler):
         }
 
     def rebuild_voice(self, force: bool = False) -> dict:
-        """把候选送去子 AI 判定 → 转正/否决 → 重写口音档案。
+        """重写口音档案。
 
-        口音区在系统提示词里，**不能每轮变**：只有这里（三天一次或手动）才重写。
+        1.2.1 起：档案来自**她自己说过的话**（self_line）的统计，不再依赖
+        「网友原句转正」（那条路在抽取式数据上永远走不通，见 docs/audit.md）。
+        候选池的判定还在，只是它现在只影响「参考语料」的干净程度。
+
+        口音区在系统提示词里，不能每轮变：只有这里（三天一次或手动）才重写。
         """
         import time as _t
         st = self._voice_state()
         built = float(st.get("builtAt") or 0)
-        # 样本失效就重写：档案里引用的那几句可能已经被删/被否决，
-        # 不重写的话人格里会一直挂着一句库里已经没有的话。
+        # 参考语料失效就重写（老档案可能引用已删掉的网友原句）；
+        # 自己的发言不会"失效"，所以 source=self 时跳过这个检查。
         stale = False
         samples_old = [x for x in (st.get("samples") or []) if str(x).strip()]
-        if samples_old:
+        if samples_old and str(st.get("source") or "") == "corpus":
             try:
                 alive = {str(r[0]) for r in store.conn.execute(
-                    "SELECT raw FROM expressions WHERE status='active' AND source!='seed'")}
+                    "SELECT raw FROM expressions WHERE status != 'rejected'")}
                 stale = any(x not in alive for x in samples_old)
             except Exception:
                 stale = False
-        elif st.get("doc"):
+        elif st.get("doc") and not samples_old:
             stale = True          # 有档案却没有样本 → 也重写
         if stale:
             print("[cmem] voice: 样本已失效，强制重写", flush=True)
@@ -1604,14 +1643,40 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
-        samples = self._voice_samples(12)
-        stats = self._voice_stats(samples)
+        # ---- 1.2.1：口音从「她自己说过的话」量出来 ----
+        lines = [str(x.get("text") or "").strip() for x in store.self_lines(120)]
+        lines = [t for t in lines if len(t) >= 2]
+        samples = self._self_voice_samples(12)
+        stats = self._voice_stats(lines) if len(lines) >= 8 else {}
         doc = ""
-        if samples and extractor is not None:
-            try:
-                doc = extractor.build_voice_doc(samples, stats)
-            except Exception:
-                doc = ""
+        source = "self"
+        if len(lines) >= 8:
+            if extractor is not None:
+                try:
+                    doc = extractor.build_voice_doc(samples or lines[:12], stats)
+                except Exception:
+                    doc = ""
+            if not doc:
+                doc = self._voice_doc_rule(stats, samples)
+        else:
+            # 样本还不够（刚装 / 刚清库）：先用参考语料顶一版，并明确标出来
+            source = "corpus"
+            refs = [str(r.get("raw") or "").strip() for r in store.expr_voice_samples(8)]
+            refs = [t for t in refs if t]
+            if refs:
+                ref_stats = self._voice_stats(refs)
+                if extractor is not None:
+                    try:
+                        doc = extractor.build_voice_doc(refs, ref_stats)
+                    except Exception:
+                        doc = ""
+                if not doc:
+                    doc = self._voice_doc_rule(ref_stats, refs)
+                if doc:
+                    doc = doc.rstrip() + (
+                        "（样本不足：她自己说过 %d 句，这条暂时是参考语料；"
+                        "满 8 句后会自动换成她自己的说法）" % len(lines)
+                    )
         # 兜底：模型有时把数字改写成"很短"这种形容词。
         # 只有档案里一个数字都没出现时，才补一句实测 —— 否则会跟正文重复（用户看到过）。
         if doc and stats:
@@ -1631,7 +1696,8 @@ class Handler(BaseHTTPRequestHandler):
                     doc = doc.rstrip() + "（实测：" + "；".join(bits) + "）"
 
         st = {"doc": doc, "builtAt": _t.time(), "samples": samples, "stats": stats,
-              "judged": judged, "promoted": promoted, "count": len(samples)}
+              "judged": judged, "promoted": promoted, "count": len(samples),
+              "source": source, "selfCount": len(lines)}
         try:
             os.makedirs(os.path.dirname(self._voice_path()), exist_ok=True)
             tmp = self._voice_path() + ".tmp"
@@ -1988,7 +2054,7 @@ class Handler(BaseHTTPRequestHandler):
             "他感兴趣会回你，不感兴趣也没关系——看视频本来就是你自己的事。"
         ),
         # ---- B 站刷视频（独立节奏，不跟唤醒绑）----
-        "biliBrowseEnabled": True,     # 允许她按自己的节奏刷 B 站
+        "biliBrowseEnabled": False,    # 默认关：开了才按自己的节奏刷 B 站（1.2.1）
         "biliMinGapMinutes": 60,       # 两次刷之间至少隔多久
         "biliMaxGapMinutes": 240,      # 两次刷之间最多隔多久
         "biliBrowseLimit": 3,          # 每次刷几条（存进"见闻"）
@@ -4747,9 +4813,50 @@ class Handler(BaseHTTPRequestHandler):
             )
         self._json(200, {"ok": True})
 
-    def _write_diary(self) -> None:
-        """写今天的日记：根据最近对话让 LLM 用第一人称写一段（100 字内）。"""
+    def _get_selfline(self) -> None:
+        """最近她自己说过的话（口音档案的样本，也给设置页看）。"""
+        qs = parse_qs(urlparse(self.path).query)
+        limit = qs.get("limit", ["40"])[0]
+        try:
+            limit_n = max(1, min(int(limit), 200))
+        except (TypeError, ValueError):
+            limit_n = 40
+        self._json(200, {
+            "ok": True,
+            "count30d": store.self_line_count(30),
+            "items": store.self_lines(limit_n),
+        })
+
+    def _post_selfline(self) -> None:
+        """插件每轮把她的回复送上来一句 —— 口音档案的唯一可靠来源。"""
         body = self._body()
+        text = str(body.get("text") or "").strip()
+        # 系统提示块、动作旁白不要
+        if not text or len(text) < 2 or text.startswith("["):
+            self._json(200, {"ok": True, "skipped": True})
+            return
+        sid = store.self_line_add(
+            text,
+            session=str(body.get("session") or ""),
+            scope=str(body.get("scope") or "global"),
+        )
+        self._json(200, {"ok": True, "id": sid})
+
+    def _write_diary(self) -> None:
+        """写今天的日记。
+
+        两种用法：
+          - 传 `text`：她自己写好了，直接存（推荐，工具 write_diary 走这条）
+          - 不传：按今天的记忆/活动让 LLM 生成一段
+        """
+        body = self._body()
+        raw = str(body.get("text") or "").strip()
+        date = str(body.get("date") or time.strftime("%Y-%m-%d"))
+        if raw:
+            with _lock:
+                data = store.diary_add(date, raw[:2000], str(body.get("mood") or ""))
+            self._json(200, {"ok": True, **data, "mode": "manual"})
+            return
         user_text = str(body.get("user_text") or "")
         assistant_text = str(body.get("assistant_text") or "")
         if not user_text:

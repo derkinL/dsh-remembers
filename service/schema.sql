@@ -148,6 +148,19 @@ CREATE TABLE IF NOT EXISTS diary (
 );
 
 -- ---------------------------------------------------------------------------
+-- 她自己的发言：口音档案的唯一可靠来源（1.2.1）
+-- 网友原句只能当「参考」，学进人格要靠她自己说过什么。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS self_line (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts         REAL NOT NULL DEFAULT 0,
+  text       TEXT NOT NULL,
+  session    TEXT NOT NULL DEFAULT '',
+  scope      TEXT NOT NULL DEFAULT 'global'
+);
+CREATE INDEX IF NOT EXISTS idx_self_line_ts ON self_line(ts);
+
+-- ---------------------------------------------------------------------------
 -- 活动日志：她真的做过什么（时间线）
 --   kind: chat / game / proactive / online / diary / other
 -- ---------------------------------------------------------------------------

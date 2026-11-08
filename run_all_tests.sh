@@ -48,7 +48,7 @@ run() {
 echo "================================================================"
 echo "服务端（Python: $PY）"
 echo "================================================================"
-for t in test_json_parse test_core test_gating test_transfer test_slang test_seeds; do
+for t in test_json_parse test_core test_gating test_transfer test_slang test_seeds test_selfline; do
   run "$t" "$LOG_DIR/$t.log" "$PY" "$ROOT/tests/python/$t.py"
 done
 

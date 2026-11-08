@@ -82,18 +82,55 @@
 15. **`install.sh --port 8081` 解析错**：`for arg in "$@"` 里 `shift` 不改变循环，`8081` 会被当成未知参数退出。改成 `while` 循环。
 16. **`slang` 死写路径**：删除 `recordSlang()`、调用点和 `_unusedSlang`；`/slang` 只保留读接口兼容历史数据。
 
-## 五、验证记录
+## 五、1.2.1：把「空转」的模块换掉（2026-11-08 晚）
+
+数据摆出来之后（详见文末「线上使用数据」），做了这些决定：
+
+| 模块 | 决定 | 做法 |
+|---|---|---|
+| 学说话 · 口音 | **换机制** | 口音不再等「网友原句转正」（线上 hits 全是 1、active=0、doc 空），改成从她自己说过的话（新表 `self_line`）统计句长/标点/语气词；满 8 句生成，3 天重写；没有 LLM 就用规则拼 |
+| 学说话 · 参考语料 | 保留 | 1020 条 + 抓来的原句，每轮 hints 挑 1–2 句；不再决定口音 |
+| 日记 | **修通** | 新增 `write_diary` 工具（`POST /diary` 支持直接存她写的正文）；原来只有 `read_diary`，提醒了也没笔 |
+| 表情包 | **保留前端** | 面板是给人用的，不动；文档里注明「重度使用建议配 dsh-meme」 |
+| 工具 | **加埋点** | 每个工具调用写 `~/.dsh/remembers-tool-trace.jsonl`（ts/tool/ok/ms），一周后按数据决定砍谁 |
+| 宪法区 | **撤掉** | 人格段不再渲染、界面不再提交；字段留着兼容老库（两套线上都是 0 字） |
+| B 站 / 贴吧 | **默认关** | `biliBrowseEnabled` 默认 false；贴吧本来就默认 false。要用自己在面板打开 |
+
+新增测试：`tests/python/test_selfline.py`（11 条）——self_line 写入/计数/排序、口音样本「学到的优先、语料兜底」。
+
+## 六、线上使用数据（2026-11-08，两套实例）
+
+| 模块 | 真实发生的事 | 结论 |
+|---|---|---|
+| 记忆检索 | 569 次检索，527 次有结果（92.6%） | 唯一被数据证明的核心 |
+| 分层记忆 | L0 327、L3 76、L4 17、L2 9、L1 0 | L1 只收具体数值，实际主力是 L0/L3 |
+| 人格 | identity 1022/1008 字，self_model 116/1107 字 | 真在用 |
+| 主动唤醒 | 407 次；B 站 85 次、见闻 319 条 | 真在用 |
+| 便签 | 122 条 | 模型愿意用 |
+| 表情包 | 图库 212 张；她发过 9 / 0 次 | 消费端几乎不用，管理端保留给人用 |
+| 学说话（hints） | 两套都能生成（embedding / LLM） | 机制在跑，效果无埋点可证 |
+| 学说话（口音） | 33 条候选全 hits=1，active=0，`/voice` doc 空 | 旧机制不可达 → 已在 1.2.1 换掉 |
+| 日记 | 主 2 篇 / 副 1 篇，停在 10-24 | 只有读工具、没有写工具 → 已补 |
+| 贴吧 | 登录着，5 条语料，无 tieba 活动 | 基本没逛 → 默认关 |
+| 宪法 | 两套都 0 字 | 已撤 |
+| tasks / slang | 5 / 18 行，无读方 | 死表，不再暴露 |
+
+## 七、验证记录
 
 ```
 node --check                      17 个 js/mjs 全过
-run_all_tests.ps1                 9 个套件全绿（6 python + 3 node）
-tests/node/test_client.mjs        49/49（含新增的 tieba / learn 页）
+run_all_tests.ps1                 10 个套件全绿（7 python + 3 node）
+tests/node/test_client.mjs        49/49（含 tieba / learn 页）
 tests/python/test_seeds.py        11/11（last_hit 数字 / 幂等 / 老库修复）
+tests/python/test_selfline.py     11/11（self_line + 口音样本优先级）
 npm pack --dry-run                60 files / 1.14MB，无 data、无 pycache、无测试
 服务端实跑（8098, 空库）          /health 200、seeds 导入 1020 条、
                                   /learn/stats 1020、/state /proactive /expressions
                                   /persona /memories /tieba/status /config /notes
                                   /diary 全部 200；POST /ingest → /search 命中
+口音新机制实跑（8094）            9 句 self_line → /voice/rebuild：
+                                  source=self、selfCount=9、中位 8 字、77% 句尾无标点
+                                  /diary 直接写正文 → 落库成功
 md 相对链接                       56 条，0 断链
 文本编码                          全仓 UTF-8，0 个坏文件
 ```
@@ -118,7 +155,7 @@ QQ 桥                              [dsh-onebot] OneBot connected（3 个会话�
 - **shell 语法没做 `bash -n`**：沙箱内 Git Bash 起不来（`couldn't create signal pipe`）。改动过的 `install.sh` / `deploy-remote.sh` 都在 VPS 上实跑过。
 - **安装脚本没在全新 Windows / 全新 VPS 上跑过**：只验证了它用到的组件（venv、pip、systemd、node --check）。
 
-## 六、没动的大件（结构性问题）
+## 八、没动的大件（结构性问题）
 
 | 大件 | 现状 | 为什么不动 |
 |---|---|---|
@@ -128,7 +165,7 @@ QQ 桥                              [dsh-onebot] OneBot connected（3 个会话�
 | 死接口 | 保留 | 删了怕旧前端/外部脚本 404；先在文档里点名 |
 | 插件列表没有启停开关 | VPS 上 `dsh-remembers` 只在 `dsh.profile.bundles`，不在 `dependencies` | 要在 VPS 上跑 `dsh plugin add file:<目录>`（VPS 没有 dsh CLI）；手工加 dependency 有加载风险，留作可选项 |
 
-## 七、下一步（按收益排序）
+## 九、下一步（按收益排序）
 
 1. 在 VPS 上把插件登记成 `file:` 依赖（装一个 dsh CLI），插件页就会出现开关和版本信息。
 2. `server.py` 按 `memory / persona / phrases / memes / bili / tieba / qq / admin` 拆 router（有测试兜底后再动）。

@@ -9,9 +9,8 @@
 | 身份卡（名字/自称/怎么叫 owner/脾气/说话方式/底线/自由发挥） | `persona.identity`（JSON） | 设置页「人格设定」 |
 | 她的形象 | `persona.self_image` | 设置页 |
 | 老大画像（**手编**那份） | `persona.user_profile` | 设置页 |
-| 宪法区 | `persona.constitution` | 只有设置页能写，AI 无入口 |
 | 自我认知 | `persona.self_model` | AI 通过 `persona_update`；可回滚 |
-| 口音档案 | `persona` 衍生（学说话模块生成） | 每 3 天自动重写 |
+| 口音档案 | `voice.json`（从她自己说过的话统计而来） | 每 3 天自动重写，可手动 |
 | 当前状态 | `state` 表（心情/亲密度/在干嘛） | 运行时累积 |
 
 渲染顺序（`renderPersona()` in `index.mjs`）：铁律 → 说话样子 → 我是谁 → 平常会做的事 → 口音 → 表情包/文字颜/emoji 频率 → 形象 → 主人画像 → 松紧度。
@@ -47,6 +46,6 @@ tests/node/test_client.mjs    # 人格页能渲染、有返回按钮
 
 ## 已知边界
 
-- **宪法区与身份卡都不给 AI 写**：`persona_update` 只打 `/persona/self`，服务端没有改宪法的参数。
+- **身份卡不给 AI 写**：`persona_update` 只打 `/persona/self`；身份/形象/主人画像只有设置页能动。\n- 宪法区（`persona.constitution`）1.2.1 起已从人格段和界面撤掉，字段留着只为兼容老库。
 - 两半都空 = 整段不注入（装完要先去设置页填，否则看起来像没生效）。
 - `cordis.patch.yml` 会往 profile 里插一个 id=`custom` 的 agent preset；如果你已有同名预设，先合并再装（见 [安装说明](../deploy/windows.md)）。

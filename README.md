@@ -24,8 +24,9 @@
 |---|---|---|
 | **分层记忆** | L0 原话 → L1 事实 → L2 画像 → L3 事件 → L4 里程碑；BM25 + 向量 + 时间衰减 + 诚实出口 | [memory](docs/features/memory.md) |
 | **人格注入** | 身份卡 / 形象 / 主人画像 / 铁律 / 口音，走 systemPrompt 独立段，每轮必带 | [persona](docs/features/persona.md) |
-| **学说话 / 语料库** | 内置 1020 条默认语料（分类/场景/意思/用法/能否收尾）+ 从聊天和评论区学来的原句；每 3 天转正一次，归纳成 200 字口音 | [phrases](docs/features/phrases.md) |
+| **学说话** | 参考语料（1020 条默认 + 抓来的原句，每轮挑 1–2 句贴现场）+ 口音档案（从**她自己说过的话**统计，每 3 天写进人格） | [phrases](docs/features/phrases.md) |
 | **表情包** | 按情绪/关键词找图、学图、多图库、发送频率（0 / 20% / 50% / 100%） | [memes](docs/features/memes.md) |
+| **日记** | 23:00 提醒她写；`write_diary` 她自己写、`read_diary` 翻旧账 | [persona](docs/features/persona.md) |
 | **主动消息** | 内置调度：唤醒 / 刷 B 站 / 逛贴吧 / 写日记 / 自我认知，不依赖 cron | [proactive](docs/features/proactive.md) |
 | **贴吧** | 逛吧、读帖、楼中楼、回帖；回帖时给几句「那个吧的人这么说的」当参考 | [tieba](docs/features/tieba.md) |
 | **B 站** | 刷视频、看视频（字幕 + 九宫格帧）、发评论 | [bili](docs/features/bili.md) |
@@ -127,8 +128,8 @@ dsh-remembers/
 | 记忆抽取 / 日记 / 转正 | LLM key |
 | 语义召回 | embedding（不配就 BM25） |
 | 主动开口 | QQ 通道（`dsh-onebot-qq` + NapCat） |
-| 贴吧 | Node + 贴吧 Cookie（回帖默认关） |
-| B 站 | 外部 `bili-cli`，用 `CMEM_BILI_DIR` / `CMEM_NODE_BIN` 指过去 |
+| 贴吧（默认关） | Node + 贴吧 Cookie；开了才会逛，回帖另算 |
+| B 站（默认关） | 外部 `bili-cli`，用 `CMEM_BILI_DIR` / `CMEM_NODE_BIN` 指过去；开了才刷 |
 
 完整矩阵：[compatibility](docs/compatibility.md)。
 
@@ -144,9 +145,9 @@ bash run_all_tests.sh        # 或 Windows: .\run_all_tests.ps1
 
 完整清单在 [体检报告](docs/audit.md)，最值得知道的三条：
 
-1. **B 站/QQ 绑作者环境**：路径写死，别人装完用不了（不影响其他功能）。
+1. **B 站/贴吧默认关闭**：要开了才动；B 站还要外部 `bili-cli`（路径现在可用环境变量指定）。
 2. **没有 QQ 通道时主动唤醒只写日志**，不会真的发消息。
-3. **`slang` 表是上一代机制**：仍在写，但没有注入读它（统一走 `expressions`）。
+3. **`slang` 表是上一代机制**：已停写，只留读接口兼容老数据。
 
 ## 许可
 

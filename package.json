@@ -1,6 +1,6 @@
 {
   "name": "dsh-remembers",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "情感陪伴向的 DSH 记忆插件：分层记忆 + 人格注入 + 学说话语料库，附「她的记忆」面板（记忆/人格/表情包/主动消息/B站/贴吧/QQ/学说话/服务）。后端是独立的 Python 服务（SQLite）。",
   "type": "module",
   "main": "index.mjs",

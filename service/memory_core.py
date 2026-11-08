@@ -1142,6 +1142,40 @@ class MemoryStore:
         return cached
 
 
+    # -- 她自己的发言：口音档案的来源（1.2.1）--------------------------------
+
+    def self_line_add(self, text: str, session: str = "", scope: str = "global") -> int:
+        """记一句她自己说过的话（turn end 时由插件上报）。
+
+        为什么单开一张表：口音要从**她自己的输出**里量，而不是从网友原句里"学"。
+        网友原句只当参考（expressions），学进人格的是她的句长/标点/语气词。
+        """
+        t = str(text or "").strip()
+        if len(t) < 2:
+            return 0
+        cur = self.conn.execute(
+            "INSERT INTO self_line(ts, text, session, scope) VALUES (?,?,?,?)",
+            (time.time(), t[:800], str(session or "")[:120], str(scope or "global")[:60]),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid or 0)
+
+    def self_lines(self, limit: int = 80, days: int = 30) -> list[dict]:
+        cutoff = time.time() - max(1, int(days)) * 86400
+        rows = self.conn.execute(
+            "SELECT id, ts, text FROM self_line WHERE ts >= ? ORDER BY ts DESC LIMIT ?",
+            (cutoff, max(1, min(int(limit), 500))),
+        ).fetchall()
+        return [{"id": int(r["id"]), "ts": float(r["ts"]), "text": str(r["text"])} for r in rows]
+
+    def self_line_count(self, days: int = 30) -> int:
+        cutoff = time.time() - max(1, int(days)) * 86400
+        try:
+            return int(self.conn.execute(
+                "SELECT COUNT(*) FROM self_line WHERE ts >= ?", (cutoff,)).fetchone()[0])
+        except Exception:
+            return 0
+
     # -- 日记本：每天一篇 ------------------------------------------------------
 
     def diary_add(self, date: str, text: str, mood: str = "") -> dict:
@@ -1821,6 +1855,55 @@ class MemoryStore:
                 (max(1, int(limit)),))]
         except Exception:
             return []
+
+    def expr_voice_samples(self, limit: int = 12) -> list[dict]:
+        """口音样本：**不再要求先转正**。
+
+        1.2.1 起：她学到的（status != rejected）排在前面，不够就用默认语料补。
+        原因：转正要求 hits>=3，而抽取每次都是新原句（hits 恒为 1），
+        active 永远是 0 → 口音档案永远为空（线上实测 doc=""）。
+        默认语料也是用户自己选的，按「用过 + 赞数」挑最像她会说的那几句。
+        """
+        limit = max(1, int(limit))
+        out: list[dict] = []
+        seen: set[str] = set()
+        try:
+            learned = self.conn.execute(
+                "SELECT id, raw, style, source, hits, likes, last_hit, scene, meaning "
+                "FROM expressions WHERE status != 'rejected' AND source != 'seed' "
+                "ORDER BY hits DESC, likes DESC, last_hit DESC, id DESC LIMIT ?",
+                (limit * 3,),
+            ).fetchall()
+            for r in learned:
+                t = str(r["raw"] or r["style"] or "").strip()
+                if not t or t in seen:
+                    continue
+                seen.add(t)
+                out.append({"raw": t, "source": r["source"], "scene": r["scene"] or "",
+                            "hits": int(r["hits"] or 1), "likes": int(r["likes"] or 0)})
+                if len(out) >= limit:
+                    return out
+        except Exception:
+            pass
+        try:
+            seeds = self.conn.execute(
+                "SELECT raw, likes, last_hit FROM expressions "
+                "WHERE source='seed' AND status != 'rejected' AND raw != '' "
+                "ORDER BY (last_hit > 0) DESC, likes DESC LIMIT ?",
+                (limit * 4,),
+            ).fetchall()
+            for r in seeds:
+                if len(out) >= limit:
+                    break
+                t = str(r["raw"] or "").strip()
+                if not t or t in seen:
+                    continue
+                seen.add(t)
+                out.append({"raw": t, "source": "seed", "scene": "",
+                            "hits": 1, "likes": int(r["likes"] or 0)})
+        except Exception:
+            pass
+        return out
 
     def expr_delete(self, eid: int) -> int:
         cur = self.conn.execute("DELETE FROM expressions WHERE id=?", (int(eid),))

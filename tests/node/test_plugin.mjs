@@ -99,6 +99,7 @@ const EXPECT_TOOLS = [
   "tieba_sub",
   "tieba_whoami",
   "tone_fix",
+  "write_diary",
   "write_note",
 ];
 
