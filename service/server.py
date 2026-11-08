@@ -194,6 +194,36 @@ def _init() -> None:
     except Exception:
         pass
 
+    # 贴吧动作迁移（2026-11-08）：动作池里没有贴吧 → 她根本不会想起逛（实测 0 次调用）。
+    # 贴吧开着、池子里又没提到贴吧，就补一条；补过之后池子里有"贴吧"两字，不会再补。
+    try:
+        _tcfg = {}
+        try:
+            _tcfg = _tieba_cfg()
+        except Exception:
+            _tcfg = {}
+        if _tcfg.get("enabled"):
+            import json as _json
+            _pfile = os.path.join(DATA_DIR, "proactive.json")
+            _raw = {}
+            if os.path.exists(_pfile):
+                with open(_pfile, encoding="utf-8") as _f:
+                    _raw = _json.load(_f) or {}
+            _acts = _raw.get("silentActions")
+            if _acts is None:
+                _acts = list(Handler.PROACTIVE_DEFAULTS.get("silentActions") or [])
+            _has = any("贴吧" in (a if isinstance(a, str) else str((a or {}).get("text") or "")) for a in _acts)
+            if not _has:
+                _bars = [b for b in (_tcfg.get("bars") or []) if b][:3]
+                _where = ("（" + "、".join(_bars) + "）") if _bars else ""
+                _acts.append("上贴吧逛逛" + _where + "，翻翻首页，看到好玩的点进去看看")
+                _raw["silentActions"] = _acts
+                with open(_pfile, "w", encoding="utf-8") as _f:
+                    _json.dump(_raw, _f, ensure_ascii=False, indent=2)
+                print("[cmem] tieba action added to silentActions", flush=True)
+    except Exception as _e:
+        print(f"[cmem] tieba action migrate skipped: {_e}", flush=True)
+
     # 启动时导入内置语料库（dsh-fish-tone-flavor, MIT）：默认就有一千条可用
     try:
         _seeds_path = os.path.join(DATA_DIR, "seeds.json")
@@ -1612,6 +1642,7 @@ class Handler(BaseHTTPRequestHandler):
             "写点什么（记一句今天的事，或者记个想法）",
             "想发条说说，写两句现在的心情、今天想干什么（qq_napcat_api: send_qzone_msg）",
             "缩着打个盹，什么都不管",
+            "上贴吧逛逛（猫吧、图灵完备这些常逛的），翻翻首页，看到好玩的点进去看看",
         ],
         # 她可以主动找你做的事
         "talkActions": [
