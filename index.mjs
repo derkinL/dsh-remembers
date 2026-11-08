@@ -1273,6 +1273,7 @@ function trackMemeSends(message) {
         name: "bili_comment",
         description:
           "在一条 B 站视频下面评论一句。只给 BV 号和你想说的话就行，aid 服务端自己查。"
+          + "**发之前先用 find_phrases(q=视频/弹幕里那个话题) 查 2 句参考**，别用套话。"
           + "用你自己的语气写，短一点，别像客服。"
           + "有想说的就留一句（弹幕戳到你了、看完有不同意见、想吐槽标题党都算），"
           + "一天一两条很正常；真没话说就不评，别硬凑。"
@@ -1518,24 +1519,45 @@ function trackMemeSends(message) {
       registerTool(defineTool({
         name: "find_phrases",
         description:
-          "查「学来的说法」。我的口音库里存着从聊天/评论区攒下来的原句，只有反复出现过（≥3 次）的才会入库。"
-          + "想知道某种场合别人一般怎么说，就按分类或场景查几句当参考："
-          + "tag 是分类（接梗 / 吐槽 / 自嘲 / 阴阳 / 共鸣 / 反问 / 抖机灵 / 客套），"
-          + "q 是场景描述（比如「加班到半夜」「被夸了」）。"
-          + "查到的是别人的原话，学那股味道就行，别照抄。",
+          "查语料库：1020 条默认语料 + 她从聊天/评论区学来的原句（含分类、场景、意思、能不能收尾）。"
+          + "**回帖、发 B 站评论、接梗之前先用它查 2~3 句**，别凭记忆编。"
+          + "tag 是分类（搞笑 / 可爱 / 抽象 / 燃 / 阴阳 / 破防 / 治愈 / 复古 / 职场 / 摸鱼），"
+          + "q 是场景词（比如「加班到半夜」「被夸了」「开完会」）。拿不准分类就只传 q。"
+          + "返回的是别人的原话，学那股味道，别照抄，也别把某一句当口头禅反复用。",
         parameters: {
-          tag: { type: "string", description: "分类：接梗/吐槽/自嘲/阴阳/共鸣/反问/抖机灵/客套" },
-          q: { type: "string", description: "场景关键词，比如 加班 / 被夸 / 下雪 / 吃泡面" },
-          n: { type: "number", description: "要几条，默认 4" },
+          tag: { type: "string", description: "分类：搞笑/可爱/抽象/燃/阴阳/破防/治愈/复古/职场/摸鱼（可选）" },
+          q: { type: "string", description: "场景关键词：加班 / 被夸 / 下雪 / 吃泡面 / 开完会（可选）" },
+          n: { type: "number", description: "要几条，默认 4（最多 10）" },
         },
         output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
         execute: async (args) => {
-          const p = new URLSearchParams();
-          if (args.tag) p.set("tag", String(args.tag));
-          if (args.q) p.set("q", String(args.q));
-          if (args.n) p.set("n", String(Number(args.n) || 4));
-          const res = await fetch(config.endpoint + "/phrases?" + p.toString(), { signal: AbortSignal.timeout(8000) });
-          return res.json().catch(() => ({ ok: false }));
+          const want = String(Number(args.n) || 4);
+          const ask = async (tag, q) => {
+            const p = new URLSearchParams();
+            if (tag) p.set("tag", String(tag));
+            if (q) p.set("q", String(q));
+            p.set("n", want);
+            const res = await fetch(config.endpoint + "/phrases?" + p.toString(), {
+              signal: AbortSignal.timeout(8000),
+            });
+            return res.json().catch(() => ({ ok: false, items: [] }));
+          };
+          // 1.2.2：分类名对不上就拿不到东西（实测 tag=接梗 返回空，因为真实分类是搞笑/阴阳/…）。
+          // 空结果自动降级：tag+q → 只用 q → 只用 tag，并告诉模型降级过。
+          const tag = String(args.tag || "").trim();
+          const q = String(args.q || "").trim();
+          let out = await ask(tag, q);
+          let mode = "tag+q";
+          if ((!out || !(out.items || []).length) && q) {
+            out = await ask("", q);
+            mode = "q-only";
+          }
+          if ((!out || !(out.items || []).length) && tag) {
+            out = await ask(tag, "");
+            mode = "tag-only";
+          }
+          if (mode !== "tag+q") out = { ...out, fallback: mode };
+          return out;
         },
       }));
 
@@ -1584,6 +1606,7 @@ function trackMemeSends(message) {
         name: "tieba_read",
         description:
           "读一个帖子：返回标题、楼层正文、热门楼层和图片链接。tid 是 tieba_browse 给的帖子号。"
+          + "要回帖的话，回之前再用 find_phrases(q=帖子话题) 查 2~3 句参考。"
           + "楼层多的时候只返回前 maxFloors 层（默认 40）。"
           + "返回里的 styleRefs 是跟这个帖子话题沾边的几条「说话方式」，想回帖时照着那个味道说，"
           + "别照抄。",
@@ -1621,7 +1644,7 @@ function trackMemeSends(message) {
         name: "tieba_reply",
         description:
           "在贴吧回一条帖子。先说人话：短、具体、有你自己的看法，别写「帮顶」「支持」这种水帖，"
-          + "（读过这个帖的话，参考 tieba_read 返回的 styleRefs —— 学那个口气，别照抄）"
+          + "（回之前先 find_phrases(q=帖子话题) 或看 tieba_read 的 styleRefs —— 学那个口气，别照抄）"
           + "也别拿客服腔。回过一次就别在同一个帖里刷；不碰政治、地域、人身攻击。"
           + "内容 4~400 字，纯文本（不支持图片和链接）。",
         parameters: {
@@ -2108,8 +2131,8 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
         identityLines.push("我平时会这么说（学味道，别照抄）：");
         for (const v of voice) identityLines.push("· 「" + v + "」");
       }
-      identityLines.push("想找「这种场合别人怎么说的」，用 find_phrases 按分类或场景查几句来参考；"
-        + "语料库里还有一千多条大家常用的梗和说法。学味道，别照抄，也别把某一句当口头禅反复用。");
+      identityLines.push("回帖、发 B 站评论、接梗之前，先用 find_phrases 查 2~3 句（分类拿不准就传场景 q）；"
+        + "语料库有一千多条默认语料 + 我自己学来的说法。学味道，别照抄，也别把某一句当口头禅反复用。");
     }
   }
 

@@ -60,6 +60,7 @@ run "test_plugin" "$LOG_DIR/test_plugin.log" "$NODE" "$ROOT/tests/node/test_plug
 run "test_client" "$LOG_DIR/test_client.log" "$NODE" "$ROOT/tests/node/test_client.mjs"
 run "tone.test" "$LOG_DIR/tone.log" "$NODE" "$ROOT/tests/node/tone.test.mjs"
 run "test_meme_usage" "$LOG_DIR/test_meme_usage.log" "$NODE" "$ROOT/tests/node/test_meme_usage.mjs"
+run "test_find_phrases" "$LOG_DIR/test_find_phrases.log" "$NODE" "$ROOT/tests/node/test_find_phrases.mjs"
 
 echo
 echo "================================================================"

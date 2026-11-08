@@ -52,7 +52,7 @@ Write-Host ""
 Write-Host "================================================================"
 Write-Host "插件（Node: $(& node -v)）"
 Write-Host "================================================================"
-foreach ($t in @("test_plugin", "test_client", "tone.test", "test_meme_usage")) {
+foreach ($t in @("test_plugin", "test_client", "tone.test", "test_meme_usage", "test_find_phrases")) {
   Invoke-Suite $t $t "node" (Join-Path $Root "tests\node\$t.mjs")
 }
 
