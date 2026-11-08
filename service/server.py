@@ -1504,11 +1504,16 @@ class Handler(BaseHTTPRequestHandler):
                 break
         return out[:limit]
 
-    def _voice_doc_rule(self, stats: dict, samples: list[str]) -> str:
-        """没配 LLM 时的口音档案：直接拿统计拼一段，不编形容词。"""
+    def _voice_doc_rule(self, stats: dict, samples: list[str], first_person: bool = True) -> str:
+        """没配 LLM（或样本不足）时的口音档案：直接拿统计拼一段，不编形容词。
+
+        first_person=False 用于「参考语料垫档」：不能写成「我说话中位 3 字」，
+        那是网友的句子，不是她的口音。
+        """
+        me = "我" if first_person else "参考句子"
         bits: list[str] = []
         if stats.get("median_len"):
-            bits.append("我说话中位 %s 字" % stats["median_len"])
+            bits.append("%s中位 %s 字" % (me, stats["median_len"]))
         if stats.get("short_rate") is not None:
             bits.append("%d%% 的句子不到 8 字" % int(stats["short_rate"] * 100))
         if stats.get("no_punct_rate") is not None:
@@ -1519,7 +1524,7 @@ class Handler(BaseHTTPRequestHandler):
             bits.append("常带" + "、".join(stats["particles"]))
         head = "；".join(bits)
         if samples:
-            head += ("。" if head else "") + "最近说过：" + " / ".join(
+            head += ("。" if head else "") + ("我最近说过：" if first_person else "参考例子：") + " / ".join(
                 "「" + s[:20] + "」" for s in samples[:3])
         return (head + "。") if head else ""
 
@@ -1659,24 +1664,17 @@ class Handler(BaseHTTPRequestHandler):
             if not doc:
                 doc = self._voice_doc_rule(stats, samples)
         else:
-            # 样本还不够（刚装 / 刚清库）：先用参考语料顶一版，并明确标出来
+            # 样本还不够（刚装 / 刚清库）：用参考语料垫一版，但**不写成第一人称**。
+            # 「我说话中位 3 字」如果来自 233/笑死 这批梗，是假的自我描述。
             source = "corpus"
             refs = [str(r.get("raw") or "").strip() for r in store.expr_voice_samples(8)]
             refs = [t for t in refs if t]
             if refs:
                 ref_stats = self._voice_stats(refs)
-                if extractor is not None:
-                    try:
-                        doc = extractor.build_voice_doc(refs, ref_stats)
-                    except Exception:
-                        doc = ""
-                if not doc:
-                    doc = self._voice_doc_rule(ref_stats, refs)
+                doc = self._voice_doc_rule(ref_stats, refs, first_person=False)
                 if doc:
-                    doc = doc.rstrip() + (
-                        "（样本不足：她自己说过 %d 句，这条暂时是参考语料；"
-                        "满 8 句后会自动换成她自己的说法）" % len(lines)
-                    )
+                    doc = ("（参考语料，还不是她自己的口音）" + doc
+                           + "她自己说过 %d 句，满 8 句后自动换成她自己的说法。" % len(lines))
         # 兜底：模型有时把数字改写成"很短"这种形容词。
         # 只有档案里一个数字都没出现时，才补一句实测 —— 否则会跟正文重复（用户看到过）。
         if doc and stats:
