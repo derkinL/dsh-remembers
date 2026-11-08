@@ -920,8 +920,7 @@ class Handler(BaseHTTPRequestHandler):
 · 不确定就说不确定：好像 / 应该 / 感觉 / 可能 / 估计 —— 你平时用得多，别省。
 · 该夸张就夸张：根本 / 简直 / 特别 / 贼 / 巨 —— 真人比 AI 多一个量级。
 · 不必把话说完：该停就停，不用每句都收尾、都下结论。
-
-（语气词和口癖的配额在「去 AI 味」那段里管，这里不重复。）"""
+"""
 
     def _tightness_path(self) -> str:
         return os.path.join(DATA_DIR, "tightness.txt")

@@ -4744,19 +4744,23 @@ const [data, setData] = React.useState(null);
               "只编辑「学什么」这段。输出格式和结构规则是公共的，自动拼在后面。"),
             editor("public", "学网友（B 站热评 / 贴吧）",
               "只编辑「学什么」这段。B 站和贴吧共用，默认保留了评论区的阴阳怪气。"),
+            // 三块合成一张卡：说话方式 / 去 AI 味 / 说话的松紧 —— 都是「怎么说话」，一起保存
             h("div", { style: S.card },
-              h("div", { style: S.label }, "说话方式（进人格）"),
+              h("div", { style: S.label }, "怎么说话（进人格）"),
               h("div", { style: { ...S.muted, fontSize: 11, lineHeight: 1.6, marginBottom: 6 } },
-                "这段会原样进她的系统提示词，管的是「怎么说」：长度、只发对话、能不能用文字颜。"),
+                "这三段会一起进她的系统提示词：怎么发（长度/只发对话）、人味瑕疵、以及密度配额。"),
+
+              h("div", { style: { ...S.muted, fontSize: 12, marginTop: 4 } }, "① 说话方式"),
               h("textarea", {
-                style: { ...S.input, minHeight: 80, resize: "vertical", fontFamily: "inherit", fontSize: 12.5, lineHeight: 1.7 },
+                style: { ...S.input, minHeight: 76, marginTop: 4, resize: "vertical", fontFamily: "inherit", fontSize: 12.5, lineHeight: 1.7 },
                 value: styleForm.speaking,
                 placeholder: "例：像发微信，最多 3 句、80 字以内，只发对话，有情绪起伏。",
                 onChange: (ev) => setStyleForm({ ...styleForm, speaking: ev.target.value }),
               }),
+
               h("label", {
                 style: {
-                  display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginTop: 10,
+                  display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginTop: 12,
                   padding: "10px 12px", borderRadius: 10,
                   border: "1.5px solid " + (styleForm.ai_flavor_on ? "#4084ff" : "rgba(0,0,0,.10)"),
                   background: styleForm.ai_flavor_on ? "rgba(64,132,255,.04)" : "#fff",
@@ -4768,7 +4772,7 @@ const [data, setData] = React.useState(null);
                   onChange: (ev) => setStyleForm({ ...styleForm, ai_flavor_on: ev.target.checked }),
                 }),
                 h("div", { style: { display: "flex", flexDirection: "column", gap: 3 } },
-                  h("span", { style: { fontSize: 13, fontWeight: 600 } }, "去 AI 味"),
+                  h("span", { style: { fontSize: 13, fontWeight: 600 } }, "② 去 AI 味"),
                   h("span", { style: { ...S.muted, fontSize: 11 } }, "人味瑕疵：错字、省略、跑题、口癖、网络标点"),
                 ),
               ),
@@ -4783,7 +4787,17 @@ const [data, setData] = React.useState(null);
                 disabled: !styleForm.ai_flavor_on,
                 onChange: (ev) => setStyleForm({ ...styleForm, ai_flavor: ev.target.value }),
               }),
-              h("div", { style: { display: "flex", gap: 8, marginTop: 8 } },
+
+              h("div", { style: { ...S.muted, fontSize: 12, marginTop: 12 } },
+                "③ 说话的松紧（密度配额 + 微标记）　清空 = 这一段不注入"),
+              h("textarea", {
+                style: { ...S.input, minHeight: 130, marginTop: 4, resize: "vertical", fontFamily: "inherit", fontSize: 12.5, lineHeight: 1.7 },
+                value: tightText,
+                onChange: (ev) => setTightText(ev.target.value),
+                placeholder: "留空 = 不加这一段",
+              }),
+
+              h("div", { style: { display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" } },
                 h("button", {
                   style: S.btn(true),
                   disabled: busy,
@@ -4791,35 +4805,8 @@ const [data, setData] = React.useState(null);
                     setBusy(true); setMsg(null);
                     try {
                       await call("/persona/style", { method: "POST", body: JSON.stringify(styleForm) });
+                      await call("/tightness", { method: "POST", body: JSON.stringify({ text: tightText }) });
                       setMsg("说话方式已保存");
-                    } catch (e) {
-                      setMsg("保存失败：" + String((e && e.message) || e));
-                    } finally { setBusy(false); }
-                  },
-                }, "保存"),
-              ),
-            ),
-            h("div", { style: S.card },
-              h("div", { style: S.label }, "说话的松紧（密度配额 + 微标记）"),
-              h("div", { style: { ...S.muted, fontSize: 11, lineHeight: 1.6, marginBottom: 6 } },
-                "这一段会原样进她的系统提示词。它管的是「像人」：书面腔按 200 字配额压、"
-                + "补 AI 欠用的词（好像/应该/感觉）、句尾允许多一个尾巴。清空 = 关掉这一段。"),
-              h("textarea", {
-                style: { ...S.input, minHeight: 170, resize: "vertical", fontFamily: "inherit", fontSize: 12.5, lineHeight: 1.7 },
-                value: tightText,
-                onChange: (ev) => setTightText(ev.target.value),
-                placeholder: "留空 = 不加这一段",
-              }),
-              h("div", { style: { display: "flex", gap: 8, marginTop: 8 } },
-                h("button", {
-                  style: S.btn(true),
-                  disabled: busy,
-                  onClick: async () => {
-                    setBusy(true); setMsg(null);
-                    try {
-                      const r = await call("/tightness", { method: "POST", body: JSON.stringify({ text: tightText }) });
-                      setTightText((r && r.text) || "");
-                      setMsg((r && r.text) ? "松紧已保存" : "已关掉（不注入）");
                     } catch (e) {
                       setMsg("保存失败：" + String((e && e.message) || e));
                     } finally { setBusy(false); }
@@ -4833,12 +4820,12 @@ const [data, setData] = React.useState(null);
                     try {
                       const r = await call("/tightness", { method: "POST", body: JSON.stringify({ restore: true }) });
                       setTightText((r && r.text) || "");
-                      setMsg("已恢复默认");
+                      setMsg("松紧一段已恢复默认");
                     } catch (e) {
                       setMsg("恢复失败：" + String((e && e.message) || e));
                     } finally { setBusy(false); }
                   },
-                }, "恢复默认"),
+                }, "恢复松紧默认"),
               ),
             ),
           ),
