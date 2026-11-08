@@ -312,3 +312,40 @@ const SENTENCE_SPLIT_GAP_MAX_MS = 1500;
 ```
 
 原来两套实例分别是 1000-1500 / 800-1600，统一成固定 1.5 秒。
+
+### 3. 不许自动开新会话（只有用户发 `/new` 才允许）
+
+**问题**：主套 QQ 私聊每隔几天就分裂出一个新会话窗口。owner 的 `onebot-private-3169341724`
+带后缀的会话一度攒到 15 个。
+
+**根因**（`lib/registry.js` 的 `createChat`）：
+
+1. 规范 id `onebot-private-<QQ>` 一旦进了 `retired-sessions.json`（永久黑名单），
+   每次拿不到映射就 `freshSessionId()` → `onebot-private-<QQ>-<36进制时间戳>` → 新窗口；
+2. 重启瞬间旧进程还攥着写句柄，`resumeChat` 抛 `already owned by an active write handle`，
+   旧代码直接 `retireSession()` + 换新 id → 又开一个；
+3. `agents.create` 撞日志冲突时同样兜底换新 id。
+
+**修法**：引入 `freshRequested` 标记，**只有 `resetChat()`（用户发 `/new`）会打这个标记**。
+
+| 分支 | 旧行为 | 现在 |
+|---|---|---|
+| 规范 id 在黑名单 | 换带后缀的新 id | 就地解禁，继续用同一个 id |
+| resume 失败（句柄被占） | 退役 + 换新 id | 等 1.5 秒重试，最多 3 次；仍失败也不换 id |
+| `agents.create` 失败 | 换新 id 重试 | 直接抛错（不悄悄开新窗口） |
+| 被驱逐会话 resume 失败 | 退役 | 保留，按同一 id 继续 |
+| `/new` 之后 | 新 id | 新 id（不变） |
+
+```js
+const wantFresh = this.freshRequested.has(chatId);
+this.freshRequested.delete(chatId);
+if (this.isSessionIdBlocked(sessionId) && !wantFresh) {
+    this.brokenSessions.delete(sessionId);
+    this.retiredSessionIds.delete(sessionId);
+    void this.saveRetired();
+}
+if (wantFresh) sessionId = this.freshSessionId(chatId);
+```
+
+> 备份：`lib/registry.js.bak-nonew`。验证：重启 `dsh-web` 后 owner 会话目录仍只有一条，
+> 没有新建 `onebot-private-3169341724-*`。
