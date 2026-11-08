@@ -4579,7 +4579,39 @@ const [data, setData] = React.useState(null);
         const [cQ, setCQ] = React.useState("");
         const [cTotal, setCTotal] = React.useState(0);
         const [cPage, setCPage] = React.useState(0);
+        const [cEdit, setCEdit] = React.useState(null);   // null | {id?, raw, tag, scene, meaning, usage, tail}
         const C_PAGE = 24;
+        const saveCorpusItem = async () => {
+          if (!cEdit || !String(cEdit.raw || "").trim()) { setMsg("原句不能为空"); return; }
+          setBusy(true); setMsg(null);
+          try {
+            await call("/expressions", {
+              method: "POST",
+              body: JSON.stringify({
+                op: "save",
+                id: cEdit.id || 0,
+                raw: cEdit.raw, tag: cEdit.tag, scene: cEdit.scene,
+                meaning: cEdit.meaning, usage: cEdit.usage, tail: !!cEdit.tail,
+              }),
+            });
+            setCEdit(null);
+            setMsg("已保存");
+            await loadCorpus(cTag, cQ, cPage);
+          } catch (e) {
+            setMsg("保存失败：" + String((e && e.message) || e));
+          } finally { setBusy(false); }
+        };
+        const deleteCorpusItem = async (it) => {
+          if (!window.confirm("删掉「" + it.raw + "」？")) return;
+          setBusy(true); setMsg(null);
+          try {
+            await call("/expressions", { method: "POST", body: JSON.stringify({ op: "delete", id: it.id }) });
+            setMsg("已删除");
+            await loadCorpus(cTag, cQ, cPage);
+          } catch (e) {
+            setMsg("删除失败：" + String((e && e.message) || e));
+          } finally { setBusy(false); }
+        };
         const loadCorpus = async (tag, q, page) => {
           try {
             const t = await call("/phrases/tags");
@@ -4712,6 +4744,11 @@ const [data, setData] = React.useState(null);
               h("div", { style: { fontSize: 15, fontWeight: 700 } }, "语料库"),
               h("span", { style: { ...S.muted, fontSize: 12 } },
                 `共 ${cTotal} 条 · 默认语料 1020 条 + 学到的`),
+              h("div", { style: { flex: 1 } }),
+              h("button", {
+                style: { ...S.btn(true), flexShrink: 0 },
+                onClick: () => setCEdit({ raw: "", tag: cTag === "全部" ? "" : cTag, scene: "", meaning: "", usage: "", tail: false }),
+              }, "+ 新增一条"),
             ),
             h("div", { style: S.card, marginBottom: 14 },
               h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 } },
@@ -4759,11 +4796,75 @@ const [data, setData] = React.useState(null);
                     h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginTop: "auto", flexWrap: "wrap" } },
                       h("span", { style: { fontSize: 10.5, padding: "1px 7px", borderRadius: 999, background: "rgba(0,0,0,.05)", color: "#555" } }, it.tag || "未分类"),
                       h("span", { style: { fontSize: 10.5, color: it.source === "seed" ? "#4084ff" : "#f0803c" } },
-                        it.source === "seed" ? "默认语料" : "学到的"),
+                        it.source === "seed" ? "默认语料" : (it.source === "manual" ? "手动加的" : "学到的")),
                       it.likes ? h("span", { style: { ...S.muted, fontSize: 10.5 } }, "频次 " + it.likes) : null,
+                      h("div", { style: { flex: 1 } }),
+                      h("button", {
+                        style: { ...S.btn(false), fontSize: 11, padding: "2px 8px" },
+                        onClick: () => setCEdit({
+                          id: it.id, raw: it.raw, tag: it.tag || "", scene: it.scene || "",
+                          meaning: it.meaning || "", usage: it.usage || "", tail: !!it.tail,
+                        }),
+                      }, "改"),
+                      h("button", {
+                        style: { ...S.btn(false), fontSize: 11, padding: "2px 8px" },
+                        onClick: () => void deleteCorpusItem(it),
+                      }, "删"),
                     ),
                   ))),
             pager(),
+
+            // ===== 新增 / 编辑弹窗 =====
+            cEdit ? h("div", {
+              style: {
+                position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", zIndex: 60,
+                display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
+              },
+              onClick: (ev) => { if (ev.target === ev.currentTarget) setCEdit(null); },
+            },
+              h("div", {
+                style: {
+                  background: "#fff", borderRadius: 14, padding: 20, width: "100%", maxWidth: 520,
+                  display: "flex", flexDirection: "column", gap: 10, maxHeight: "86vh", overflowY: "auto",
+                },
+              },
+                h("div", { style: { fontSize: 15, fontWeight: 700 } }, cEdit.id ? "改这一条" : "新增一条"),
+                (() => {
+                  const field = (label, key, placeholder, area) => h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+                    h("span", { style: { ...S.muted, fontSize: 12 } }, label),
+                    area
+                      ? h("textarea", {
+                          style: { ...S.input, minHeight: 56, resize: "vertical", fontFamily: "inherit", fontSize: 13 },
+                          value: cEdit[key] || "", placeholder,
+                          onChange: (ev) => setCEdit({ ...cEdit, [key]: ev.target.value }),
+                        })
+                      : h("input", {
+                          style: S.input,
+                          value: cEdit[key] || "", placeholder,
+                          onChange: (ev) => setCEdit({ ...cEdit, [key]: ev.target.value }),
+                        }),
+                  );
+                  return h("div", { style: { display: "flex", flexDirection: "column", gap: 10 } },
+                    field("原句 / 梗", "raw", "例：前排，凉了", false),
+                    field("分类", "tag", "例：接梗 / 吐槽 / 破防 / 搞笑", false),
+                    field("场景", "scene", "例：群友拉人 / 加班 / 被夸", false),
+                    field("意思", "meaning", "一句话说明它什么意思", true),
+                    field("怎么用", "usage", "例：看到离谱操作时甩一句", true),
+                    h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 } },
+                      h("input", {
+                        type: "checkbox", checked: !!cEdit.tail,
+                        onChange: (ev) => setCEdit({ ...cEdit, tail: ev.target.checked }),
+                      }),
+                      "能当句尾收口（绝了 / 典 / 就这 这种）",
+                    ),
+                  );
+                })(),
+                h("div", { style: { display: "flex", gap: 8, marginTop: 4 } },
+                  h("button", { style: S.btn(true), disabled: busy, onClick: () => void saveCorpusItem() }, "保存"),
+                  h("button", { style: S.btn(false), disabled: busy, onClick: () => setCEdit(null) }, "取消"),
+                ),
+              ),
+            ) : null,
           );
         }
 

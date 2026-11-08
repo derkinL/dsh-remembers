@@ -1653,6 +1653,40 @@ class MemoryStore:
             print(f"[cmem] expr_import_seeds failed: {e}", flush=True)
             return 0
 
+    def expr_upsert_full(self, fields: dict, eid: int = 0) -> int:
+        """语料库增改：raw / tag(situation) / scene / meaning / usage / tail 一把梭。
+
+        eid=0 是新增；否则按 id 更新。手动加的条目 status='active'、source='manual'。
+        """
+        import time as _t
+        raw = str(fields.get("raw") or "").strip()[:120]
+        tag = str(fields.get("tag") or "").strip()[:24]
+        scene = str(fields.get("scene") or "").strip()[:24]
+        meaning = str(fields.get("meaning") or "").strip()[:200]
+        usage = str(fields.get("usage") or "").strip()[:200]
+        tail = 1 if fields.get("tail") else 0
+        if not raw:
+            return 0
+        try:
+            if eid:
+                self.conn.execute(
+                    "UPDATE expressions SET raw=?, situation=?, scene=?, meaning=?, usage=?, tail=?, "
+                    "canon=CASE WHEN canon='' THEN ? ELSE canon END WHERE id=?",
+                    (raw, tag, scene, meaning, usage, tail, raw, int(eid)))
+                self.conn.commit()
+                return int(eid)
+            now = _t.time()
+            cur = self.conn.execute(
+                "INSERT INTO expressions(scope, situation, style, example, raw, source, "
+                "scene, meaning, usage, tail, canon, hits, status, count, ts, last_hit) "
+                "VALUES('manual', ?, ?, '', ?, 'manual', ?, ?, ?, ?, ?, 1, 'active', 1, ?, ?)",
+                (tag, raw, raw, scene, meaning, usage, tail, raw, now, now))
+            self.conn.commit()
+            return int(cur.lastrowid or 0)
+        except Exception as e:
+            print(f"[cmem] expr_upsert_full failed: {e}", flush=True)
+            return 0
+
     def expr_set_notes(self, eid: int, meaning: str, usage: str, tail: bool) -> int:
         cur = self.conn.execute(
             "UPDATE expressions SET meaning=?, usage=?, tail=? WHERE id=?",

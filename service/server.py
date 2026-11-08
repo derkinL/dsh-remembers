@@ -1002,6 +1002,7 @@ class Handler(BaseHTTPRequestHandler):
         take = limit or n
         rows = rows[offset:offset + take]
         out = [{
+            "id": int(r.get("id") or 0),
             "raw": (r.get("raw") or ""),
             "tag": (r.get("situation") or ""),
             "scene": (r.get("scene") or ""),
@@ -3826,6 +3827,25 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": "bad id"})
                 return
             self._json(200, {"ok": bool(n), "changed": n})
+            return
+        if str(body.get("op") or "") == "save":
+            # 语料库编辑：id 有就更新，没有就新增
+            try:
+                eid = int(body.get("id") or 0)
+            except (TypeError, ValueError):
+                eid = 0
+            got = store.expr_upsert_full({
+                "raw": body.get("raw"),
+                "tag": body.get("tag") or body.get("situation"),
+                "scene": body.get("scene"),
+                "meaning": body.get("meaning"),
+                "usage": body.get("usage"),
+                "tail": body.get("tail"),
+            }, eid)
+            if not got:
+                self._json(400, {"ok": False, "error": "数据不完整"})
+                return
+            self._json(200, {"ok": True, "id": got})
             return
         if str(body.get("op") or "") == "update":
             eid = body.get("id")
