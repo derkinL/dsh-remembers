@@ -1984,6 +1984,10 @@ export function renderPersona(data, maxChars, proactive, opts = {}) {
     const _hot = rules.filter((r) => HOT_RE.test(r));
     const _rest = rules.filter((r) => !HOT_RE.test(r));
     identityLines.push("【铁律】下面这些不是建议，是硬约束——是我自己给自己定的规矩。违反了老大能听出来。");
+    // 2026-11-13：线上真的把上下文标签当正文发到 QQ 了
+    // （</usermessage>、<dsh-remembers source="state">、DSML 工具语法）。
+    identityLines.push("· 上下文里那些尖括号的东西（dsh-remembers、usermessage、DSML 这类）是系统给我的包装，"
+      + "不是我该说的话，绝不重复输出。");
     for (const r of _hot) identityLines.push("· " + r);
     for (const r of _rest) identityLines.push("· " + r);
   }
